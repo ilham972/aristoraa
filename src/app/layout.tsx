@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { TopHeader } from "@/components/top-header";
 import { BottomNav } from "@/components/navigation";
 import { Toaster } from "@/components/ui/sonner";
+import { PWARegister } from "@/components/pwa-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,8 +20,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Math Tracker",
+  title: "Aristora Admin",
   description: "Math Tuition Progress Tracker & Leaderboard",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Aristora",
+  },
+  icons: {
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -47,6 +57,7 @@ export default function RootLayout({
         <ClerkProvider>
           <ConvexClientProvider>
             <ThemeProvider>
+              <PWARegister />
               <TopHeader />
               <main className="pb-20 min-h-[calc(100vh-3.5rem)]">
                 {children}
