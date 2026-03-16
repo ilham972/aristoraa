@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Read(//c/Users/Ilham/aaa projects/math-tracker/**)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}
