@@ -19,6 +19,7 @@ export default defineSchema({
     name: v.string(),
     questionCount: v.number(),
     order: v.number(),
+    type: v.optional(v.string()), // "exercise" | "concept"
   }).index("by_unit", ["unitId"]),
 
   entries: defineTable({
