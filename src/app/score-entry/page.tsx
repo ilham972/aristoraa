@@ -57,10 +57,15 @@ export default function ScoreEntryPage() {
   }, [students]);
 
   const filteredStudents = useMemo(() => {
-    if (!students) return [];
-    if (selectedGroup === 'all') return students;
-    return students.filter(s => s.group === selectedGroup);
-  }, [students, selectedGroup]);
+    if (!students || !todayEntries) return [];
+    const list = selectedGroup === 'all' ? students : students.filter(s => s.group === selectedGroup);
+    const entered = new Set(todayEntries.map(e => e.studentId));
+    return [...list].sort((a, b) => {
+      const aHas = entered.has(a._id) ? 1 : 0;
+      const bHas = entered.has(b._id) ? 1 : 0;
+      return aHas - bHas;
+    });
+  }, [students, selectedGroup, todayEntries]);
 
   if (!students || !allEntries || !todayEntries || !allExercises) {
     return (
@@ -170,8 +175,8 @@ export default function ScoreEntryPage() {
       });
     }
 
-    toast.success(`Saved! ${correctCount} correct = ${pointsThisEntry} pts`);
-    setStep('saved');
+    toast.success(`${selectedStudent?.name}: ${correctCount} correct = ${pointsThisEntry} pts`);
+    handleNextStudent();
   };
 
   const handleNextStudent = () => {
@@ -242,7 +247,7 @@ export default function ScoreEntryPage() {
             onClick={() => {
               if (step === 'mark-questions') setStep('select-exercise');
               else if (step === 'select-exercise') { setStep('select-student'); setSelectedStudentId(null); }
-              else if (step === 'saved') handleNextStudent();
+              else if (step === 'saved') handleNextStudent(); // kept for safety
             }}
           >
             <ChevronLeft className="w-5 h-5 text-muted-foreground" />
@@ -506,6 +511,38 @@ export default function ScoreEntryPage() {
             )}
           </div>
 
+          {/* Quick actions */}
+          <div className="flex gap-2 mb-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+              onClick={() => {
+                const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
+                for (let i = 1; i <= selectedExercise.questionCount; i++) states[i] = 'correct';
+                setQuestionStates(states);
+              }}
+            >
+              <Check className="w-3.5 h-3.5" /> All Correct
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 rounded-xl text-xs gap-1"
+              onClick={() => {
+                setQuestionStates(prev => {
+                  const next = { ...prev };
+                  for (let i = 1; i <= selectedExercise.questionCount; i++) {
+                    if (next[i] === 'unmarked') next[i] = 'correct';
+                  }
+                  return next;
+                });
+              }}
+            >
+              <Check className="w-3.5 h-3.5" /> Rest Correct
+            </Button>
+          </div>
+
           {/* Question grid */}
           <div className="grid grid-cols-5 gap-2 mb-4">
             {Array.from({ length: selectedExercise.questionCount }, (_, i) => {
@@ -536,29 +573,7 @@ export default function ScoreEntryPage() {
         </div>
       )}
 
-      {/* Step 4: Saved */}
-      {step === 'saved' && selectedStudent && (
-        <div className="text-center py-8">
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-            <Check className="w-8 h-8 text-primary" />
-          </div>
-          <h2 className="text-lg font-bold text-foreground mb-1">Saved!</h2>
-          <p className="text-sm text-muted-foreground mb-1">{selectedStudent.name}</p>
-          <p className="text-sm text-muted-foreground">{correctCount} correct → {pointsThisEntry} pts this entry</p>
-          <p className="text-lg font-bold mt-2 text-primary">
-            Daily Total: {dailyPoints} pts
-          </p>
-
-          <div className="space-y-2 mt-6">
-            <Button onClick={handleAnotherExercise} variant="outline" className="w-full rounded-xl">
-              Another Exercise (Same Student)
-            </Button>
-            <Button onClick={handleNextStudent} className="w-full rounded-xl">
-              Next Student
-            </Button>
-          </div>
-        </div>
-      )}
+      {/* Step 4 removed: auto-advances to student list after save */}
     </div>
   );
 }
