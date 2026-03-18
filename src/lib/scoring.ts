@@ -80,7 +80,6 @@ export function formatDate(d: Date): string {
 export interface LeaderboardEntry {
   studentId: string;
   studentName: string;
-  group: string;
   totalCorrect: number;
   totalPoints: number;
   dailyBreakdown?: Record<string, number>; // date -> points
@@ -88,7 +87,7 @@ export interface LeaderboardEntry {
 
 export function getLeaderboard(
   entries: Array<{ studentId: string; date: string; correctCount: number }>,
-  students: Array<{ _id: string; name: string; group: string; schoolGrade: number }>,
+  students: Array<{ _id: string; name: string; schoolGrade: number }>,
   dates: string[],
   gradeFilter?: number,
 ): LeaderboardEntry[] {
@@ -126,7 +125,6 @@ export function getLeaderboard(
     return {
       studentId: student._id,
       studentName: student.name,
-      group: student.group,
       totalCorrect,
       totalPoints,
       dailyBreakdown,
@@ -136,6 +134,34 @@ export function getLeaderboard(
   return leaderboard
     .filter(e => e.totalPoints > 0 || e.totalCorrect > 0)
     .sort((a, b) => b.totalPoints - a.totalPoints);
+}
+
+// Get student's next N upcoming exercises in a module
+export function getStudentUpcomingExercises(
+  studentId: string,
+  moduleId: string,
+  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
+  allExercises: Array<{ _id: string; unitId: string; name: string; questionCount: number; order: number }>,
+  orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
+  count: number = 5,
+): Array<{ exerciseId: string; unitId: string; name: string }> {
+  const studentModuleEntries = allEntries.filter(
+    e => e.studentId === studentId && e.moduleId === moduleId
+  );
+  const results: Array<{ exerciseId: string; unitId: string; name: string }> = [];
+  for (const unit of orderedUnits) {
+    const unitExercises = allExercises
+      .filter(ex => ex.unitId === unit.id)
+      .sort((a, b) => a.order - b.order);
+    for (const exercise of unitExercises) {
+      const entry = studentModuleEntries.find(e => e.exerciseId === exercise._id);
+      if (!entry || entry.correctCount < exercise.questionCount) {
+        results.push({ exerciseId: exercise._id, unitId: unit.id, name: exercise.name });
+        if (results.length >= count) return results;
+      }
+    }
+  }
+  return results;
 }
 
 // Get student's next exercise in a module

@@ -4,18 +4,23 @@ import { v } from "convex/values";
 export const get = query({
   handler: async (ctx) => {
     const settings = await ctx.db.query("settings").first();
-    return settings ?? { tuitionName: "Math Tuition Center" };
+    return settings ?? { allowManualSlotSelection: false };
   },
 });
 
 export const save = mutation({
-  args: { tuitionName: v.string() },
+  args: {
+    allowManualSlotSelection: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const existing = await ctx.db.query("settings").first();
     if (existing) {
-      await ctx.db.patch(existing._id, { tuitionName: args.tuitionName });
+      await ctx.db.patch(existing._id, args);
     } else {
-      await ctx.db.insert("settings", { tuitionName: args.tuitionName });
+      await ctx.db.insert("settings", {
+        tuitionName: "Aristora",
+        allowManualSlotSelection: args.allowManualSlotSelection,
+      });
     }
   },
 });

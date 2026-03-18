@@ -4,8 +4,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import { ConvexClientProvider } from "@/components/convex-provider";
 import { ThemeProvider } from "@/components/theme-provider";
-import { TopHeader } from "@/components/top-header";
-import { BottomNav } from "@/components/navigation";
+import { AuthLayout } from "@/components/auth-layout";
 import { Toaster } from "@/components/ui/sonner";
 import { PWARegister } from "@/components/pwa-register";
 
@@ -58,11 +57,7 @@ export default function RootLayout({
           <ConvexClientProvider>
             <ThemeProvider>
               <PWARegister />
-              <TopHeader />
-              <main className="pb-20 min-h-[calc(100vh-3.5rem)]">
-                {children}
-              </main>
-              <BottomNav />
+              <AuthLayout>{children}</AuthLayout>
               <Toaster
                 position="top-center"
                 toastOptions={{

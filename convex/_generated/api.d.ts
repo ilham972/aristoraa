@@ -8,11 +8,17 @@
  * @module
  */
 
+import type * as attendance from "../attendance.js";
+import type * as centers from "../centers.js";
 import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
-import type * as groups from "../groups.js";
+import type * as rooms from "../rooms.js";
+import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as settings from "../settings.js";
+import type * as slotStudents from "../slotStudents.js";
+import type * as slotTeachers from "../slotTeachers.js";
 import type * as students from "../students.js";
+import type * as teachers from "../teachers.js";
 
 import type {
   ApiFromModules,
@@ -21,11 +27,17 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  attendance: typeof attendance;
+  centers: typeof centers;
   entries: typeof entries;
   exercises: typeof exercises;
-  groups: typeof groups;
+  rooms: typeof rooms;
+  scheduleSlots: typeof scheduleSlots;
   settings: typeof settings;
+  slotStudents: typeof slotStudents;
+  slotTeachers: typeof slotTeachers;
   students: typeof students;
+  teachers: typeof teachers;
 }>;
 
 /**

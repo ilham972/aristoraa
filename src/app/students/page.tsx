@@ -20,13 +20,11 @@ import type { Id } from '@/lib/convex';
 
 export default function StudentsPage() {
   const [filterGrade, setFilterGrade] = useState<string>('all');
-  const [filterGroup, setFilterGroup] = useState<string>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<Id<"students"> | null>(null);
 
   const [formName, setFormName] = useState('');
   const [formGrade, setFormGrade] = useState('6');
-  const [formGroup, setFormGroup] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formSchool, setFormSchool] = useState('');
 
@@ -51,7 +49,6 @@ export default function StudentsPage() {
 
   const filteredStudents = students.filter(s => {
     if (filterGrade !== 'all' && s.schoolGrade !== parseInt(filterGrade)) return false;
-    if (filterGroup !== 'all' && s.group !== filterGroup) return false;
     return true;
   });
 
@@ -66,7 +63,6 @@ export default function StudentsPage() {
         id: editingStudentId,
         name: formName.trim(),
         schoolGrade: parseInt(formGrade),
-        group: formGroup,
         parentPhone: formPhone,
         schoolName: formSchool,
       });
@@ -75,7 +71,6 @@ export default function StudentsPage() {
       await addStudentMutation({
         name: formName.trim(),
         schoolGrade: parseInt(formGrade),
-        group: formGroup,
         parentPhone: formPhone,
         schoolName: formSchool,
       });
@@ -90,7 +85,6 @@ export default function StudentsPage() {
     setEditingStudentId(student._id);
     setFormName(student.name);
     setFormGrade(String(student.schoolGrade));
-    setFormGroup(student.group);
     setFormPhone(student.parentPhone);
     setFormSchool(student.schoolName);
     setDialogOpen(true);
@@ -107,7 +101,6 @@ export default function StudentsPage() {
     setEditingStudentId(null);
     setFormName('');
     setFormGrade('6');
-    setFormGroup('');
     setFormPhone('');
     setFormSchool('');
   };
@@ -136,8 +129,6 @@ export default function StudentsPage() {
     return progress;
   };
 
-  const uniqueGroups = [...new Set(students.map(s => s.group).filter(Boolean))];
-
   return (
     <div className="px-4 pt-5 pb-6 max-w-lg mx-auto">
       <div className="flex items-center justify-between mb-4">
@@ -149,27 +140,15 @@ export default function StudentsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-2 mb-4">
+      <div className="mb-4">
         <Select value={filterGrade} onValueChange={(v) => setFilterGrade(v ?? 'all')}>
-          <SelectTrigger className="flex-1 h-10 text-sm">
+          <SelectTrigger className="h-10 text-sm">
             <SelectValue placeholder="Grade" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Grades</SelectItem>
             {[6, 7, 8, 9, 10, 11].map(g => (
               <SelectItem key={g} value={String(g)}>Grade {g}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={filterGroup} onValueChange={(v) => setFilterGroup(v ?? 'all')}>
-          <SelectTrigger className="flex-1 h-10 text-sm">
-            <SelectValue placeholder="Group" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Groups</SelectItem>
-            {uniqueGroups.map(g => (
-              <SelectItem key={g} value={g}>{g}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -189,9 +168,6 @@ export default function StudentsPage() {
                       <p className="font-semibold text-foreground text-sm truncate">{student.name}</p>
                       <Badge variant="secondary" className="text-[10px] shrink-0">G{student.schoolGrade}</Badge>
                     </div>
-                    {student.group && (
-                      <p className="text-xs text-muted-foreground mt-0.5">{student.group}</p>
-                    )}
                     <div className="flex gap-1 mt-2 flex-wrap">
                       {CURRICULUM_MODULES.map(mod => (
                         <span
@@ -244,13 +220,6 @@ export default function StudentsPage() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div>
-              <Label htmlFor="group" className="text-sm">Group</Label>
-              <Input id="group" value={formGroup} onChange={e => setFormGroup(e.target.value)} placeholder="e.g., Morning Group" className="mt-1" list="group-list" />
-              <datalist id="group-list">
-                {uniqueGroups.map(g => <option key={g} value={g} />)}
-              </datalist>
             </div>
             <div>
               <Label htmlFor="phone" className="text-sm">Parent Phone</Label>

@@ -2,14 +2,8 @@ export interface Student {
   id: string;
   name: string;
   schoolGrade: number; // 6-11
-  group: string;
   parentPhone: string;
   schoolName: string;
-}
-
-export interface Group {
-  id: string;
-  name: string;
 }
 
 export interface CurriculumModule {
@@ -58,7 +52,88 @@ export interface ScoreEntry {
 }
 
 export interface AppSettings {
-  tuitionName: string;
+  allowManualSlotSelection: boolean;
+}
+
+export interface Center {
+  id: string;
+  name: string;
+  city: string;
+  district: string;
+  road: string;
+}
+
+export interface Room {
+  id: string;
+  centerId: string;
+  name: string;
+}
+
+export interface ScheduleSlot {
+  id: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  roomId: string;
+}
+
+export interface SlotStudent {
+  id: string;
+  slotId: string;
+  studentId: string;
+}
+
+export interface SlotOverride {
+  id: string;
+  slotId: string;
+  studentId: string;
+  date: string;
+  action: string;
+}
+
+export interface Teacher {
+  id: string;
+  clerkUserId: string;
+  name: string;
+  role: string;
+}
+
+export interface SlotTeacher {
+  id: string;
+  slotId: string;
+  teacherId: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  studentId: string;
+  slotId: string;
+  date: string;
+  status: string;
+}
+
+// Time helpers
+export function parseTimeToMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+export function formatMinutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export function isCurrentTimeInRange(start: string, end: string): boolean {
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  return nowMins >= parseTimeToMinutes(start) && nowMins < parseTimeToMinutes(end);
+}
+
+export function getMinutesRemaining(endTime: string): number {
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  return parseTimeToMinutes(endTime) - nowMins;
 }
 
 export const MODULE_COLORS: Record<string, string> = {

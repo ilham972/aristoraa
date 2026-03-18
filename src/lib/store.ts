@@ -1,4 +1,4 @@
-import { Student, Group, Exercise, ScoreEntry, AppSettings } from './types';
+import { Student, Exercise, ScoreEntry, AppSettings } from './types';
 
 const KEYS = {
   students: 'mt_students',
@@ -53,12 +53,12 @@ export function deleteStudent(id: string): void {
   saveEntries(getEntries().filter(e => e.studentId !== id));
 }
 
-// Groups
-export function getGroups(): Group[] {
-  return getItem<Group[]>(KEYS.groups, []);
+// Groups (legacy)
+export function getGroups(): Array<{ id: string; name: string }> {
+  return getItem<Array<{ id: string; name: string }>>(KEYS.groups, []);
 }
 
-export function saveGroups(groups: Group[]): void {
+export function saveGroups(groups: Array<{ id: string; name: string }>): void {
   setItem(KEYS.groups, groups);
 }
 
@@ -144,7 +144,7 @@ export function getEntriesForStudentOnDate(studentId: string, date: string): Sco
 
 // Settings
 export function getSettings(): AppSettings {
-  return getItem<AppSettings>(KEYS.settings, { tuitionName: 'Math Tuition Center' });
+  return getItem<AppSettings>(KEYS.settings, { allowManualSlotSelection: false });
 }
 
 export function saveSettings(settings: AppSettings): void {

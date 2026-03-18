@@ -1,12 +1,14 @@
 'use client';
 
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { useQuery } from 'convex/react';
-import { ClipboardPen, Trophy, Users, BarChart3 } from 'lucide-react';
+import { ClipboardPen, Trophy, Users, BarChart3, Clock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { api } from '@/lib/convex';
 import { CURRICULUM_MODULES, getModuleForDay } from '@/lib/curriculum-data';
-import { getTodayDateStr, getDayName } from '@/lib/types';
+import { getTodayDateStr, getDayName, parseTimeToMinutes, isCurrentTimeInRange } from '@/lib/types';
+import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 
 const QUICK_LINKS = [
   { href: '/score-entry', label: 'Enter Scores', desc: 'Record student answers', icon: ClipboardPen, accent: 'bg-primary/10 text-primary' },
@@ -15,10 +17,37 @@ const QUICK_LINKS = [
   { href: '/progress', label: 'Progress', desc: 'View student progress', icon: BarChart3, accent: 'bg-violet-500/10 text-violet-500' },
 ];
 
+function formatTime12(time24: string): string {
+  const [h, m] = time24.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 export default function Dashboard() {
   const students = useQuery(api.students.list);
   const todayEntries = useQuery(api.entries.getByDate, { date: getTodayDateStr() });
   const settings = useQuery(api.settings.get);
+  const { teacher } = useCurrentTeacher();
+
+  // Teacher's schedule
+  const teacherSlotAssignments = useQuery(
+    api.slotTeachers.listByTeacher,
+    teacher ? { teacherId: teacher._id } : 'skip'
+  );
+  const allSlots = useQuery(api.scheduleSlots.list);
+  const rooms = useQuery(api.rooms.list);
+  const centers = useQuery(api.centers.list);
+
+  const todaySlots = useMemo(() => {
+    if (!teacherSlotAssignments || !allSlots) return [];
+    const jsDay = new Date().getDay();
+    const dayOfWeek = jsDay === 0 ? 7 : jsDay;
+    const slotIds = new Set(teacherSlotAssignments.map((st: typeof teacherSlotAssignments[0]) => st.slotId));
+    return allSlots
+      .filter((s: typeof allSlots[0]) => slotIds.has(s._id) && s.dayOfWeek === dayOfWeek)
+      .sort((a: typeof allSlots[0], b: typeof allSlots[0]) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
+  }, [teacherSlotAssignments, allSlots]);
 
   if (students === undefined || todayEntries === undefined || settings === undefined) {
     return (
@@ -41,13 +70,11 @@ export default function Dashboard() {
   const studentCount = students.length;
   const studentsWithEntries = new Set(todayEntries.map(e => e.studentId)).size;
   const studentsWithoutEntries = studentCount - studentsWithEntries;
-  const tuitionName = settings.tuitionName;
-
   return (
     <div className="px-4 pt-5 pb-6 max-w-lg mx-auto">
       {/* Greeting */}
       <div className="mb-5">
-        <h1 className="text-xl font-bold text-foreground">{tuitionName || 'Aristora'}</h1>
+        <h1 className="text-xl font-bold text-foreground">Aristora</h1>
         <p className="text-sm text-muted-foreground mt-0.5">{dayName}</p>
       </div>
 
@@ -112,19 +139,50 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Weekly schedule */}
-      <div className="mb-6">
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Weekly Schedule</h3>
-        <div className="grid grid-cols-3 gap-2">
-          {CURRICULUM_MODULES.map(mod => (
-            <div key={mod.id} className="p-2.5 rounded-xl text-white text-center" style={{ backgroundColor: mod.color }}>
-              <p className="text-[10px] font-medium opacity-75">{mod.day.slice(0, 3)}</p>
-              <p className="text-xs font-bold mt-0.5">{mod.id}</p>
-              <p className="text-[10px] opacity-85 leading-tight mt-0.5">{mod.name}</p>
-            </div>
-          ))}
+      {/* Today's Schedule */}
+      {todaySlots.length > 0 ? (
+        <div className="mb-6">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Today&apos;s Schedule</h3>
+          <div className="space-y-1.5">
+            {todaySlots.map((slot: typeof todaySlots[0]) => {
+              const room = rooms?.find((r: NonNullable<typeof rooms>[0]) => r._id === slot.roomId);
+              const center = room ? centers?.find((c: NonNullable<typeof centers>[0]) => c._id === room.centerId) : null;
+              const isActive = isCurrentTimeInRange(slot.startTime, slot.endTime);
+              return (
+                <Card key={slot._id} className={`border-border/50 ${isActive ? 'border-primary/30 bg-primary/5' : ''}`}>
+                  <CardContent className="p-3 flex items-center gap-3">
+                    <Clock className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${isActive ? 'text-primary' : 'text-foreground'}`}>
+                        {formatTime12(slot.startTime)} - {formatTime12(slot.endTime)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {room?.name ?? 'Room'}{center ? ` @ ${center.name}` : ''}
+                      </p>
+                    </div>
+                    {isActive && (
+                      <span className="text-[10px] font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">Active</span>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="mb-6">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Weekly Schedule</h3>
+          <div className="grid grid-cols-3 gap-2">
+            {CURRICULUM_MODULES.map(mod => (
+              <div key={mod.id} className="p-2.5 rounded-xl text-white text-center" style={{ backgroundColor: mod.color }}>
+                <p className="text-[10px] font-medium opacity-75">{mod.day.slice(0, 3)}</p>
+                <p className="text-xs font-bold mt-0.5">{mod.id}</p>
+                <p className="text-[10px] opacity-85 leading-tight mt-0.5">{mod.name}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

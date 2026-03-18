@@ -31,7 +31,7 @@ export default function LeaderboardPage() {
 
   const gradeNum = gradeFilter !== 'all' ? parseInt(gradeFilter) : undefined;
   const leaderboard = students && entries ? getLeaderboard(entries, students, dates, gradeNum) : [];
-  const tuitionName = settings?.tuitionName ?? '';
+  const tuitionName = 'Aristora';
 
   const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -83,7 +83,6 @@ export default function LeaderboardPage() {
     ctx.textAlign = 'left';
     ctx.fillText('RANK', 50, tableTop + 26);
     ctx.fillText('STUDENT', 120, tableTop + 26);
-    ctx.fillText('GROUP', 420, tableTop + 26);
     ctx.textAlign = 'right';
     ctx.fillText('CORRECT', 620, tableTop + 26);
     ctx.fillText('POINTS', 740, tableTop + 26);
@@ -116,10 +115,6 @@ export default function LeaderboardPage() {
       ctx.font = rank <= 3 ? 'bold 15px Arial, sans-serif' : '14px Arial, sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(entry.studentName, 120, y + rowHeight / 2 + 5);
-
-      ctx.fillStyle = '#7B8FA3';
-      ctx.font = '12px Arial, sans-serif';
-      ctx.fillText(entry.group || '-', 420, y + rowHeight / 2 + 5);
 
       ctx.fillStyle = '#14B8A6';
       ctx.font = '14px Arial, sans-serif';
@@ -228,7 +223,6 @@ export default function LeaderboardPage() {
                       <p className={`font-medium text-foreground text-sm truncate ${rank <= 3 ? 'font-bold' : ''}`}>
                         {entry.studentName}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">{entry.group || '-'}</p>
                     </div>
                     <div className="text-right">
                       <p className={`font-bold ${rank <= 3 ? 'text-lg' : 'text-sm'} text-foreground`}>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aristora-v1';
+const CACHE_NAME = 'aristora-v2';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/icon-192x192.png',

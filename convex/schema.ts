@@ -5,13 +5,8 @@ export default defineSchema({
   students: defineTable({
     name: v.string(),
     schoolGrade: v.number(),
-    group: v.string(),
     parentPhone: v.string(),
     schoolName: v.string(),
-  }),
-
-  groups: defineTable({
-    name: v.string(),
   }),
 
   exercises: defineTable({
@@ -37,6 +32,64 @@ export default defineSchema({
     .index("by_student_date", ["studentId", "date"]),
 
   settings: defineTable({
-    tuitionName: v.string(),
+    tuitionName: v.optional(v.string()),
+    allowManualSlotSelection: v.optional(v.boolean()),
   }),
+
+  centers: defineTable({
+    name: v.string(),
+    city: v.string(),
+    district: v.string(),
+    road: v.string(),
+  }),
+
+  rooms: defineTable({
+    centerId: v.id("centers"),
+    name: v.string(),
+  }).index("by_center", ["centerId"]),
+
+  scheduleSlots: defineTable({
+    dayOfWeek: v.number(),
+    startTime: v.string(),
+    endTime: v.string(),
+    roomId: v.id("rooms"),
+  })
+    .index("by_room", ["roomId"])
+    .index("by_day", ["dayOfWeek"]),
+
+  slotStudents: defineTable({
+    slotId: v.id("scheduleSlots"),
+    studentId: v.id("students"),
+  })
+    .index("by_slot", ["slotId"])
+    .index("by_student", ["studentId"]),
+
+  slotOverrides: defineTable({
+    slotId: v.id("scheduleSlots"),
+    studentId: v.id("students"),
+    date: v.string(),
+    action: v.string(),
+  }).index("by_slot_date", ["slotId", "date"]),
+
+  teachers: defineTable({
+    clerkUserId: v.string(),
+    name: v.string(),
+    role: v.string(),
+  }).index("by_clerk_user", ["clerkUserId"]),
+
+  slotTeachers: defineTable({
+    slotId: v.id("scheduleSlots"),
+    teacherId: v.id("teachers"),
+  })
+    .index("by_slot", ["slotId"])
+    .index("by_teacher", ["teacherId"]),
+
+  attendance: defineTable({
+    studentId: v.id("students"),
+    slotId: v.id("scheduleSlots"),
+    date: v.string(),
+    status: v.string(),
+  })
+    .index("by_slot_date", ["slotId", "date"])
+    .index("by_student", ["studentId"]),
 });

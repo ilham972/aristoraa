@@ -11,7 +11,6 @@ export const add = mutation({
   args: {
     name: v.string(),
     schoolGrade: v.number(),
-    group: v.string(),
     parentPhone: v.string(),
     schoolName: v.string(),
   },
@@ -25,7 +24,6 @@ export const update = mutation({
     id: v.id("students"),
     name: v.string(),
     schoolGrade: v.number(),
-    group: v.string(),
     parentPhone: v.string(),
     schoolName: v.string(),
   },
@@ -46,6 +44,21 @@ export const remove = mutation({
     for (const entry of entries) {
       await ctx.db.delete(entry._id);
     }
+
+    // Delete slot assignments
+    const slotStudents = await ctx.db
+      .query("slotStudents")
+      .withIndex("by_student", (q) => q.eq("studentId", args.id))
+      .collect();
+    for (const ss of slotStudents) await ctx.db.delete(ss._id);
+
+    // Delete attendance records
+    const attendance = await ctx.db
+      .query("attendance")
+      .withIndex("by_student", (q) => q.eq("studentId", args.id))
+      .collect();
+    for (const a of attendance) await ctx.db.delete(a._id);
+
     await ctx.db.delete(args.id);
   },
 });
