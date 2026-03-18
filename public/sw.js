@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aristora-v2';
+const CACHE_NAME = 'aristora-v3';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/icon-192x192.png',
@@ -22,14 +22,15 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Network-first strategy: always try network, fall back to cache
-  // This ensures real-time Convex data is always fresh
   if (event.request.method !== 'GET') return;
+
+  // Skip non-http(s) requests (e.g. chrome-extension://)
+  const url = new URL(event.request.url);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
 
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Cache successful responses for static assets
         if (response.ok && event.request.url.match(/\.(js|css|png|jpg|svg|woff2?)$/)) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
