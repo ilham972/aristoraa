@@ -15,6 +15,7 @@ export default defineSchema({
     questionCount: v.number(),
     order: v.number(),
     type: v.optional(v.string()), // "exercise" | "concept"
+    pageNumber: v.optional(v.number()),
   }).index("by_unit", ["unitId"]),
 
   entries: defineTable({
@@ -92,4 +93,11 @@ export default defineSchema({
   })
     .index("by_slot_date", ["slotId", "date"])
     .index("by_student", ["studentId"]),
+
+  studentModulePositions: defineTable({
+    studentId: v.id("students"),
+    moduleId: v.string(),
+    grade: v.number(),
+    term: v.number(),
+  }).index("by_student_module", ["studentId", "moduleId"]),
 });

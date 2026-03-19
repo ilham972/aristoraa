@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { Check, ChevronRight, Clock, AlertTriangle, UserX, UserCheck } from 'lucide-react';
+import { Check, ChevronLeft, Clock, AlertTriangle, UserX, UserCheck, BookOpen, MoreHorizontal } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,14 +10,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { getTodayDateStr } from '@/lib/types';
 import { api } from '@/lib/convex';
 import { CURRICULUM_MODULES, getModuleForDay, getOrderedUnits, findUnit } from '@/lib/curriculum-data';
-import { getTotalCorrectForDay, calculateDailyPoints, getStudentNextExercise, getStudentUpcomingExercises } from '@/lib/scoring';
+import { getTotalCorrectForDay, calculateDailyPoints, getStudentNextExercise, getStudentUpcomingItems, type PositionOptions } from '@/lib/scoring';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } from '@/components/ui/drawer';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { useActiveSlot } from '@/hooks/useActiveSlot';
 import type { Id } from '@/lib/convex';
 
-type Step = 'select-student' | 'select-exercise' | 'mark-questions';
+type View = 'students' | 'scoring';
 
 interface SelectedExercise {
   _id: Id<"exercises">;
@@ -35,7 +37,8 @@ function formatTime12(time24: string): string {
 }
 
 export default function ScoreEntryPage() {
-  const [step, setStep] = useState<Step>('select-student');
+  // View state
+  const [view, setView] = useState<View>('students');
   const [selectedStudentId, setSelectedStudentId] = useState<Id<"students"> | null>(null);
   const [selectedExercise, setSelectedExercise] = useState<SelectedExercise | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string>('');
@@ -43,8 +46,17 @@ export default function ScoreEntryPage() {
   const [questionStates, setQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'unmarked'>>({});
   const [existingEntryId, setExistingEntryId] = useState<Id<"entries"> | null>(null);
   const [initialQuestionStates, setInitialQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'unmarked'>>({});
-  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
-  const [pendingStepTarget, setPendingStepTarget] = useState<number | null>(null);
+  const [showContinuePrompt, setShowContinuePrompt] = useState(false);
+  const [scoringContext, setScoringContext] = useState<'normal' | 'drawer'>('normal');
+
+  // Per-card unit filter for snapshot
+  const [cardUnitFilter, setCardUnitFilter] = useState<Record<string, string>>({});
+
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerStudentId, setDrawerStudentId] = useState<Id<"students"> | null>(null);
+  const [drawerBrowseUnitId, setDrawerBrowseUnitId] = useState<string>('');
+  const [drawerScoring, setDrawerScoring] = useState(false);
 
   // Attendance mode
   const [attendanceMode, setAttendanceMode] = useState(false);
@@ -53,11 +65,17 @@ export default function ScoreEntryPage() {
   // Manual slot selection
   const [manualSlotId, setManualSlotId] = useState<string>('');
 
-  // Browse mode
-  const [browseMode, setBrowseMode] = useState(false);
-  const [browseModule, setBrowseModule] = useState<string>('');
-  const [browseGrade, setBrowseGrade] = useState<string>('');
-  const [browseTerm, setBrowseTerm] = useState<string>('');
+  // Position override dialog
+  const [positionDialogOpen, setPositionDialogOpen] = useState(false);
+  const [positionDialogStudentId, setPositionDialogStudentId] = useState<Id<"students"> | null>(null);
+  const [dialogModule, setDialogModule] = useState('');
+  const [dialogGrade, setDialogGrade] = useState('');
+  const [dialogTerm, setDialogTerm] = useState('');
+  const [dialogPermanent, setDialogPermanent] = useState(false);
+
+  // Unsaved changes
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
   const today = getTodayDateStr();
   const todayModule = getModuleForDay(new Date().getDay());
@@ -73,7 +91,6 @@ export default function ScoreEntryPage() {
   const rooms = useQuery(api.rooms.list);
   const centers = useQuery(api.centers.list);
 
-  // Build teacher's slot list with full info
   const teacherSlots = useMemo(() => {
     if (!teacherSlotAssignments || !allSlots) return undefined;
     const slotIds = new Set(teacherSlotAssignments.map((st: typeof teacherSlotAssignments[0]) => st.slotId));
@@ -82,7 +99,6 @@ export default function ScoreEntryPage() {
 
   const { activeSlot, nextSlot, minutesRemaining, allTodaySlots } = useActiveSlot(teacherSlots);
 
-  // In attendance mode: show ALL slots (any day) so teacher can always take attendance
   const DAY_SHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const availableSlots = useMemo(() => {
     if (!attendanceMode) return allTodaySlots;
@@ -90,7 +106,6 @@ export default function ScoreEntryPage() {
     const jsDay = new Date().getDay();
     const todayDow = jsDay === 0 ? 7 : jsDay;
     return [...allSlots].sort((a, b) => {
-      // Today's slots first
       const aToday = a.dayOfWeek === todayDow ? 0 : 1;
       const bToday = b.dayOfWeek === todayDow ? 0 : 1;
       if (aToday !== bToday) return aToday - bToday;
@@ -99,7 +114,6 @@ export default function ScoreEntryPage() {
     });
   }, [attendanceMode, allSlots, allTodaySlots]);
 
-  // Determine effective slot
   const allowManual = settings?.allowManualSlotSelection;
   const effectiveSlot = useMemo(() => {
     if ((allowManual || attendanceMode) && manualSlotId) {
@@ -108,13 +122,11 @@ export default function ScoreEntryPage() {
     return activeSlot;
   }, [allowManual, attendanceMode, manualSlotId, allSlots, activeSlot]);
 
-  // Effective students for the slot
   const effectiveStudents = useQuery(
     api.scheduleSlots.getEffectiveStudents,
     effectiveSlot ? { slotId: effectiveSlot._id as Id<"scheduleSlots">, date: today } : 'skip'
   );
 
-  // Attendance for slot
   const attendanceRecords = useQuery(
     api.attendance.getBySlotAndDate,
     effectiveSlot ? { slotId: effectiveSlot._id as Id<"scheduleSlots">, date: today } : 'skip'
@@ -124,13 +136,14 @@ export default function ScoreEntryPage() {
   const allEntries = useQuery(api.entries.list);
   const todayEntries = useQuery(api.entries.getByDate, { date: today });
   const allExercises = useQuery(api.exercises.list);
+  const modulePositions = useQuery(api.studentModulePositions.list);
 
   const addEntryMutation = useMutation(api.entries.add);
   const updateEntryMutation = useMutation(api.entries.update);
+  const setModulePositionMutation = useMutation(api.studentModulePositions.set);
   const markAbsentMutation = useMutation(api.attendance.markAbsent);
   const markPresentMutation = useMutation(api.attendance.markPresent);
 
-  // Which students to show — slot students if available, else all
   const slotStudentList = effectiveStudents ?? students;
 
   const absentStudentIds = useMemo(() => {
@@ -142,18 +155,15 @@ export default function ScoreEntryPage() {
     if (!slotStudentList || !todayEntries) return [];
     const entered = new Set(todayEntries.map(e => e.studentId));
     return [...slotStudentList].sort((a, b) => {
-      // Absent at bottom
       const aAbsent = absentStudentIds.has(a._id) ? 1 : 0;
       const bAbsent = absentStudentIds.has(b._id) ? 1 : 0;
       if (aAbsent !== bAbsent) return aAbsent - bAbsent;
-      // Scored after unscored
       const aHas = entered.has(a._id) ? 1 : 0;
       const bHas = entered.has(b._id) ? 1 : 0;
       return aHas - bHas;
     });
   }, [slotStudentList, todayEntries, absentStudentIds]);
 
-  // Progress tracking
   const progressInfo = useMemo(() => {
     if (!slotStudentList || !todayEntries) return { scored: 0, absent: 0, total: 0 };
     const entered = new Set(todayEntries.map(e => e.studentId));
@@ -166,41 +176,68 @@ export default function ScoreEntryPage() {
   const allHandled = handled >= progressInfo.total && progressInfo.total > 0;
 
   const hasUnsavedChanges = useMemo(() => {
-    if (step !== 'mark-questions') return false;
+    if (view !== 'scoring' && !drawerScoring) return false;
     for (const key of Object.keys(questionStates)) {
       if (questionStates[Number(key)] !== initialQuestionStates[Number(key)]) return true;
     }
     return false;
-  }, [step, questionStates, initialQuestionStates]);
+  }, [view, drawerScoring, questionStates, initialQuestionStates]);
 
-  // Exercise snapshot for student cards
+  // Compute each student's position in today's module
+  const studentPositions = useMemo(() => {
+    if (!allExercises || !allEntries || !slotStudentList || !todayModule || !modulePositions) return new Map<string, { moduleId: string; grade: number; term: number; unitId: string; exerciseId: string }>();
+    const positions = new Map<string, { moduleId: string; grade: number; term: number; unitId: string; exerciseId: string }>();
+    const orderedUnits = getOrderedUnits(todayModule.id);
+
+    for (const student of slotStudentList) {
+      const override = modulePositions.find((p: { studentId: string; moduleId: string }) => p.studentId === student._id && p.moduleId === todayModule.id);
+      const opts: PositionOptions = {
+        positionOverride: override ? { grade: override.grade, term: override.term } : undefined,
+        defaultGrade: student.schoolGrade,
+      };
+      const next = getStudentNextExercise(student._id, todayModule.id, allEntries, allExercises, orderedUnits, opts);
+      if (next) {
+        const unitInfo = findUnit(next.unitId);
+        if (unitInfo) {
+          positions.set(student._id, {
+            moduleId: todayModule.id,
+            grade: unitInfo.grade,
+            term: unitInfo.term,
+            unitId: next.unitId,
+            exerciseId: next.exerciseId,
+          });
+        }
+      }
+    }
+    return positions;
+  }, [slotStudentList, allEntries, allExercises, todayModule, modulePositions]);
+
+  // Snapshot for student cards
   const studentExerciseInfo = useMemo(() => {
-    if (!allExercises || !allEntries || !slotStudentList || !todayEntries) return new Map<string, { doneToday: string[]; upcoming: Array<{ exerciseId: string; name: string }> }>();
-    const info = new Map<string, { doneToday: string[]; upcoming: Array<{ exerciseId: string; name: string }> }>();
+    if (!allExercises || !allEntries || !slotStudentList || !todayEntries || !modulePositions) return new Map<string, { doneToday: string[]; upcoming: Array<{ id: string; name: string; type: string }> }>();
+    const info = new Map<string, { doneToday: string[]; upcoming: Array<{ id: string; name: string; type: string }> }>();
     for (const student of slotStudentList) {
       const sTodayEntries = todayEntries.filter(e => e.studentId === student._id);
       const doneToday = sTodayEntries
         .map(e => allExercises.find(ex => ex._id === e.exerciseId)?.name)
         .filter((n): n is string => !!n);
 
-      let upcoming: Array<{ exerciseId: string; name: string }> = [];
+      let upcoming: Array<{ id: string; name: string; type: string }> = [];
       if (todayModule) {
+        const override = modulePositions.find((p: { studentId: string; moduleId: string }) => p.studentId === student._id && p.moduleId === todayModule.id);
+        const opts: PositionOptions = {
+          positionOverride: override ? { grade: override.grade, term: override.term } : undefined,
+          defaultGrade: student.schoolGrade,
+        };
         const orderedUnits = getOrderedUnits(todayModule.id);
-        upcoming = getStudentUpcomingExercises(student._id, todayModule.id, allEntries, allExercises, orderedUnits, 5);
-      }
-      if (upcoming.length === 0) {
-        for (const mod of CURRICULUM_MODULES) {
-          const units = getOrderedUnits(mod.id);
-          const modUpcoming = getStudentUpcomingExercises(student._id, mod.id, allEntries, allExercises, units, 5);
-          if (modUpcoming.length > 0) { upcoming = modUpcoming; break; }
-        }
+        upcoming = getStudentUpcomingItems(student._id, todayModule.id, allEntries, allExercises, orderedUnits, 5, opts);
       }
       info.set(student._id, { doneToday, upcoming });
     }
     return info;
-  }, [slotStudentList, todayEntries, allEntries, allExercises, todayModule]);
+  }, [slotStudentList, todayEntries, allEntries, allExercises, todayModule, modulePositions]);
 
-  const loading = !students || !allEntries || !todayEntries || !allExercises || settings === undefined;
+  const loading = !students || !allEntries || !todayEntries || !allExercises || settings === undefined || !modulePositions;
 
   if (loading) {
     return (
@@ -216,7 +253,6 @@ export default function ScoreEntryPage() {
   // Slot info
   const slotRoom = effectiveSlot ? rooms?.find((r: NonNullable<typeof rooms>[0]) => r._id === effectiveSlot.roomId) : null;
   const slotCenter = slotRoom ? centers?.find((c: NonNullable<typeof centers>[0]) => c._id === slotRoom.centerId) : null;
-
   const selectedStudent = selectedStudentId ? (slotStudentList ?? []).find((s: { _id: string; name: string }) => s._id === selectedStudentId) ?? students?.find((s: NonNullable<typeof students>[0]) => s._id === selectedStudentId) : null;
   const studentsWithEntries = new Set(todayEntries.map(e => e.studentId));
 
@@ -230,51 +266,111 @@ export default function ScoreEntryPage() {
   };
   const timingWarning = getTimingWarning();
 
-  // Step 1 handlers
-  const selectStudent = (studentId: Id<"students">) => {
+  // ─── Helpers ───
+
+  const getPositionOpts = (studentId: string, moduleId: string, schoolGrade: number): PositionOptions => {
+    const override = modulePositions?.find((p: { studentId: string; moduleId: string }) => p.studentId === studentId && p.moduleId === moduleId);
+    return {
+      positionOverride: override ? { grade: override.grade, term: override.term } : undefined,
+      defaultGrade: schoolGrade,
+    };
+  };
+
+  const getStudentTermUnits = (studentId: string) => {
+    const pos = studentPositions.get(studentId);
+    if (!pos || !todayModule) return [];
+    const mod = CURRICULUM_MODULES.find(m => m.id === pos.moduleId);
+    const grade = mod?.grades.find(g => g.grade === pos.grade);
+    const term = grade?.terms.find(t => t.term === pos.term);
+    return term?.units || [];
+  };
+
+  const getUnitSnapshotItems = (studentId: string, unitId: string, limit: number) => {
+    const unitItems = allExercises
+      .filter(e => e.unitId === unitId)
+      .sort((a, b) => a.order - b.order);
+
+    const items: Array<{ id: string; name: string; type: string; isCompleted: boolean }> = [];
+    for (const item of unitItems) {
+      const isConcept = item.type === 'concept';
+      let isCompleted = false;
+      if (!isConcept) {
+        const entry = allEntries.find(e => e.studentId === studentId && e.exerciseId === item._id);
+        isCompleted = !!(entry && entry.correctCount >= item.questionCount && item.questionCount > 0);
+      }
+      items.push({ id: item._id, name: item.name, type: item.type || 'exercise', isCompleted });
+      if (items.length >= limit) break;
+    }
+    return items;
+  };
+
+  const setupScoring = (exercise: typeof allExercises[0], unitId: string, moduleId: string) => {
+    setSelectedExercise(exercise);
+    setSelectedUnitId(unitId);
+    setSelectedModuleId(moduleId);
+
+    const existing = todayEntries.find(e => e.studentId === (drawerScoring ? drawerStudentId : selectedStudentId) && e.exerciseId === exercise._id);
+    const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
+    if (existing) {
+      setExistingEntryId(existing._id);
+      for (let i = 1; i <= exercise.questionCount; i++) {
+        states[i] = existing.questions[String(i)] || 'unmarked';
+      }
+    } else {
+      setExistingEntryId(null);
+      for (let i = 1; i <= exercise.questionCount; i++) states[i] = 'unmarked';
+    }
+    setQuestionStates(states);
+    setInitialQuestionStates({ ...states });
+  };
+
+  // ─── Card Tap: go directly to scoring ───
+
+  const handleCardTap = (studentId: Id<"students">) => {
     if (absentStudentIds.has(studentId) && !attendanceMode) return;
 
-    if (studentId === selectedStudentId && selectedExercise) {
-      setStep('select-exercise');
-      return;
-    }
+    const student = (slotStudentList ?? []).find((s: { _id: string }) => s._id === studentId) ?? students?.find((s: NonNullable<typeof students>[0]) => s._id === studentId);
+    if (!student || !todayModule) return;
 
     setSelectedStudentId(studentId);
-    setSelectedExercise(null);
-    setQuestionStates({});
-    setInitialQuestionStates({});
-    setExistingEntryId(null);
-    setBrowseMode(false);
+    setShowContinuePrompt(false);
 
-    if (todayModule) {
-      const orderedUnits = getOrderedUnits(todayModule.id);
-      const next = getStudentNextExercise(studentId, todayModule.id, allEntries, allExercises, orderedUnits);
-      if (next) {
-        const exercise = allExercises.find(e => e._id === next.exerciseId);
-        if (exercise) {
-          setSelectedExercise(exercise);
-          setSelectedUnitId(next.unitId);
-          setSelectedModuleId(todayModule.id);
-          const existing = todayEntries.find(e => e.studentId === studentId && e.exerciseId === exercise._id);
-          if (existing) {
-            setExistingEntryId(existing._id);
-            const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
-            for (let i = 1; i <= exercise.questionCount; i++) {
-              states[i] = existing.questions[String(i)] || 'unmarked';
-            }
-            setQuestionStates(states);
-          } else {
-            const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
-            for (let i = 1; i <= exercise.questionCount; i++) states[i] = 'unmarked';
-            setQuestionStates(states);
-          }
-          setStep('select-exercise');
-          return;
-        }
+    const orderedUnits = getOrderedUnits(todayModule.id);
+    const opts = getPositionOpts(studentId, todayModule.id, student.schoolGrade);
+    const next = getStudentNextExercise(studentId, todayModule.id, allEntries, allExercises, orderedUnits, opts);
+
+    if (next) {
+      const exercise = allExercises.find(e => e._id === next.exerciseId);
+      if (exercise) {
+        setupScoring(exercise, next.unitId, todayModule.id);
+        setScoringContext('normal');
+        setView('scoring');
+        return;
       }
     }
-    setStep('select-exercise');
+    toast('No pending exercises for this student');
   };
+
+  // ─── Expand icon: open Drawer ───
+
+  const handleExpandTap = (studentId: Id<"students">) => {
+    const pos = studentPositions.get(studentId);
+    setDrawerStudentId(studentId);
+    setDrawerBrowseUnitId(pos?.unitId ?? '');
+    setDrawerScoring(false);
+    setDrawerOpen(true);
+  };
+
+  // ─── Drawer: exercise tap → scoring inside drawer ───
+
+  const handleDrawerExerciseTap = (exercise: typeof allExercises[0], unitId: string, moduleId: string) => {
+    setSelectedStudentId(drawerStudentId);
+    setupScoring(exercise, unitId, moduleId);
+    setScoringContext('drawer');
+    setDrawerScoring(true);
+  };
+
+  // ─── Question toggling ───
 
   const toggleQuestion = (qNum: number) => {
     setQuestionStates(prev => {
@@ -291,8 +387,9 @@ export default function ScoreEntryPage() {
   const wrongCount = Object.values(questionStates).filter(v => v === 'wrong').length;
   const attempted = correctCount + wrongCount;
 
-  const studentDayEntries = selectedStudentId
-    ? todayEntries.filter(e => e.studentId === selectedStudentId)
+  const activeStudentId = scoringContext === 'drawer' ? drawerStudentId : selectedStudentId;
+  const studentDayEntries = activeStudentId
+    ? todayEntries.filter(e => e.studentId === activeStudentId)
     : [];
   const priorCorrectToday = getTotalCorrectForDay(studentDayEntries, existingEntryId || undefined);
   const totalCorrectToday = priorCorrectToday + correctCount;
@@ -306,8 +403,10 @@ export default function ScoreEntryPage() {
     return pts;
   })();
 
+  // ─── Save ───
+
   const saveEntry = async () => {
-    if (!selectedStudentId || !selectedExercise) return;
+    if (!activeStudentId || !selectedExercise) return;
 
     const questions: Record<string, 'correct' | 'wrong'> = {};
     for (const [k, v] of Object.entries(questionStates)) {
@@ -318,7 +417,7 @@ export default function ScoreEntryPage() {
       await updateEntryMutation({ id: existingEntryId, questions, correctCount, totalAttempted: attempted });
     } else {
       await addEntryMutation({
-        studentId: selectedStudentId,
+        studentId: activeStudentId,
         date: today,
         exerciseId: selectedExercise._id,
         unitId: selectedUnitId,
@@ -329,124 +428,392 @@ export default function ScoreEntryPage() {
       });
     }
 
-    // Auto-mark present
     if (effectiveSlot) {
-      await markPresentMutation({ studentId: selectedStudentId, slotId: effectiveSlot._id as Id<"scheduleSlots">, date: today });
+      await markPresentMutation({ studentId: activeStudentId, slotId: effectiveSlot._id as Id<"scheduleSlots">, date: today });
     }
 
-    toast.success(`${selectedStudent?.name}: ${correctCount} correct = ${pointsThisEntry} pts`);
+    const studentName = (slotStudentList ?? []).find((s: { _id: string; name: string }) => s._id === activeStudentId)?.name ?? '';
+    toast.success(`${studentName}: ${correctCount} correct = ${pointsThisEntry} pts`);
   };
 
   const handleSave = async () => {
     await saveEntry();
-    handleNextStudent();
+    if (scoringContext === 'drawer') {
+      setDrawerScoring(false);
+      setSelectedExercise(null);
+      setQuestionStates({});
+      setInitialQuestionStates({});
+      setExistingEntryId(null);
+    } else {
+      setShowContinuePrompt(true);
+    }
   };
 
-  const handleNextStudent = () => {
+  const handleContinue = () => {
+    setShowContinuePrompt(false);
+    if (!selectedStudentId || !todayModule) {
+      handleBackToStudents();
+      return;
+    }
+    const student = (slotStudentList ?? []).find((s: { _id: string }) => s._id === selectedStudentId) ?? students?.find((s: NonNullable<typeof students>[0]) => s._id === selectedStudentId);
+    if (!student) {
+      handleBackToStudents();
+      return;
+    }
+    const orderedUnits = getOrderedUnits(todayModule.id);
+    const opts = getPositionOpts(selectedStudentId, todayModule.id, student.schoolGrade);
+    const next = getStudentNextExercise(selectedStudentId, todayModule.id, allEntries, allExercises, orderedUnits, opts);
+
+    if (next) {
+      const exercise = allExercises.find(e => e._id === next.exerciseId);
+      if (exercise) {
+        setupScoring(exercise, next.unitId, todayModule.id);
+        return;
+      }
+    }
+    toast.success('All exercises completed!');
+    handleBackToStudents();
+  };
+
+  const handleBackToStudents = () => {
+    if (hasUnsavedChanges && !showContinuePrompt) {
+      setPendingAction(() => () => doBackToStudents());
+      setShowUnsavedDialog(true);
+      return;
+    }
+    doBackToStudents();
+  };
+
+  const doBackToStudents = () => {
+    setView('students');
     setSelectedStudentId(null);
     setSelectedExercise(null);
     setQuestionStates({});
     setInitialQuestionStates({});
     setExistingEntryId(null);
-    setBrowseMode(false);
-    setStep('select-student');
+    setShowContinuePrompt(false);
   };
 
-  const confirmExercise = () => {
-    if (selectedExercise) {
-      const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
-      const existing = todayEntries.find(e => e.studentId === selectedStudentId && e.exerciseId === selectedExercise._id);
-      if (existing) {
-        setExistingEntryId(existing._id);
-        for (let i = 1; i <= selectedExercise.questionCount; i++) {
-          states[i] = existing.questions[String(i)] || 'unmarked';
-        }
-      } else {
-        setExistingEntryId(null);
-        for (let i = 1; i <= selectedExercise.questionCount; i++) states[i] = 'unmarked';
-      }
-      setQuestionStates(states);
-      setInitialQuestionStates({ ...states });
-      setStep('mark-questions');
-    }
-  };
-
-  const selectBrowseExercise = (exercise: SelectedExercise, unitId: string, moduleId: string) => {
-    setSelectedExercise(exercise);
-    setSelectedUnitId(unitId);
-    setSelectedModuleId(moduleId);
-    const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
-    const existing = todayEntries.find(e => e.studentId === selectedStudentId && e.exerciseId === exercise._id);
-    if (existing) {
-      setExistingEntryId(existing._id);
-      for (let i = 1; i <= exercise.questionCount; i++) {
-        states[i] = existing.questions[String(i)] || 'unmarked';
-      }
-    } else {
-      setExistingEntryId(null);
-      for (let i = 1; i <= exercise.questionCount; i++) states[i] = 'unmarked';
-    }
-    setQuestionStates(states);
-    setInitialQuestionStates({ ...states });
-    setStep('mark-questions');
-  };
-
-  // Step indicator
-  const stepIndex = step === 'select-student' ? 0 : step === 'select-exercise' ? 1 : 2;
-  const stepLabels = [
-    selectedStudent ? selectedStudent.name : 'Student',
-    selectedExercise ? selectedExercise.name : 'Exercise',
-    'Mark',
-  ];
-
-  const canNavigateToStep = (i: number): boolean => {
-    if (i === stepIndex) return false;
-    if (i === 0) return stepIndex > 0;
-    if (i === 1) return !!selectedStudentId;
-    if (i === 2) return !!selectedExercise;
-    return false;
-  };
-
-  const doNavigateToStep = (targetIndex: number) => {
-    if (targetIndex === 0) setStep('select-student');
-    else if (targetIndex === 1) setStep('select-exercise');
-    else if (targetIndex === 2) setStep('mark-questions');
-  };
-
-  const navigateToStep = (targetIndex: number) => {
-    if (!canNavigateToStep(targetIndex)) return;
+  const handleDrawerBack = () => {
     if (hasUnsavedChanges) {
-      setPendingStepTarget(targetIndex);
+      setPendingAction(() => () => {
+        setDrawerScoring(false);
+        setSelectedExercise(null);
+        setQuestionStates({});
+        setInitialQuestionStates({});
+        setExistingEntryId(null);
+      });
       setShowUnsavedDialog(true);
       return;
     }
-    doNavigateToStep(targetIndex);
-  };
-
-  const handleDialogSave = async () => {
-    await saveEntry();
-    setShowUnsavedDialog(false);
+    setDrawerScoring(false);
     setSelectedExercise(null);
     setQuestionStates({});
     setInitialQuestionStates({});
     setExistingEntryId(null);
-    setBrowseMode(false);
-    if (pendingStepTarget !== null) {
-      doNavigateToStep(pendingStepTarget);
-      setPendingStepTarget(null);
-    }
   };
 
-  const handleDialogLeave = () => {
-    setShowUnsavedDialog(false);
-    if (pendingStepTarget !== null) {
-      doNavigateToStep(pendingStepTarget);
-      setPendingStepTarget(null);
+  const handleDrawerClose = (open: boolean) => {
+    if (!open && drawerScoring && hasUnsavedChanges) {
+      setPendingAction(() => () => {
+        setDrawerScoring(false);
+        setDrawerOpen(false);
+      });
+      setShowUnsavedDialog(true);
+      return;
     }
+    if (!open) {
+      setDrawerScoring(false);
+      setSelectedExercise(null);
+      setQuestionStates({});
+      setInitialQuestionStates({});
+      setExistingEntryId(null);
+    }
+    setDrawerOpen(open);
   };
 
-  // No active slot and no manual selection
+  // No active slot
   const noSlot = !effectiveSlot && !allowManual && teacher && teacherSlots && teacherSlots.length > 0;
+
+  // ─── Scoring UI (shared between normal view and drawer) ───
+
+  const renderScoringUI = (onSave: () => Promise<void>, onBack: () => void, backLabel: string) => {
+    if (!selectedExercise) return null;
+    const exerciseUnitInfo = findUnit(selectedUnitId);
+    return (
+      <div className="px-4 pb-6">
+        {/* Context bar */}
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={onBack} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/80 transition-all active:scale-90">
+            <ChevronLeft className="w-4 h-4 text-foreground" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground truncate">
+              {(slotStudentList ?? []).find((s: { _id: string; name: string }) => s._id === activeStudentId)?.name}
+            </p>
+            <p className="text-xs text-muted-foreground truncate">
+              {selectedExercise.name}
+              {exerciseUnitInfo ? ` · ${exerciseUnitInfo.unit.name}` : ''}
+            </p>
+          </div>
+          <Badge variant="secondary" className="text-[10px] shrink-0">
+            {selectedExercise.questionCount}Q
+          </Badge>
+        </div>
+
+        {/* Stats bar */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="bg-muted rounded-xl p-2.5 text-center">
+            <p className="text-lg font-bold text-foreground">{attempted}</p>
+            <p className="text-[10px] text-muted-foreground">Attempted</p>
+          </div>
+          <div className="bg-emerald-500/10 rounded-xl p-2.5 text-center">
+            <p className="text-lg font-bold text-emerald-500">{correctCount}</p>
+            <p className="text-[10px] text-emerald-500/70">Correct</p>
+          </div>
+          <div className="bg-primary/10 rounded-xl p-2.5 text-center">
+            <p className="text-lg font-bold text-primary">{pointsThisEntry}</p>
+            <p className="text-[10px] text-primary/70">Points</p>
+          </div>
+        </div>
+
+        {/* Daily total */}
+        <div className="bg-gradient-to-r from-primary to-teal-400 rounded-xl p-3.5 mb-4 text-white">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="text-xs opacity-75 font-medium">Daily Total</p>
+              <p className="text-2xl font-bold">{dailyPoints} pts</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs opacity-75 font-medium">Correct Today</p>
+              <p className="text-xl font-bold">{totalCorrectToday}</p>
+            </div>
+          </div>
+          {correctCount > 0 && (
+            <div className="flex gap-1 mt-2.5 flex-wrap">
+              {Array.from({ length: correctCount }, (_, i) => (
+                <span key={i} className="text-[10px] bg-white/20 rounded-md px-1.5 py-0.5 font-medium">
+                  +{(priorCorrectToday + i + 1) * 5}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Quick actions */}
+        <div className="flex gap-2 mb-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+            onClick={() => {
+              const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
+              for (let i = 1; i <= selectedExercise.questionCount; i++) states[i] = 'correct';
+              setQuestionStates(states);
+            }}
+          >
+            <Check className="w-3.5 h-3.5" /> All Correct
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1 rounded-xl text-xs gap-1"
+            onClick={() => {
+              setQuestionStates(prev => {
+                const next = { ...prev };
+                for (let i = 1; i <= selectedExercise.questionCount; i++) {
+                  if (next[i] === 'unmarked') next[i] = 'correct';
+                }
+                return next;
+              });
+            }}
+          >
+            <Check className="w-3.5 h-3.5" /> Rest Correct
+          </Button>
+        </div>
+
+        {/* Question grid */}
+        <div className="grid grid-cols-5 gap-2 mb-4">
+          {Array.from({ length: selectedExercise.questionCount }, (_, i) => {
+            const qNum = i + 1;
+            const state = questionStates[qNum] || 'unmarked';
+            return (
+              <button
+                key={qNum}
+                onClick={() => toggleQuestion(qNum)}
+                className={`
+                  h-12 rounded-xl font-bold text-sm transition-all active:scale-90
+                  ${state === 'correct' ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/25' : ''}
+                  ${state === 'wrong' ? 'bg-red-500 text-white shadow-md shadow-red-500/25' : ''}
+                  ${state === 'unmarked' ? 'bg-muted text-muted-foreground hover:bg-muted/80' : ''}
+                `}
+              >
+                {state === 'correct' && '\u2713'}
+                {state === 'wrong' && '\u2717'}
+                {state === 'unmarked' && qNum}
+              </button>
+            );
+          })}
+        </div>
+
+        <Button onClick={onSave} className="w-full h-12 text-base font-semibold rounded-xl">
+          Save Entry
+        </Button>
+      </div>
+    );
+  };
+
+  // ─── Drawer browse content ───
+
+  const renderDrawerBrowse = () => {
+    if (!drawerStudentId) return null;
+    const drawerStudent = (slotStudentList ?? []).find((s: { _id: string }) => s._id === drawerStudentId);
+    if (!drawerStudent) return null;
+    const pos = studentPositions.get(drawerStudentId);
+    const dayEntries = todayEntries.filter(e => e.studentId === drawerStudentId);
+    const dayCorrect = dayEntries.reduce((sum, e) => sum + e.correctCount, 0);
+
+    // Get units for current term
+    let termUnits: Array<{ id: string; name: string }> = [];
+    let moduleId = '';
+    if (pos && todayModule) {
+      moduleId = pos.moduleId;
+      const mod = CURRICULUM_MODULES.find(m => m.id === pos.moduleId);
+      const grade = mod?.grades.find(g => g.grade === pos.grade);
+      const term = grade?.terms.find(t => t.term === pos.term);
+      termUnits = term?.units ?? [];
+    }
+
+    const activeUnit = drawerBrowseUnitId || (termUnits[0]?.id ?? '');
+
+    return (
+      <div className="px-4 pb-6">
+        {/* Daily stats */}
+        {dayCorrect > 0 && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2.5 mb-3 flex items-center justify-between">
+            <span className="text-xs font-medium text-emerald-600">{dayCorrect} correct today</span>
+            <span className="text-xs font-bold text-emerald-600">{calculateDailyPoints(dayCorrect)} pts</span>
+          </div>
+        )}
+
+        {/* Context */}
+        {pos && (
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold">{pos.moduleId}</span> · Grade {pos.grade} · Term {pos.term}
+            </p>
+            <button
+              className="text-[10px] text-primary font-medium"
+              onClick={() => {
+                setPositionDialogStudentId(drawerStudentId);
+                setDialogModule(pos.moduleId);
+                setDialogGrade(String(pos.grade));
+                setDialogTerm(String(pos.term));
+                setDialogPermanent(false);
+                setPositionDialogOpen(true);
+              }}
+            >
+              Change
+            </button>
+          </div>
+        )}
+
+        {/* Unit badges */}
+        {termUnits.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {termUnits.map(unit => {
+              const isActive = unit.id === activeUnit;
+              const unitNumber = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 4);
+              return (
+                <button
+                  key={unit.id}
+                  onClick={() => setDrawerBrowseUnitId(unit.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95 ${
+                    isActive
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'bg-muted text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {unitNumber}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Exercise / concept list */}
+        {activeUnit && (() => {
+          const unit = termUnits.find(u => u.id === activeUnit);
+          if (!unit) return null;
+          const unitItems = allExercises.filter(e => e.unitId === unit.id).sort((a, b) => a.order - b.order);
+          const nextExerciseId = pos?.exerciseId;
+
+          return (
+            <div>
+              <p className="text-sm font-medium text-foreground mb-2">{unit.name}</p>
+              {unitItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No exercises configured yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {unitItems.map(item => {
+                    const isConcept = item.type === 'concept';
+                    const isNext = item._id === nextExerciseId;
+
+                    if (isConcept) {
+                      return (
+                        <div key={item._id} className="flex items-center gap-2 py-1.5 px-2.5 bg-accent/50 rounded-lg">
+                          <BookOpen className="w-3.5 h-3.5 text-primary shrink-0" />
+                          <span className="text-xs font-medium text-primary flex-1">{item.name}</span>
+                          {item.pageNumber && (
+                            <span className="text-[10px] text-muted-foreground">p.{item.pageNumber}</span>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    const entry = allEntries.find(e => e.studentId === drawerStudentId && e.exerciseId === item._id);
+                    const isCompleted = entry && entry.correctCount >= item.questionCount && item.questionCount > 0;
+
+                    return (
+                      <Card
+                        key={item._id}
+                        className={`border-border/50 cursor-pointer transition-all active:scale-[0.98] ${
+                          isNext ? 'border-primary/40 bg-primary/5' :
+                          isCompleted ? 'opacity-60' :
+                          'hover:border-primary/30'
+                        }`}
+                        onClick={() => handleDrawerExerciseTap(item, unit.id, moduleId)}
+                      >
+                        <CardContent className="p-2.5 flex items-center gap-2">
+                          {isCompleted ? (
+                            <div className="w-5 h-5 rounded-full bg-emerald-500/15 flex items-center justify-center shrink-0">
+                              <Check className="w-3 h-3 text-emerald-500" />
+                            </div>
+                          ) : isNext ? (
+                            <span className="text-xs text-primary font-bold shrink-0 w-5 text-center">{'\u2192'}</span>
+                          ) : (
+                            <span className="w-5 shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium ${isCompleted ? 'text-muted-foreground' : 'text-foreground'}`}>{item.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.questionCount} questions
+                              {entry ? ` · ${entry.correctCount}/${item.questionCount} correct` : ''}
+                              {item.pageNumber ? ` · p.${item.pageNumber}` : ''}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+    );
+  };
 
   return (
     <div className="px-4 pt-5 pb-6 max-w-lg mx-auto">
@@ -461,7 +828,7 @@ export default function ScoreEntryPage() {
       </div>
 
       {/* Slot info banner */}
-      {effectiveSlot && slotRoom && (
+      {effectiveSlot && slotRoom && view === 'students' && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 mb-3">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary shrink-0" />
@@ -477,7 +844,6 @@ export default function ScoreEntryPage() {
               {handled}/{progressInfo.total}
             </Badge>
           </div>
-          {/* Progress bar */}
           {progressInfo.total > 0 && (
             <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
               <div
@@ -490,7 +856,7 @@ export default function ScoreEntryPage() {
       )}
 
       {/* Manual slot selection */}
-      {(allowManual || attendanceMode) && availableSlots.length > 0 && (
+      {(allowManual || attendanceMode) && availableSlots.length > 0 && view === 'students' && (
         <div className="mb-3">
           <Select value={manualSlotId || (activeSlot?._id ?? '')} onValueChange={(v: string | null) => setManualSlotId(v ?? '')}>
             <SelectTrigger className="h-10 text-sm">
@@ -511,7 +877,7 @@ export default function ScoreEntryPage() {
       )}
 
       {/* Timing warning */}
-      {timingWarning && (
+      {timingWarning && view === 'students' && (
         <div className={`rounded-xl p-3 mb-3 flex items-center gap-2 ${
           timingWarning.level === 'critical' ? 'bg-red-500/10 border border-red-500/30 animate-pulse' :
           timingWarning.level === 'urgent' ? 'bg-red-500/10 border border-red-500/20' :
@@ -529,7 +895,7 @@ export default function ScoreEntryPage() {
       )}
 
       {/* Slot complete banner */}
-      {allHandled && effectiveSlot && (
+      {allHandled && effectiveSlot && view === 'students' && (
         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 mb-3 text-center">
           <p className="text-sm font-semibold text-emerald-600">Slot Complete!</p>
           {nextSlot && (
@@ -538,7 +904,6 @@ export default function ScoreEntryPage() {
               className="mt-2 rounded-xl"
               onClick={() => {
                 setManualSlotId(nextSlot._id);
-                setStep('select-student');
                 setSelectedStudentId(null);
                 setSelectedExercise(null);
               }}
@@ -550,7 +915,7 @@ export default function ScoreEntryPage() {
       )}
 
       {/* No active slot message */}
-      {noSlot && !allowManual && (
+      {noSlot && !allowManual && view === 'students' && (
         <Card className="border-border/50 mb-3">
           <CardContent className="p-4 text-center">
             <p className="text-sm text-muted-foreground mb-2">No active class right now</p>
@@ -571,38 +936,8 @@ export default function ScoreEntryPage() {
         </Card>
       )}
 
-      {/* Touchable step progress */}
-      <div className="flex items-center gap-1.5 mb-3">
-        {stepLabels.map((label, i) => {
-          const isCompleted = i < stepIndex;
-          const isCurrent = i === stepIndex;
-          const canNavigate = canNavigateToStep(i);
-          const hasValue = i === 0 ? !!selectedStudent : i === 1 ? !!selectedExercise : false;
-          return (
-            <button
-              key={i}
-              type="button"
-              disabled={!canNavigate}
-              onClick={() => navigateToStep(i)}
-              className={`flex-1 flex flex-col gap-1 py-1.5 px-1 rounded-lg transition-all min-w-0 ${
-                canNavigate ? 'cursor-pointer active:scale-[0.97]' : 'cursor-default'
-              }`}
-            >
-              <div className={`h-1.5 w-full rounded-full transition-colors ${
-                isCurrent ? 'bg-primary' : isCompleted || (hasValue && !isCurrent) ? 'bg-primary/40' : 'bg-muted'
-              }`} />
-              <span className={`text-[10px] font-medium truncate w-full text-center transition-colors ${
-                isCurrent ? 'text-primary' : canNavigate ? 'text-primary/60' : 'text-muted-foreground/40'
-              }`}>
-                {label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Step 1: Select Student */}
-      {step === 'select-student' && (
+      {/* ═══ Students View ═══ */}
+      {view === 'students' && (
         <div>
           {/* Attendance mode toggle */}
           <div className="flex items-center justify-between mb-3">
@@ -624,7 +959,7 @@ export default function ScoreEntryPage() {
             </button>
           </div>
 
-          {/* Attendance: no slot selected */}
+          {/* Attendance: no slot */}
           {attendanceMode && !effectiveSlot && (
             <Card className="border-amber-500/30 bg-amber-500/5 mb-3">
               <CardContent className="p-3 text-center">
@@ -659,6 +994,7 @@ export default function ScoreEntryPage() {
             </div>
           )}
 
+          {/* Student cards */}
           <div className="space-y-1.5">
             {filteredStudents
               .filter(student => {
@@ -670,9 +1006,19 @@ export default function ScoreEntryPage() {
               const hasEntry = studentsWithEntries.has(student._id);
               const isSelected = student._id === selectedStudentId;
               const isAbsent = absentStudentIds.has(student._id);
-              const sStudentDayEntries = todayEntries.filter(e => e.studentId === student._id);
-              const dayCorrect = sStudentDayEntries.reduce((sum, e) => sum + e.correctCount, 0);
               const info = studentExerciseInfo.get(student._id);
+              const pos = studentPositions.get(student._id);
+              const termUnits = getStudentTermUnits(student._id);
+              const unitFilter = cardUnitFilter[student._id];
+
+              // Determine snapshot items
+              const snapshotLimit = isSelected ? 5 : 3;
+              let snapshotItems: Array<{ id: string; name: string; type: string; isCompleted?: boolean }>;
+              if (unitFilter) {
+                snapshotItems = getUnitSnapshotItems(student._id, unitFilter, snapshotLimit);
+              } else {
+                snapshotItems = (info?.upcoming ?? []).slice(0, snapshotLimit);
+              }
 
               return (
                 <Card
@@ -693,11 +1039,12 @@ export default function ScoreEntryPage() {
                         toast.success(`${student.name} marked absent`);
                       }
                     } else {
-                      selectStudent(student._id);
+                      handleCardTap(student._id);
                     }
                   }}
                 >
                   <CardContent className="p-3">
+                    {/* Row 1: Name + position badge + expand */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         {isAbsent ? (
@@ -721,8 +1068,32 @@ export default function ScoreEntryPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {hasEntry && (
-                          <Badge variant="secondary" className="text-xs">{dayCorrect} correct</Badge>
+                        {!attendanceMode && pos && (
+                          <button
+                            className="px-2 py-1 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-semibold text-foreground transition-all active:scale-95"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setPositionDialogStudentId(student._id);
+                              setDialogModule(todayModule?.id ?? '');
+                              setDialogGrade(String(pos.grade));
+                              setDialogTerm(String(pos.term));
+                              setDialogPermanent(false);
+                              setPositionDialogOpen(true);
+                            }}
+                          >
+                            G{pos.grade}{'\u00B7'}T{pos.term}
+                          </button>
+                        )}
+                        {!attendanceMode && (
+                          <button
+                            className="w-7 h-7 rounded-lg bg-muted hover:bg-muted/80 flex items-center justify-center transition-all active:scale-95"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleExpandTap(student._id);
+                            }}
+                          >
+                            <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
                         )}
                         {attendanceMode && effectiveSlot && (
                           <Button
@@ -745,18 +1116,74 @@ export default function ScoreEntryPage() {
                         )}
                       </div>
                     </div>
-                    {!attendanceMode && info && (info.doneToday.length > 0 || info.upcoming.length > 0) && (
-                      <div className="mt-2 ml-10 flex flex-wrap items-center gap-1">
-                        {info.doneToday.map((name, i) => (
+
+                    {/* Row 2: Unit badges */}
+                    {!attendanceMode && termUnits.length > 0 && (
+                      <div className="mt-2 ml-10 flex flex-wrap gap-1">
+                        {termUnits.map(unit => {
+                          const isCurrent = unit.id === pos?.unitId;
+                          const isFiltered = unit.id === unitFilter;
+                          const unitNumber = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 3);
+                          return (
+                            <button
+                              key={unit.id}
+                              onClick={e => {
+                                e.stopPropagation();
+                                setCardUnitFilter(prev => {
+                                  const next = { ...prev };
+                                  if (next[student._id] === unit.id) {
+                                    delete next[student._id];
+                                  } else {
+                                    next[student._id] = unit.id;
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all active:scale-95 ${
+                                isFiltered
+                                  ? 'bg-primary text-primary-foreground'
+                                  : isCurrent
+                                  ? 'bg-primary/20 text-primary'
+                                  : 'bg-muted text-muted-foreground'
+                              }`}
+                            >
+                              {unitNumber}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Row 3: Snapshot */}
+                    {!attendanceMode && (
+                      (info && info.doneToday.length > 0) || snapshotItems.length > 0
+                    ) && (
+                      <div className="mt-1.5 ml-10 flex flex-wrap items-center gap-1">
+                        {info?.doneToday.map((name, i) => (
                           <span key={`done-${i}`} className="text-[10px] bg-emerald-500/10 text-emerald-600 rounded-md px-1.5 py-0.5 font-medium">
-                            ✓ {name}
+                            {'\u2713'} {name}
                           </span>
                         ))}
-                        {info.upcoming.slice(0, isSelected ? 5 : 2).map((ex, i) => (
-                          <span key={ex.exerciseId} className="text-[10px] bg-muted text-muted-foreground rounded-md px-1.5 py-0.5">
-                            {i === 0 ? '→ ' : ''}{ex.name}
-                          </span>
-                        ))}
+                        {snapshotItems.map((item, i) => {
+                          const firstExerciseIdx = snapshotItems.findIndex(u => u.type !== 'concept');
+                          if (item.type === 'concept') {
+                            return (
+                              <span key={item.id} className="text-[10px] bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-medium">
+                                {'\u2630'} {item.name}
+                              </span>
+                            );
+                          }
+                          const isCompleted = 'isCompleted' in item && item.isCompleted;
+                          return (
+                            <span key={item.id} className={`text-[10px] rounded-md px-1.5 py-0.5 ${
+                              isCompleted
+                                ? 'bg-emerald-500/10 text-emerald-600 line-through'
+                                : 'bg-muted text-muted-foreground'
+                            }`}>
+                              {!isCompleted && i === firstExerciseIdx ? '\u2192 ' : ''}{item.name}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </CardContent>
@@ -767,229 +1194,85 @@ export default function ScoreEntryPage() {
         </div>
       )}
 
-      {/* Step 2: Select Exercise */}
-      {step === 'select-exercise' && selectedStudent && (
+      {/* ═══ Scoring View (normal flow) ═══ */}
+      {view === 'scoring' && selectedExercise && (
         <div>
-          {selectedExercise && !browseMode && (
-            <div className="mb-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Suggested Next</p>
-              <Card className="border-primary/30 bg-primary/5 cursor-pointer active:scale-[0.98] transition-all" onClick={confirmExercise}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-foreground">{selectedExercise.name}</p>
-                      {(() => {
-                        const unitInfo = findUnit(selectedUnitId);
-                        return unitInfo ? (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Grade {unitInfo.grade} · {unitInfo.unit.name}
-                          </p>
-                        ) : null;
-                      })()}
-                      <p className="text-xs text-muted-foreground mt-1">{selectedExercise.questionCount} questions</p>
-                    </div>
-                    <Button size="sm">Start</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+          {renderScoringUI(handleSave, handleBackToStudents, 'Students')}
 
-          <Button variant="outline" className="w-full mb-4" onClick={() => setBrowseMode(!browseMode)}>
-            {browseMode ? 'Hide Browser' : 'Browse All Exercises'}
-          </Button>
-
-          {browseMode && (
-            <div className="space-y-3">
-              <Select value={browseModule} onValueChange={(v) => { setBrowseModule(v ?? ''); setBrowseGrade(''); setBrowseTerm(''); }}>
-                <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Select Module" /></SelectTrigger>
-                <SelectContent>
-                  {CURRICULUM_MODULES.map(m => (
-                    <SelectItem key={m.id} value={m.id}>{m.id}: {m.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {browseModule && (() => {
-                const mod = CURRICULUM_MODULES.find(m => m.id === browseModule)!;
-                return (
-                  <>
-                    <Select value={browseGrade} onValueChange={(v) => { setBrowseGrade(v ?? ''); setBrowseTerm(''); }}>
-                      <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Select Grade" /></SelectTrigger>
-                      <SelectContent>
-                        {mod.grades.map(g => (
-                          <SelectItem key={g.grade} value={String(g.grade)}>Grade {g.grade}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-
-                    {browseGrade && (() => {
-                      const grade = mod.grades.find(g => g.grade === parseInt(browseGrade))!;
-                      return (
-                        <>
-                          <Select value={browseTerm} onValueChange={(v) => { setBrowseTerm(v ?? ''); }}>
-                            <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Select Term" /></SelectTrigger>
-                            <SelectContent>
-                              {grade.terms.map(t => (
-                                <SelectItem key={t.term} value={String(t.term)}>Term {t.term}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-
-                          {browseTerm && (() => {
-                            const term = grade.terms.find(t => t.term === parseInt(browseTerm))!;
-                            return (
-                              <div className="space-y-3">
-                                {term.units.map(unit => {
-                                  const unitExercises = allExercises.filter(e => e.unitId === unit.id).sort((a, b) => a.order - b.order);
-                                  return (
-                                    <div key={unit.id}>
-                                      <p className="text-sm font-medium text-foreground mb-1.5">{unit.name}</p>
-                                      {unitExercises.length === 0 ? (
-                                        <p className="text-xs text-muted-foreground ml-2">No exercises</p>
-                                      ) : (
-                                        <div className="space-y-1 ml-2">
-                                          {unitExercises.map(ex => (
-                                            <Card
-                                              key={ex._id}
-                                              className="border-border/50 cursor-pointer hover:border-primary/30 transition-all active:scale-[0.98]"
-                                              onClick={() => selectBrowseExercise(ex, unit.id, browseModule)}
-                                            >
-                                              <CardContent className="p-2.5 flex items-center justify-between">
-                                                <div>
-                                                  <p className="text-sm font-medium text-foreground">{ex.name}</p>
-                                                  <p className="text-xs text-muted-foreground">{ex.questionCount} questions</p>
-                                                </div>
-                                                <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                                              </CardContent>
-                                            </Card>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })()}
-                        </>
-                      );
-                    })()}
-                  </>
-                );
-              })()}
+          {/* Continue prompt */}
+          {showContinuePrompt && (
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t z-40">
+              <div className="max-w-lg mx-auto space-y-2">
+                <p className="text-sm font-medium text-center text-foreground">Continue to next exercise?</p>
+                <div className="flex gap-2">
+                  <Button className="flex-1 rounded-xl" onClick={handleContinue}>
+                    Next Exercise
+                  </Button>
+                  <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowContinuePrompt(false); doBackToStudents(); }}>
+                    Back to Students
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Step 3: Mark Questions */}
-      {step === 'mark-questions' && selectedStudent && selectedExercise && (
-        <div>
-          {/* Stats bar */}
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <div className="bg-muted rounded-xl p-2.5 text-center">
-              <p className="text-lg font-bold text-foreground">{attempted}</p>
-              <p className="text-[10px] text-muted-foreground">Attempted</p>
-            </div>
-            <div className="bg-emerald-500/10 rounded-xl p-2.5 text-center">
-              <p className="text-lg font-bold text-emerald-500">{correctCount}</p>
-              <p className="text-[10px] text-emerald-500/70">Correct</p>
-            </div>
-            <div className="bg-primary/10 rounded-xl p-2.5 text-center">
-              <p className="text-lg font-bold text-primary">{pointsThisEntry}</p>
-              <p className="text-[10px] text-primary/70">Points</p>
-            </div>
-          </div>
-
-          {/* Daily total */}
-          <div className="bg-gradient-to-r from-primary to-teal-400 rounded-xl p-3.5 mb-4 text-white">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs opacity-75 font-medium">Daily Total</p>
-                <p className="text-2xl font-bold">{dailyPoints} pts</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs opacity-75 font-medium">Correct Today</p>
-                <p className="text-xl font-bold">{totalCorrectToday}</p>
-              </div>
-            </div>
-            {correctCount > 0 && (
-              <div className="flex gap-1 mt-2.5 flex-wrap">
-                {Array.from({ length: correctCount }, (_, i) => (
-                  <span key={i} className="text-[10px] bg-white/20 rounded-md px-1.5 py-0.5 font-medium">
-                    +{(priorCorrectToday + i + 1) * 5}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Quick actions */}
-          <div className="flex gap-2 mb-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
-              onClick={() => {
-                const states: Record<number, 'correct' | 'wrong' | 'unmarked'> = {};
-                for (let i = 1; i <= selectedExercise.questionCount; i++) states[i] = 'correct';
-                setQuestionStates(states);
-              }}
-            >
-              <Check className="w-3.5 h-3.5" /> All Correct
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1 rounded-xl text-xs gap-1"
-              onClick={() => {
-                setQuestionStates(prev => {
-                  const next = { ...prev };
-                  for (let i = 1; i <= selectedExercise.questionCount; i++) {
-                    if (next[i] === 'unmarked') next[i] = 'correct';
-                  }
-                  return next;
-                });
-              }}
-            >
-              <Check className="w-3.5 h-3.5" /> Rest Correct
-            </Button>
-          </div>
-
-          {/* Question grid */}
-          <div className="grid grid-cols-5 gap-2 mb-4">
-            {Array.from({ length: selectedExercise.questionCount }, (_, i) => {
-              const qNum = i + 1;
-              const state = questionStates[qNum] || 'unmarked';
-              return (
+      {/* ═══ Right Drawer (full browse) ═══ */}
+      <Drawer direction="right" open={drawerOpen} onOpenChange={handleDrawerClose}>
+        <DrawerContent style={{ width: '100%', maxWidth: '100%' }}>
+          <div className="flex flex-col h-full">
+            {/* Drawer header */}
+            <DrawerHeader className="border-b">
+              <div className="flex items-center gap-3">
                 <button
-                  key={qNum}
-                  onClick={() => toggleQuestion(qNum)}
-                  className={`
-                    h-12 rounded-xl font-bold text-sm transition-all active:scale-90
-                    ${state === 'correct' ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/25' : ''}
-                    ${state === 'wrong' ? 'bg-red-500 text-white shadow-md shadow-red-500/25' : ''}
-                    ${state === 'unmarked' ? 'bg-muted text-muted-foreground hover:bg-muted/80' : ''}
-                  `}
+                  onClick={() => drawerScoring ? handleDrawerBack() : handleDrawerClose(false)}
+                  className="w-8 h-8 rounded-full bg-muted flex items-center justify-center hover:bg-muted/80 transition-all active:scale-90"
                 >
-                  {state === 'correct' && '✓'}
-                  {state === 'wrong' && '✗'}
-                  {state === 'unmarked' && qNum}
+                  <ChevronLeft className="w-4 h-4 text-foreground" />
                 </button>
-              );
-            })}
+                <div className="flex-1 min-w-0">
+                  <DrawerTitle className="text-sm truncate">
+                    {(slotStudentList ?? []).find((s: { _id: string; name: string }) => s._id === drawerStudentId)?.name ?? 'Student'}
+                  </DrawerTitle>
+                  <DrawerDescription className="text-xs truncate">
+                    {drawerScoring && selectedExercise ? selectedExercise.name : 'Browse exercises'}
+                  </DrawerDescription>
+                </div>
+              </div>
+            </DrawerHeader>
+
+            {/* Sliding panels */}
+            <div className="flex-1 relative overflow-hidden">
+              {/* Browse panel */}
+              <div className={`absolute inset-0 overflow-y-auto no-scrollbar transition-transform duration-300 ${
+                drawerScoring ? '-translate-x-full' : 'translate-x-0'
+              }`}>
+                <div className="pt-4">
+                  {renderDrawerBrowse()}
+                </div>
+              </div>
+
+              {/* Scoring panel */}
+              <div className={`absolute inset-0 overflow-y-auto no-scrollbar transition-transform duration-300 ${
+                drawerScoring ? 'translate-x-0' : 'translate-x-full'
+              }`}>
+                <div className="pt-4">
+                  {drawerScoring && selectedExercise && renderScoringUI(
+                    handleSave,
+                    handleDrawerBack,
+                    'Exercises'
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
+        </DrawerContent>
+      </Drawer>
 
-          <Button onClick={handleSave} className="w-full h-12 text-base font-semibold rounded-xl">
-            Save Entry
-          </Button>
-        </div>
-      )}
-
-      {/* Unsaved changes dialog */}
+      {/* ═══ Unsaved changes dialog ═══ */}
       <Dialog open={showUnsavedDialog} onOpenChange={(open) => {
-        if (!open) { setShowUnsavedDialog(false); setPendingStepTarget(null); }
+        if (!open) { setShowUnsavedDialog(false); setPendingAction(null); }
       }}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
@@ -997,8 +1280,118 @@ export default function ScoreEntryPage() {
             <DialogDescription>You have unsaved question marks. Save before leaving?</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={handleDialogLeave}>Leave</Button>
-            <Button onClick={handleDialogSave}>Save</Button>
+            <Button variant="outline" onClick={() => {
+              setShowUnsavedDialog(false);
+              if (pendingAction) {
+                pendingAction();
+                setPendingAction(null);
+              }
+            }}>Leave</Button>
+            <Button onClick={async () => {
+              await saveEntry();
+              setShowUnsavedDialog(false);
+              if (pendingAction) {
+                pendingAction();
+                setPendingAction(null);
+              }
+            }}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Position override dialog ═══ */}
+      <Dialog open={positionDialogOpen} onOpenChange={setPositionDialogOpen}>
+        <DialogContent className="max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle>Change Position</DialogTitle>
+            <DialogDescription>Override module, grade, and term for this student</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-sm">Module</Label>
+              <Select value={dialogModule} onValueChange={v => setDialogModule(v ?? '')}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Module" /></SelectTrigger>
+                <SelectContent>
+                  {CURRICULUM_MODULES.map(m => (
+                    <SelectItem key={m.id} value={m.id}>{m.id}: {m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {dialogModule && (() => {
+              const mod = CURRICULUM_MODULES.find(m => m.id === dialogModule);
+              if (!mod) return null;
+              return (
+                <>
+                  <div>
+                    <Label className="text-sm">Grade</Label>
+                    <Select value={dialogGrade} onValueChange={v => { setDialogGrade(v ?? ''); setDialogTerm(''); }}>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="Grade" /></SelectTrigger>
+                      <SelectContent>
+                        {mod.grades.map(g => (
+                          <SelectItem key={g.grade} value={String(g.grade)}>Grade {g.grade}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {dialogGrade && (() => {
+                    const grade = mod.grades.find(g => g.grade === parseInt(dialogGrade));
+                    if (!grade) return null;
+                    return (
+                      <div>
+                        <Label className="text-sm">Term</Label>
+                        <Select value={dialogTerm} onValueChange={v => setDialogTerm(v ?? '')}>
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Term" /></SelectTrigger>
+                          <SelectContent>
+                            {grade.terms.map(t => (
+                              <SelectItem key={t.term} value={String(t.term)}>Term {t.term}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    );
+                  })()}
+                </>
+              );
+            })()}
+
+            {/* Permanent toggle */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={() => setDialogPermanent(!dialogPermanent)}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${dialogPermanent ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${dialogPermanent ? 'translate-x-5' : ''}`} />
+              </button>
+              <div>
+                <Label className="text-sm">Save permanently</Label>
+                <p className="text-xs text-muted-foreground">Sets this as the student&apos;s starting position for this module</p>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPositionDialogOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!dialogModule || !dialogGrade || !dialogTerm}
+              onClick={async () => {
+                const newGrade = parseInt(dialogGrade);
+                const newTerm = parseInt(dialogTerm);
+
+                if (dialogPermanent && positionDialogStudentId) {
+                  await setModulePositionMutation({
+                    studentId: positionDialogStudentId,
+                    moduleId: dialogModule,
+                    grade: newGrade,
+                    term: newTerm,
+                  });
+                  toast.success('Position saved permanently');
+                }
+
+                setPositionDialogOpen(false);
+              }}
+            >
+              Apply
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

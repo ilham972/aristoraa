@@ -14,9 +14,11 @@ import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
+import type * as seed from "../seed.js";
 import type * as settings from "../settings.js";
 import type * as slotStudents from "../slotStudents.js";
 import type * as slotTeachers from "../slotTeachers.js";
+import type * as studentModulePositions from "../studentModulePositions.js";
 import type * as students from "../students.js";
 import type * as teachers from "../teachers.js";
 
@@ -33,9 +35,11 @@ declare const fullApi: ApiFromModules<{
   exercises: typeof exercises;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
+  seed: typeof seed;
   settings: typeof settings;
   slotStudents: typeof slotStudents;
   slotTeachers: typeof slotTeachers;
+  studentModulePositions: typeof studentModulePositions;
   students: typeof students;
   teachers: typeof teachers;
 }>;

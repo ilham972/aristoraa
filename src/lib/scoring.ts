@@ -136,22 +136,55 @@ export function getLeaderboard(
     .sort((a, b) => b.totalPoints - a.totalPoints);
 }
 
-// Get student's next N upcoming exercises in a module
+export interface PositionOptions {
+  positionOverride?: { grade: number; term: number };
+  defaultGrade?: number; // student's school grade — used when no entries exist
+}
+
+// Should this unit be skipped based on position options?
+function shouldSkipUnit(
+  unit: { grade: number; term: number },
+  startGrade: number,
+  startTerm: number,
+): boolean {
+  if (unit.grade < startGrade) return true;
+  if (unit.grade === startGrade && unit.term < startTerm) return true;
+  return false;
+}
+
+// Determine the starting grade/term for scanning
+function getStartPosition(
+  hasEntries: boolean,
+  options?: PositionOptions,
+): { grade: number; term: number } {
+  if (options?.positionOverride) {
+    return options.positionOverride;
+  }
+  if (!hasEntries && options?.defaultGrade) {
+    return { grade: options.defaultGrade, term: 1 };
+  }
+  return { grade: 6, term: 1 }; // absolute minimum
+}
+
+// Get student's next N upcoming exercises in a module (skips concepts — theory items)
 export function getStudentUpcomingExercises(
   studentId: string,
   moduleId: string,
   allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
-  allExercises: Array<{ _id: string; unitId: string; name: string; questionCount: number; order: number }>,
+  allExercises: Array<{ _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string }>,
   orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
   count: number = 5,
+  options?: PositionOptions,
 ): Array<{ exerciseId: string; unitId: string; name: string }> {
   const studentModuleEntries = allEntries.filter(
     e => e.studentId === studentId && e.moduleId === moduleId
   );
+  const start = getStartPosition(studentModuleEntries.length > 0, options);
   const results: Array<{ exerciseId: string; unitId: string; name: string }> = [];
   for (const unit of orderedUnits) {
+    if (shouldSkipUnit(unit, start.grade, start.term)) continue;
     const unitExercises = allExercises
-      .filter(ex => ex.unitId === unit.id)
+      .filter(ex => ex.unitId === unit.id && (ex.type || 'exercise') === 'exercise')
       .sort((a, b) => a.order - b.order);
     for (const exercise of unitExercises) {
       const entry = studentModuleEntries.find(e => e.exerciseId === exercise._id);
@@ -164,37 +197,95 @@ export function getStudentUpcomingExercises(
   return results;
 }
 
-// Get student's next exercise in a module
+// Get student's next N upcoming items (exercises + concepts) for snapshot display
+// Shows the full sequence so teacher can see which theory to teach next
+export function getStudentUpcomingItems(
+  studentId: string,
+  moduleId: string,
+  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
+  allExercises: Array<{ _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string }>,
+  orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
+  count: number = 5,
+  options?: PositionOptions,
+): Array<{ id: string; unitId: string; name: string; type: string }> {
+  const studentModuleEntries = allEntries.filter(
+    e => e.studentId === studentId && e.moduleId === moduleId
+  );
+  const start = getStartPosition(studentModuleEntries.length > 0, options);
+  const results: Array<{ id: string; unitId: string; name: string; type: string }> = [];
+
+  for (const unit of orderedUnits) {
+    if (shouldSkipUnit(unit, start.grade, start.term)) continue;
+    const unitItems = allExercises
+      .filter(ex => ex.unitId === unit.id)
+      .sort((a, b) => a.order - b.order);
+
+    // Find the first incomplete exercise in this unit
+    let firstIncompleteIdx = -1;
+    for (let i = 0; i < unitItems.length; i++) {
+      const item = unitItems[i];
+      if ((item.type || 'exercise') === 'concept') continue;
+      const entry = studentModuleEntries.find(e => e.exerciseId === item._id);
+      if (!entry || entry.correctCount < item.questionCount) {
+        firstIncompleteIdx = i;
+        break;
+      }
+    }
+
+    if (firstIncompleteIdx === -1 && results.length === 0) continue;
+
+    let startIdx = firstIncompleteIdx >= 0 ? firstIncompleteIdx : 0;
+    if (results.length === 0 && firstIncompleteIdx >= 0) {
+      while (startIdx > 0 && unitItems[startIdx - 1].type === 'concept') {
+        startIdx--;
+      }
+    }
+
+    const fromIdx = results.length === 0 ? startIdx : 0;
+    for (let i = fromIdx; i < unitItems.length; i++) {
+      const item = unitItems[i];
+      const isExercise = (item.type || 'exercise') === 'exercise';
+      if (isExercise) {
+        const entry = studentModuleEntries.find(e => e.exerciseId === item._id);
+        if (entry && entry.correctCount >= item.questionCount) continue;
+      }
+      results.push({ id: item._id, unitId: unit.id, name: item.name, type: item.type || 'exercise' });
+      if (results.length >= count) return results;
+    }
+  }
+  return results;
+}
+
+// Get student's next exercise in a module (skips concepts — theory items)
 export function getStudentNextExercise(
   studentId: string,
   moduleId: string,
   allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
-  allExercises: Array<{ _id: string; unitId: string; questionCount: number; order: number }>,
+  allExercises: Array<{ _id: string; unitId: string; questionCount: number; order: number; type?: string }>,
   orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
+  options?: PositionOptions,
 ): { exerciseId: string; unitId: string } | null {
-  // Get all entries for this student in this module
   const studentModuleEntries = allEntries.filter(
     e => e.studentId === studentId && e.moduleId === moduleId
   );
+  const start = getStartPosition(studentModuleEntries.length > 0, options);
 
-  // For each unit in order, find the first incomplete exercise
   for (const unit of orderedUnits) {
+    if (shouldSkipUnit(unit, start.grade, start.term)) continue;
     const unitExercises = allExercises
-      .filter(ex => ex.unitId === unit.id)
+      .filter(ex => ex.unitId === unit.id && (ex.type || 'exercise') === 'exercise')
       .sort((a, b) => a.order - b.order);
 
     for (const exercise of unitExercises) {
-      // Check if this exercise has been completed
       const entry = studentModuleEntries.find(e => e.exerciseId === exercise._id);
       if (!entry) {
         return { exerciseId: exercise._id, unitId: unit.id };
       }
-      // If entry exists but not all questions answered correctly, it's still the current exercise
       if (entry.correctCount < exercise.questionCount) {
         return { exerciseId: exercise._id, unitId: unit.id };
       }
     }
   }
 
-  return null; // All exercises completed
+  return null;
 }

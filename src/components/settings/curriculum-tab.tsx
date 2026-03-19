@@ -55,6 +55,7 @@ export function CurriculumTab() {
   const bulkAddMutation = useMutation(api.exercises.bulkAdd);
   const addConceptMutation = useMutation(api.exercises.addConcept);
   const updateQuestionCountMutation = useMutation(api.exercises.updateQuestionCount);
+  const updatePageNumberMutation = useMutation(api.exercises.updatePageNumber);
   const removeExerciseMutation = useMutation(api.exercises.remove);
 
   if (!allExercises) {
@@ -72,6 +73,7 @@ export function CurriculumTab() {
   const unitNumber = selectedUnit ? extractUnitNumber(selectedUnit.name) : 0;
 
   const getExerciseCount = (unitId: string) => allExercises.filter(e => e.unitId === unitId && (e.type || 'exercise') === 'exercise').length;
+  const getConceptCount = (unitId: string) => allExercises.filter(e => e.unitId === unitId && e.type === 'concept').length;
 
   const handleBack = () => {
     if (viewLevel === 'exercises') { setViewLevel('units'); setSelectedUnit(null); setLastExNum(''); setHasReview(false); }
@@ -106,6 +108,16 @@ export function CurriculumTab() {
     const val = parseInt(inputValue);
     if (isNaN(val) || val < 0 || val === currentCount) return;
     await updateQuestionCountMutation({ id, questionCount: val });
+  };
+
+  const handlePageBlur = async (id: Id<"exercises">, currentPage: number | undefined, inputValue: string) => {
+    const val = parseInt(inputValue);
+    if (inputValue.trim() === '' && currentPage !== undefined) {
+      // Clear not supported with number field, just ignore
+      return;
+    }
+    if (isNaN(val) || val < 0 || val === currentPage) return;
+    await updatePageNumberMutation({ id, pageNumber: val });
   };
 
   const handleDelete = async (id: Id<"exercises">, type?: string) => {
@@ -211,15 +223,20 @@ export function CurriculumTab() {
             ?.terms.find(t => t.term === selectedTerm)
             ?.units.map(unit => {
               const exCount = getExerciseCount(unit.id);
+              const conCount = getConceptCount(unit.id);
               return (
                 <Card key={unit.id} className="border-border/50 cursor-pointer hover:border-primary/30 transition-all active:scale-[0.98]" onClick={() => { setSelectedUnit(unit); setViewLevel('exercises'); }}>
                   <CardContent className="p-3.5 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-foreground text-sm">{unit.name}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{exCount > 0 ? `${exCount} exercise${exCount !== 1 ? 's' : ''}` : 'No exercises yet'}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {exCount > 0 ? `${exCount} exercise${exCount !== 1 ? 's' : ''}` : 'No exercises yet'}
+                        {conCount > 0 && ` · ${conCount} concept${conCount !== 1 ? 's' : ''}`}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       {exCount > 0 && <Badge variant="secondary" className="text-[10px]">{exCount}</Badge>}
+                      {conCount > 0 && <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">{conCount}</Badge>}
                       <ChevronRight className="w-5 h-5 text-muted-foreground" />
                     </div>
                   </CardContent>
@@ -279,7 +296,17 @@ export function CurriculumTab() {
                       {isConcept ? (
                         <div className="flex items-center gap-2 py-2 px-3 bg-accent/50 rounded-lg my-0.5">
                           <BookOpen className="w-4 h-4 text-primary shrink-0" />
-                          <span className="text-sm font-medium text-primary flex-1">{item.name}</span>
+                          <span className="text-sm font-medium text-primary flex-1 min-w-0 truncate">{item.name}</span>
+                          <Input
+                            key={`pg-${item._id}-${item.pageNumber}`}
+                            type="number"
+                            min={1}
+                            defaultValue={item.pageNumber || ''}
+                            placeholder="pg"
+                            className="w-14 h-7 text-xs text-center font-mono"
+                            onBlur={e => handlePageBlur(item._id, item.pageNumber, e.target.value)}
+                          />
+                          <span className="text-[10px] text-muted-foreground shrink-0">pg</span>
                           <button onClick={() => handleDelete(item._id, 'concept')} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -296,10 +323,20 @@ export function CurriculumTab() {
                               min={1}
                               defaultValue={item.questionCount || ''}
                               placeholder="Qs"
-                              className="w-16 h-8 text-sm text-center font-mono"
+                              className="w-14 h-8 text-sm text-center font-mono"
                               onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
                             />
                             <span className="text-[11px] text-muted-foreground shrink-0">qs</span>
+                            <Input
+                              key={`pg-${item._id}-${item.pageNumber}`}
+                              type="number"
+                              min={1}
+                              defaultValue={item.pageNumber || ''}
+                              placeholder="pg"
+                              className="w-14 h-8 text-sm text-center font-mono"
+                              onBlur={e => handlePageBlur(item._id, item.pageNumber, e.target.value)}
+                            />
+                            <span className="text-[11px] text-muted-foreground shrink-0">pg</span>
                             <button onClick={() => handleDelete(item._id)} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>

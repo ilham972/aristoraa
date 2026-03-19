@@ -128,6 +128,18 @@ export const updateQuestionCount = mutation({
   },
 });
 
+export const updatePageNumber = mutation({
+  args: {
+    id: v.id("exercises"),
+    pageNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await ctx.db.patch(args.id, { pageNumber: args.pageNumber });
+  },
+});
+
 export const update = mutation({
   args: {
     id: v.id("exercises"),
