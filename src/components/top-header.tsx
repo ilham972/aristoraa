@@ -3,7 +3,7 @@
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import { Sun, Moon } from 'lucide-react';
-import { Show, UserButton, SignInButton } from '@clerk/nextjs';
+import { UserButton } from '@clerk/nextjs';
 
 export function TopHeader() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -38,16 +38,7 @@ export function TopHeader() {
               )}
             </button>
           )}
-          <Show when="signed-in">
-            <UserButton />
-          </Show>
-          <Show when="signed-out">
-            <SignInButton mode="modal">
-              <button className="text-sm font-medium px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                Sign in
-              </button>
-            </SignInButton>
-          </Show>
+          <UserButton />
         </div>
       </div>
     </header>

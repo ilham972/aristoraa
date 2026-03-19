@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 export const list = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db.query("exercises").collect();
   },
 });
@@ -10,6 +12,8 @@ export const list = query({
 export const getByUnit = query({
   args: { unitId: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("exercises")
       .withIndex("by_unit", (q) => q.eq("unitId", args.unitId))
@@ -26,6 +30,8 @@ export const add = mutation({
     type: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("exercises", {
       ...args,
       type: args.type ?? "exercise",
@@ -42,6 +48,9 @@ export const bulkAdd = mutation({
     startFrom: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     const { unitId, unitNumber, lastExercise, hasReview } = args;
 
     const existing = await ctx.db
@@ -80,6 +89,9 @@ export const addConcept = mutation({
     afterOrder: v.number(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     const items = await ctx.db
       .query("exercises")
       .withIndex("by_unit", (q) => q.eq("unitId", args.unitId))
@@ -110,6 +122,8 @@ export const updateQuestionCount = mutation({
     questionCount: v.number(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     await ctx.db.patch(args.id, { questionCount: args.questionCount });
   },
 });
@@ -121,6 +135,8 @@ export const update = mutation({
     questionCount: v.number(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
   },
@@ -129,6 +145,8 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("exercises") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     // Delete all entries for this exercise
     const entries = await ctx.db.query("entries").collect();
     for (const entry of entries) {

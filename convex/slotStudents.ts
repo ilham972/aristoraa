@@ -4,6 +4,8 @@ import { v } from "convex/values";
 export const listBySlot = query({
   args: { slotId: v.id("scheduleSlots") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("slotStudents")
       .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
@@ -14,6 +16,8 @@ export const listBySlot = query({
 export const listByStudent = query({
   args: { studentId: v.id("students") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("slotStudents")
       .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
@@ -27,6 +31,8 @@ export const assign = mutation({
     studentId: v.id("students"),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     // Check if already assigned
     const existing = await ctx.db
       .query("slotStudents")
@@ -43,6 +49,8 @@ export const unassign = mutation({
     studentId: v.id("students"),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const existing = await ctx.db
       .query("slotStudents")
       .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
@@ -60,6 +68,8 @@ export const addOverride = mutation({
     action: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("slotOverrides", args);
   },
 });
@@ -67,6 +77,8 @@ export const addOverride = mutation({
 export const removeOverride = mutation({
   args: { id: v.id("slotOverrides") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     await ctx.db.delete(args.id);
   },
 });
@@ -74,6 +86,8 @@ export const removeOverride = mutation({
 export const listOverrides = query({
   args: { slotId: v.id("scheduleSlots"), date: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("slotOverrides")
       .withIndex("by_slot_date", (q) =>

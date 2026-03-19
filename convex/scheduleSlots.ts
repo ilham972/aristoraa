@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 export const list = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db.query("scheduleSlots").collect();
   },
 });
@@ -10,6 +12,8 @@ export const list = query({
 export const listByDay = query({
   args: { dayOfWeek: v.number() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("scheduleSlots")
       .withIndex("by_day", (q) => q.eq("dayOfWeek", args.dayOfWeek))
@@ -20,6 +24,8 @@ export const listByDay = query({
 export const listByRoom = query({
   args: { roomId: v.id("rooms") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("scheduleSlots")
       .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
@@ -35,6 +41,8 @@ export const add = mutation({
     roomId: v.id("rooms"),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("scheduleSlots", args);
   },
 });
@@ -48,6 +56,8 @@ export const update = mutation({
     roomId: v.id("rooms"),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
   },
@@ -56,6 +66,9 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("scheduleSlots") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     // Cascade: slotStudents, slotOverrides, slotTeachers, attendance
     const slotStudents = await ctx.db
       .query("slotStudents")
@@ -88,6 +101,9 @@ export const remove = mutation({
 export const getEffectiveStudents = query({
   args: { slotId: v.id("scheduleSlots"), date: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
     // Base students assigned to this slot
     const slotStudents = await ctx.db
       .query("slotStudents")

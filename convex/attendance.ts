@@ -4,6 +4,8 @@ import { v } from "convex/values";
 export const getBySlotAndDate = query({
   args: { slotId: v.id("scheduleSlots"), date: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("attendance")
       .withIndex("by_slot_date", (q) =>
@@ -20,6 +22,9 @@ export const markPresent = mutation({
     date: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     // Find existing record
     const existing = await ctx.db
       .query("attendance")
@@ -49,6 +54,9 @@ export const markAbsent = mutation({
     date: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     const existing = await ctx.db
       .query("attendance")
       .withIndex("by_slot_date", (q) =>
@@ -73,6 +81,9 @@ export const markAbsent = mutation({
 export const getStudentStats = query({
   args: { studentId: v.id("students") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { present: 0, absent: 0, total: 0 };
+
     const records = await ctx.db
       .query("attendance")
       .withIndex("by_student", (q) => q.eq("studentId", args.studentId))

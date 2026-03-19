@@ -4,6 +4,8 @@ import { v } from "convex/values";
 export const listByCenter = query({
   args: { centerId: v.id("centers") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("rooms")
       .withIndex("by_center", (q) => q.eq("centerId", args.centerId))
@@ -13,6 +15,8 @@ export const listByCenter = query({
 
 export const list = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db.query("rooms").collect();
   },
 });
@@ -23,6 +27,8 @@ export const add = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("rooms", args);
   },
 });
@@ -33,6 +39,8 @@ export const update = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
   },
@@ -41,6 +49,9 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("rooms") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     // Cascade: slots → slotStudents/slotOverrides/slotTeachers/attendance
     const slots = await ctx.db
       .query("scheduleSlots")

@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 export const get = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { allowManualSlotSelection: false };
     const settings = await ctx.db.query("settings").first();
     return settings ?? { allowManualSlotSelection: false };
   },
@@ -13,6 +15,9 @@ export const save = mutation({
     allowManualSlotSelection: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     const existing = await ctx.db.query("settings").first();
     if (existing) {
       await ctx.db.patch(existing._id, args);

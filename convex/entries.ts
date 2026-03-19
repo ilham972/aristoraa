@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 export const list = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db.query("entries").collect();
   },
 });
@@ -10,6 +12,8 @@ export const list = query({
 export const getByDate = query({
   args: { date: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("entries")
       .withIndex("by_date", (q) => q.eq("date", args.date))
@@ -20,6 +24,8 @@ export const getByDate = query({
 export const getByStudent = query({
   args: { studentId: v.id("students") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("entries")
       .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
@@ -30,6 +36,8 @@ export const getByStudent = query({
 export const getByStudentAndDate = query({
   args: { studentId: v.id("students"), date: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db
       .query("entries")
       .withIndex("by_student_date", (q) =>
@@ -51,6 +59,8 @@ export const add = mutation({
     totalAttempted: v.number(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("entries", args);
   },
 });
@@ -63,6 +73,8 @@ export const update = mutation({
     totalAttempted: v.number(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
   },
@@ -71,6 +83,8 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("entries") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     await ctx.db.delete(args.id);
   },
 });

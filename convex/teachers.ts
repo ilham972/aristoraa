@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 export const list = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db.query("teachers").collect();
   },
 });
@@ -26,6 +28,8 @@ export const getCurrent = query({
 export const getByClerkUserId = query({
   args: { clerkUserId: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
     const teachers = await ctx.db
       .query("teachers")
       .withIndex("by_clerk_user", (q) =>
@@ -43,6 +47,26 @@ export const add = mutation({
     role: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    // Only allow "admin" or "teacher" roles
+    if (args.role !== "admin" && args.role !== "teacher") {
+      throw new Error("Invalid role");
+    }
+
+    // Allow first teacher to self-register as admin (bootstrap)
+    const allTeachers = await ctx.db.query("teachers").collect();
+    if (allTeachers.length > 0) {
+      // After bootstrap, only admins can add teachers
+      const caller = allTeachers.find(
+        (t) => t.clerkUserId === identity.subject
+      );
+      if (!caller || caller.role !== "admin") {
+        throw new Error("Only admins can add teachers");
+      }
+    }
+
     return await ctx.db.insert("teachers", args);
   },
 });
@@ -54,6 +78,25 @@ export const update = mutation({
     role: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    if (args.role !== "admin" && args.role !== "teacher") {
+      throw new Error("Invalid role");
+    }
+
+    // Only admins can update teachers
+    const callers = await ctx.db
+      .query("teachers")
+      .withIndex("by_clerk_user", (q) =>
+        q.eq("clerkUserId", identity.subject)
+      )
+      .collect();
+    const caller = callers[0];
+    if (!caller || caller.role !== "admin") {
+      throw new Error("Only admins can update teachers");
+    }
+
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
   },
@@ -62,6 +105,21 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("teachers") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    // Only admins can remove teachers
+    const callers = await ctx.db
+      .query("teachers")
+      .withIndex("by_clerk_user", (q) =>
+        q.eq("clerkUserId", identity.subject)
+      )
+      .collect();
+    const caller = callers[0];
+    if (!caller || caller.role !== "admin") {
+      throw new Error("Only admins can remove teachers");
+    }
+
     // Cascade: remove slot assignments
     const slotTeachers = await ctx.db
       .query("slotTeachers")

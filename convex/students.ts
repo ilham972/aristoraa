@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 export const list = query({
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
     return await ctx.db.query("students").collect();
   },
 });
@@ -15,6 +17,8 @@ export const add = mutation({
     schoolName: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("students", args);
   },
 });
@@ -28,6 +32,8 @@ export const update = mutation({
     schoolName: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
   },
@@ -36,6 +42,9 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("students") },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
     // Delete all entries for this student
     const entries = await ctx.db
       .query("entries")
