@@ -141,7 +141,7 @@ export function CentersTab() {
                   </div>
 
                   {isExpanded && (
-                    <div className="px-3.5 pb-3.5 border-t border-border/50">
+                    <div className="px-3.5 pb-3.5 border-t border-border/50" onClick={e => e.stopPropagation()}>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-3 mb-2">Rooms</p>
                       {centerRooms.length > 0 && (
                         <div className="space-y-1.5 mb-2">
@@ -185,7 +185,7 @@ export function CentersTab() {
                                 )}
                                 {/* Timetable editor */}
                                 {isEditingTT && (
-                                  <div className="px-3 pb-3 pt-1 border-t border-border/40 space-y-1.5">
+                                  <div className="px-3 pb-3 pt-1 border-t border-border/40 space-y-1.5" onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
                                     <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Day → Module</p>
                                     {[
                                       { day: '1', label: 'Mon' },
