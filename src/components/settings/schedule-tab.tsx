@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { api } from '@/lib/convex';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
+import { getModuleById } from '@/lib/curriculum-data';
 
 const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY_FULL = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -162,6 +163,12 @@ export function ScheduleTab() {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {room?.name ?? 'Unknown Room'}{center ? ` @ ${center.name}` : ''}
+                        {room && (() => {
+                          const tt = (room as { moduleTimetable?: Record<string, string> }).moduleTimetable;
+                          const modId = tt?.[String(slot.dayOfWeek)];
+                          const mod = modId ? getModuleById(modId) : null;
+                          return mod ? <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: mod.color + '20', color: mod.color }}>{mod.id}</span> : null;
+                        })()}
                       </p>
                     </div>
                     <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>

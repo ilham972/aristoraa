@@ -7,7 +7,8 @@ export default defineSchema({
     schoolGrade: v.number(),
     parentPhone: v.string(),
     schoolName: v.string(),
-  }),
+    centerId: v.optional(v.id("centers")),
+  }).index("by_center", ["centerId"]),
 
   exercises: defineTable({
     unitId: v.string(),
@@ -27,10 +28,13 @@ export default defineSchema({
     questions: v.any(),
     correctCount: v.number(),
     totalAttempted: v.number(),
+    slotId: v.optional(v.id("scheduleSlots")),
+    centerId: v.optional(v.id("centers")),
   })
     .index("by_date", ["date"])
     .index("by_student", ["studentId"])
-    .index("by_student_date", ["studentId", "date"]),
+    .index("by_student_date", ["studentId", "date"])
+    .index("by_center", ["centerId"]),
 
   settings: defineTable({
     tuitionName: v.optional(v.string()),
@@ -47,6 +51,7 @@ export default defineSchema({
   rooms: defineTable({
     centerId: v.id("centers"),
     name: v.string(),
+    moduleTimetable: v.optional(v.any()), // { "1": "M1", "2": "M2", ... } dayOfWeek → moduleId
   }).index("by_center", ["centerId"]),
 
   scheduleSlots: defineTable({
@@ -90,6 +95,7 @@ export default defineSchema({
     slotId: v.id("scheduleSlots"),
     date: v.string(),
     status: v.string(),
+    sessionFinished: v.optional(v.boolean()),
   })
     .index("by_slot_date", ["slotId", "date"])
     .index("by_student", ["studentId"]),

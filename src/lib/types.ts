@@ -10,7 +10,9 @@ export interface CurriculumModule {
   id: string; // M1, M2, etc.
   name: string;
   tamilName: string;
+  /** @deprecated Use scheduleSlot.moduleId instead. Kept as default reference. */
   day: string;
+  /** @deprecated Use scheduleSlot.moduleId instead. Kept as default reference. */
   dayIndex: number; // 1=Mon, 2=Tue, ... 6=Sat, 0=Sun
   color: string;
   grades: CurriculumGrade[];
@@ -75,6 +77,7 @@ export interface ScheduleSlot {
   startTime: string;
   endTime: string;
   roomId: string;
+  moduleId?: string;
 }
 
 export interface SlotStudent {
@@ -145,6 +148,7 @@ export const MODULE_COLORS: Record<string, string> = {
   M6: '#2E86C1',
 };
 
+/** @deprecated Use scheduleSlot.moduleId for slot-level module. Kept as legacy default mapping. */
 export const MODULE_DAYS: Record<string, string> = {
   M1: 'Monday',
   M2: 'Tuesday',
@@ -154,6 +158,7 @@ export const MODULE_DAYS: Record<string, string> = {
   M6: 'Saturday',
 };
 
+/** @deprecated Use scheduleSlot.moduleId for slot-level module. Kept as fallback. */
 export function getTodayModule(): string | null {
   const day = new Date().getDay(); // 0=Sun, 1=Mon, etc.
   const dayToModule: Record<number, string> = {

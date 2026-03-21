@@ -2,13 +2,15 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Pencil, Calendar } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api } from '@/lib/convex';
+import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
 
@@ -30,6 +32,9 @@ export function CentersTab() {
   const removeCenterMutation = useMutation(api.centers.remove);
   const addRoomMutation = useMutation(api.rooms.add);
   const removeRoomMutation = useMutation(api.rooms.remove);
+  const setTimetableMutation = useMutation(api.rooms.setTimetable);
+
+  const [editTimetableRoomId, setEditTimetableRoomId] = useState<Id<"rooms"> | null>(null);
 
   if (!centers || !rooms) {
     return (
@@ -139,18 +144,88 @@ export function CentersTab() {
                     <div className="px-3.5 pb-3.5 border-t border-border/50">
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-3 mb-2">Rooms</p>
                       {centerRooms.length > 0 && (
-                        <div className="space-y-1 mb-2">
-                          {centerRooms.map((room: typeof centerRooms[0]) => (
-                            <div key={room._id} className="flex items-center justify-between py-2 px-3 bg-muted rounded-lg">
-                              <span className="text-sm text-foreground">{room.name}</span>
-                              <button
-                                onClick={() => handleDeleteRoom(room._id)}
-                                className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ))}
+                        <div className="space-y-1.5 mb-2">
+                          {centerRooms.map((room: typeof centerRooms[0]) => {
+                            const tt = (room.moduleTimetable || {}) as Record<string, string>;
+                            const isEditingTT = editTimetableRoomId === room._id;
+                            return (
+                              <div key={room._id} className="bg-muted rounded-lg overflow-hidden">
+                                <div className="flex items-center justify-between py-2 px-3">
+                                  <span className="text-sm text-foreground">{room.name}</span>
+                                  <div className="flex gap-1">
+                                    <button
+                                      onClick={() => setEditTimetableRoomId(isEditingTT ? null : room._id)}
+                                      className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                                      title="Edit timetable"
+                                    >
+                                      <Calendar className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteRoom(room._id)}
+                                      className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                {/* Module chips row (read-only summary) */}
+                                {!isEditingTT && Object.keys(tt).length > 0 && (
+                                  <div className="px-3 pb-2 flex gap-1 flex-wrap">
+                                    {['1','2','3','4','5','6'].map(d => {
+                                      const mod = CURRICULUM_MODULES.find(m => m.id === tt[d]);
+                                      if (!mod) return null;
+                                      const dayLabel = ['','M','T','W','T','F','S'][Number(d)];
+                                      return (
+                                        <span key={d} className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: mod.color + '20', color: mod.color }}>
+                                          {dayLabel}:{mod.id}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                {/* Timetable editor */}
+                                {isEditingTT && (
+                                  <div className="px-3 pb-3 pt-1 border-t border-border/40 space-y-1.5">
+                                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Day → Module</p>
+                                    {[
+                                      { day: '1', label: 'Mon' },
+                                      { day: '2', label: 'Tue' },
+                                      { day: '3', label: 'Wed' },
+                                      { day: '4', label: 'Thu' },
+                                      { day: '5', label: 'Fri' },
+                                      { day: '6', label: 'Sat' },
+                                    ].map(({ day, label }) => (
+                                      <div key={day} className="flex items-center gap-2">
+                                        <span className="text-xs text-muted-foreground w-8">{label}</span>
+                                        <Select
+                                          value={tt[day] || ''}
+                                          onValueChange={async (val) => {
+                                            const newTT = { ...tt, [day]: val };
+                                            if (!val) delete newTT[day];
+                                            await setTimetableMutation({ id: room._id, moduleTimetable: newTT });
+                                          }}
+                                        >
+                                          <SelectTrigger className="h-7 text-xs flex-1">
+                                            <SelectValue placeholder="—" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {CURRICULUM_MODULES.map(m => (
+                                              <SelectItem key={m.id} value={m.id}>
+                                                <span className="flex items-center gap-1.5">
+                                                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                                                  {m.id} — {m.name}
+                                                </span>
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                       <div className="flex gap-2">

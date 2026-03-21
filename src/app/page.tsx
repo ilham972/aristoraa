@@ -6,7 +6,7 @@ import { useQuery } from 'convex/react';
 import { ClipboardPen, Trophy, Users, BarChart3, Clock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { api } from '@/lib/convex';
-import { CURRICULUM_MODULES, getModuleForDay } from '@/lib/curriculum-data';
+import { CURRICULUM_MODULES, getModuleForDay, getModuleById } from '@/lib/curriculum-data';
 import { getTodayDateStr, getDayName, parseTimeToMinutes, isCurrentTimeInRange } from '@/lib/types';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 
@@ -49,6 +49,21 @@ export default function Dashboard() {
       .sort((a: typeof allSlots[0], b: typeof allSlots[0]) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
   }, [teacherSlotAssignments, allSlots]);
 
+  // Derive today's modules from slots (if they have moduleId), fallback to day-of-week mapping
+  const todayModules = useMemo(() => {
+    const moduleIds = new Set<string>();
+    for (const slot of todaySlots) {
+      const s = slot as { moduleId?: string };
+      if (s.moduleId) moduleIds.add(s.moduleId);
+    }
+    if (moduleIds.size > 0) {
+      return [...moduleIds].map(id => getModuleById(id)).filter(Boolean) as typeof CURRICULUM_MODULES;
+    }
+    // Fallback: old day-based mapping
+    const m = getModuleForDay(new Date().getDay());
+    return m ? [m] : [];
+  }, [todaySlots]);
+
   if (students === undefined || todayEntries === undefined || settings === undefined) {
     return (
       <div className="px-4 pt-5 pb-6 max-w-lg mx-auto">
@@ -66,7 +81,6 @@ export default function Dashboard() {
   }
 
   const dayName = getDayName();
-  const todayModule = getModuleForDay(new Date().getDay());
   const studentCount = students.length;
   const studentsWithEntries = new Set(todayEntries.map(e => e.studentId)).size;
   const studentsWithoutEntries = studentCount - studentsWithEntries;
@@ -79,17 +93,21 @@ export default function Dashboard() {
       </div>
 
       {/* Today's module hero card */}
-      {todayModule ? (
-        <Card className="mb-5 overflow-hidden border-border/50">
-          <div className="h-1" style={{ backgroundColor: todayModule.color }} />
-          <CardContent className="pt-4 pb-4">
-            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Today&apos;s Module</p>
-            <h2 className="text-lg font-bold mt-1" style={{ color: todayModule.color }}>
-              {todayModule.id}: {todayModule.name}
-            </h2>
-            <p className="text-sm text-muted-foreground">{todayModule.tamilName}</p>
-          </CardContent>
-        </Card>
+      {todayModules.length > 0 ? (
+        <div className="space-y-2 mb-5">
+          {todayModules.map(mod => (
+            <Card key={mod.id} className="overflow-hidden border-border/50">
+              <div className="h-1" style={{ backgroundColor: mod.color }} />
+              <CardContent className="pt-4 pb-4">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Today&apos;s Module</p>
+                <h2 className="text-lg font-bold mt-1" style={{ color: mod.color }}>
+                  {mod.id}: {mod.name}
+                </h2>
+                <p className="text-sm text-muted-foreground">{mod.tamilName}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       ) : (
         <Card className="mb-5 border-border/50">
           <CardContent className="py-5">
@@ -158,6 +176,12 @@ export default function Dashboard() {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {room?.name ?? 'Room'}{center ? ` @ ${center.name}` : ''}
+                        {room && (() => {
+                          const tt = (room as { moduleTimetable?: Record<string, string> }).moduleTimetable;
+                          const modId = tt?.[String(slot.dayOfWeek)];
+                          const mod = modId ? getModuleById(modId) : null;
+                          return mod ? <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: mod.color + '20', color: mod.color }}>{mod.id}</span> : null;
+                        })()}
                       </p>
                     </div>
                     {isActive && (

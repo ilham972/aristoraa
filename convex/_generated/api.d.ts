@@ -12,6 +12,7 @@ import type * as attendance from "../attendance.js";
 import type * as centers from "../centers.js";
 import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
+import type * as migrations from "../migrations.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   centers: typeof centers;
   entries: typeof entries;
   exercises: typeof exercises;
+  migrations: typeof migrations;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
   seed: typeof seed;

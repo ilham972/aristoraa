@@ -9,12 +9,25 @@ export const list = query({
   },
 });
 
+export const listByCenter = query({
+  args: { centerId: v.id("centers") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("students")
+      .withIndex("by_center", (q) => q.eq("centerId", args.centerId))
+      .collect();
+  },
+});
+
 export const add = mutation({
   args: {
     name: v.string(),
     schoolGrade: v.number(),
     parentPhone: v.string(),
     schoolName: v.string(),
+    centerId: v.optional(v.id("centers")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -30,6 +43,7 @@ export const update = mutation({
     schoolGrade: v.number(),
     parentPhone: v.string(),
     schoolName: v.string(),
+    centerId: v.optional(v.id("centers")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();

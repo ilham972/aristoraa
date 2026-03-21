@@ -46,6 +46,18 @@ export const update = mutation({
   },
 });
 
+export const setTimetable = mutation({
+  args: {
+    id: v.id("rooms"),
+    moduleTimetable: v.any(), // { "1": "M1", "2": "M2", ... }
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await ctx.db.patch(args.id, { moduleTimetable: args.moduleTimetable });
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("rooms") },
   handler: async (ctx, args) => {

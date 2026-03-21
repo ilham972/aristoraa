@@ -57,11 +57,25 @@ export const add = mutation({
     questions: v.any(),
     correctCount: v.number(),
     totalAttempted: v.number(),
+    slotId: v.optional(v.id("scheduleSlots")),
+    centerId: v.optional(v.id("centers")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     return await ctx.db.insert("entries", args);
+  },
+});
+
+export const listByCenter = query({
+  args: { centerId: v.id("centers") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("entries")
+      .withIndex("by_center", (q) => q.eq("centerId", args.centerId))
+      .collect();
   },
 });
 

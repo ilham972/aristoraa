@@ -9,6 +9,7 @@ interface SlotInfo {
   startTime: string;
   endTime: string;
   roomId: string;
+  moduleId?: string;
 }
 
 export function useActiveSlot(teacherSlots: SlotInfo[] | undefined) {
