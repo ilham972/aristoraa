@@ -16,6 +16,7 @@ import type * as migrations from "../migrations.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
+import type * as sessionSubmissions from "../sessionSubmissions.js";
 import type * as settings from "../settings.js";
 import type * as slotStudents from "../slotStudents.js";
 import type * as slotTeachers from "../slotTeachers.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
   seed: typeof seed;
+  sessionSubmissions: typeof sessionSubmissions;
   settings: typeof settings;
   slotStudents: typeof slotStudents;
   slotTeachers: typeof slotTeachers;

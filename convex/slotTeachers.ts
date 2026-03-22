@@ -39,6 +39,25 @@ export const assign = mutation({
       .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
       .collect();
     if (existing.some((st) => st.teacherId === args.teacherId)) return;
+
+    // Check for overlapping slots on the same day
+    const teacherAssignments = await ctx.db
+      .query("slotTeachers")
+      .withIndex("by_teacher", (q) => q.eq("teacherId", args.teacherId))
+      .collect();
+
+    const newSlot = await ctx.db.get(args.slotId);
+    if (!newSlot) throw new Error("Slot not found");
+
+    for (const ta of teacherAssignments) {
+      const existingSlot = await ctx.db.get(ta.slotId);
+      if (existingSlot && existingSlot.dayOfWeek === newSlot.dayOfWeek) {
+        if (existingSlot.startTime < newSlot.endTime && existingSlot.endTime > newSlot.startTime) {
+          throw new Error("Teacher has an overlapping slot on this day");
+        }
+      }
+    }
+
     return await ctx.db.insert("slotTeachers", args);
   },
 });

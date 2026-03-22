@@ -289,9 +289,18 @@ export function ScheduleTab() {
                 className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted transition-colors text-left"
                 onClick={async () => {
                   if (teacherPickerSlotId) {
-                    await assignTeacherMutation({ slotId: teacherPickerSlotId, teacherId: teacher._id });
-                    toast.success(`${teacher.name} assigned`);
-                    setTeacherPickerOpen(false);
+                    try {
+                      await assignTeacherMutation({ slotId: teacherPickerSlotId, teacherId: teacher._id });
+                      toast.success(`${teacher.name} assigned`);
+                      setTeacherPickerOpen(false);
+                    } catch (err: unknown) {
+                      const msg = err instanceof Error ? err.message : '';
+                      if (msg.includes('overlapping')) {
+                        toast.error('Cannot assign: teacher has an overlapping slot on this day');
+                      } else {
+                        toast.error('Failed to assign teacher');
+                      }
+                    }
                   }
                 }}
               >
@@ -460,7 +469,7 @@ function ExpandedSlotContent({
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">No teachers assigned</p>
+          <p className="text-xs text-amber-600 font-medium">No teacher assigned — this slot won&apos;t appear in any teacher&apos;s schedule</p>
         )}
       </div>
     </div>

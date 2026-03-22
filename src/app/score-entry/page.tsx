@@ -2,11 +2,10 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { Check, BookOpen, CheckCircle2, Clock, MapPin, Send, ChevronLeft, ChevronRight, Sparkles, Zap, SkipForward, Radio } from 'lucide-react';
+import { Check, BookOpen, CheckCircle2, Clock, MapPin, Send, ChevronLeft, ChevronRight, Sparkles, Zap, SkipForward, Radio, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { getTodayDateStr, parseTimeToMinutes } from '@/lib/types';
@@ -56,15 +55,16 @@ export default function ScoreEntryPage() {
   useEffect(() => { const iv = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(iv); }, []);
 
   // ─── State ───
+  const [currentPage, setCurrentPage] = useState<'attendance' | 'scoring'>('attendance');
   const [manualSlotId, setManualSlotId] = useState('');
   const [attendanceDate, setAttendanceDate] = useState(() => getTodayDateStr());
-  const [calPage, setCalPage] = useState(0); // 0 = Mon-Wed, 1 = Thu-Sat
+  const [calPage, setCalPage] = useState(0);
 
   // Draft attendance: { "slotId|date": ["studentId1", ...] }
   const [draftAttendance, setDraftAttendance] = usePersistentState<Record<string, string[]>>('mt-draft-att', {});
   const [draftFinished, setDraftFinished] = usePersistentState<Record<string, string[]>>('mt-draft-fin', {});
 
-  // Tab 2: Scoring
+  // Scoring
   const [selectedStudentId, setSelectedStudentId] = useState<Id<"students"> | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [scoringExercise, setScoringExercise] = useState<{
@@ -85,6 +85,14 @@ export default function ScoreEntryPage() {
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [conceptDrawerOpen, setConceptDrawerOpen] = useState(false);
 
+  // New dialogs
+  const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+  const [unfinishedAlertStudents, setUnfinishedAlertStudents] = useState<string[]>([]);
+  const [absentStudentDialog, setAbsentStudentDialog] = useState<{ studentId: Id<"students">; type: 'live' | 'future' } | null>(null);
+  const [blockingDialogOpen, setBlockingDialogOpen] = useState(false);
+  const [attendanceGuardDialog, setAttendanceGuardDialog] = useState<{ studentId: Id<"students">; name: string } | null>(null);
+  const [highlightUnsubmitted, setHighlightUnsubmitted] = useState(false);
+
   const today = getTodayDateStr();
 
   // ─── Data ───
@@ -99,6 +107,7 @@ export default function ScoreEntryPage() {
   const todayEntries = useQuery(api.entries.getByDate, { date: today });
   const allExercises = useQuery(api.exercises.list);
   const modulePositions = useQuery(api.studentModulePositions.list);
+  const submittedSessions = useQuery(api.sessionSubmissions.listByTeacher, teacher ? { teacherId: teacher._id } : 'skip');
 
   const teacherSlots = useMemo(() => {
     if (!teacherSlotAssignments || !allSlots) return undefined;
@@ -113,7 +122,7 @@ export default function ScoreEntryPage() {
     return activeSlot ?? nextSlot ?? null;
   }, [manualSlotId, allSlots, activeSlot, nextSlot]);
 
-  // Derive module from room's timetable for the slot's day, falling back to global day-of-week mapping
+  // Derive module from room's timetable for the slot's day
   const slotModule = useMemo(() => {
     if (!effectiveSlot) return null;
     const room = rooms?.find((r: { _id: string }) => r._id === effectiveSlot.roomId);
@@ -131,27 +140,27 @@ export default function ScoreEntryPage() {
     api.scheduleSlots.getEffectiveStudents,
     effectiveSlot ? { slotId: effectiveSlot._id as Id<"scheduleSlots">, date: effectiveDate } : 'skip'
   );
-  // DB attendance (for submitted sessions only)
   const attendanceRecords = useQuery(
     api.attendance.getBySlotAndDate,
     effectiveSlot ? { slotId: effectiveSlot._id as Id<"scheduleSlots">, date: effectiveDate } : 'skip'
   );
 
   // ─── Mutations ───
-  const submitSessionMut = useMutation(api.attendance.submitSession);
   const addEntryMut = useMutation(api.entries.add);
   const updateEntryMut = useMutation(api.entries.update);
   const setModulePosMut = useMutation(api.studentModulePositions.set);
+  const submitSessionNewMut = useMutation(api.sessionSubmissions.submit);
 
   // ─── Derived ───
   const todayDow = useMemo(() => { const d = now.getDay(); return d === 0 ? 7 : d; }, [now]);
   const weekDates = useMemo(() => getWeekDates(today), [today]);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
   // Draft present IDs for current session
   const draftPresentIds = useMemo(() => new Set(draftAttendance[sessionKey] || []), [draftAttendance, sessionKey]);
   const draftFinishedIds = useMemo(() => new Set(draftFinished[sessionKey] || []), [draftFinished, sessionKey]);
 
-  // DB-submitted present IDs (for sessions already submitted)
+  // DB-submitted present/finished IDs
   const dbPresentIds = useMemo(() => {
     if (!attendanceRecords) return new Set<string>();
     return new Set(attendanceRecords.filter((a: { status: string }) => a.status === 'present').map((a: { studentId: string }) => a.studentId));
@@ -178,18 +187,6 @@ export default function ScoreEntryPage() {
     return new Set(todayEntries.map(e => e.studentId));
   }, [todayEntries]);
 
-  // Present students for Tab 2
-  const presentStudents = useMemo(() => {
-    if (!effectiveStudents) return [];
-    return effectiveStudents
-      .filter((s: { _id: string }) => presentStudentIds.has(s._id) || studentsWithEntries.has(s._id))
-      .sort((a: { _id: string }, b: { _id: string }) => {
-        const av = finishedStudentIds.has(a._id) ? 2 : studentsWithEntries.has(a._id) ? 1 : 0;
-        const bv = finishedStudentIds.has(b._id) ? 2 : studentsWithEntries.has(b._id) ? 1 : 0;
-        return av - bv;
-      });
-  }, [effectiveStudents, presentStudentIds, studentsWithEntries, finishedStudentIds]);
-
   const weekSlotsByDay = useMemo(() => {
     if (!allSlots) return {} as Record<number, NonNullable<typeof allSlots>>;
     const m: Record<number, NonNullable<typeof allSlots>> = {};
@@ -215,39 +212,96 @@ export default function ScoreEntryPage() {
     return pos;
   }, [effectiveStudents, allEntries, allExercises, slotModule, modulePositions]);
 
-  // isViewingOther: manually selected a different slot
-  const isViewingOther = !!manualSlotId && effectiveSlot?._id !== activeSlot?._id;
-
-  // Countdown: minutes until session starts (negative = already started / ended)
+  // Session countdown
   const sessionCountdown = useMemo(() => {
     if (!effectiveSlot) return null;
-    const nowM = now.getHours() * 60 + now.getMinutes();
     const slotDow = effectiveSlot.dayOfWeek;
     if (slotDow === todayDow) {
       const startM = parseTimeToMinutes(effectiveSlot.startTime);
       const endM = parseTimeToMinutes(effectiveSlot.endTime);
-      if (nowM >= startM && nowM < endM) return { minsLeft: endM - nowM, state: 'live' as const };
-      if (nowM >= endM) return { minsLeft: 0, state: 'ended' as const };
-      return { minsLeft: startM - nowM, state: 'upcoming' as const };
+      if (nowMinutes >= startM && nowMinutes < endM) return { minsLeft: endM - nowMinutes, state: 'live' as const };
+      if (nowMinutes >= endM) return { minsLeft: 0, state: 'ended' as const };
+      return { minsLeft: startM - nowMinutes, state: 'upcoming' as const };
     }
-    // Future day: compute rough minutes
     let dayDiff = slotDow - todayDow;
     if (dayDiff <= 0) dayDiff += 7;
     const startM = parseTimeToMinutes(effectiveSlot.startTime);
-    return { minsLeft: dayDiff * 1440 + startM - nowM, state: 'upcoming' as const };
-  }, [effectiveSlot, now, todayDow]);
+    return { minsLeft: dayDiff * 1440 + startM - nowMinutes, state: 'upcoming' as const };
+  }, [effectiveSlot, nowMinutes, todayDow]);
 
-  // Pending submissions from draft
-  const pendingSessions = useMemo(() => {
-    const sessions: Array<{ key: string; slotId: string; date: string; presentCount: number; finishedCount: number }> = [];
-    for (const [key, ids] of Object.entries(draftAttendance)) {
-      if (ids.length === 0) continue;
-      const [slotId, date] = key.split('|');
-      const finCount = (draftFinished[key] || []).length;
-      sessions.push({ key, slotId, date, presentCount: ids.length, finishedCount: finCount });
+  // Session lifecycle for the currently selected slot+date
+  const sessionLifecycle = useMemo((): 'upcoming' | 'live' | 'ended' | 'submitted' | null => {
+    if (!effectiveSlot) return null;
+    const isSubmitted = submittedSessions?.some(s => s.slotId === effectiveSlot._id && s.date === effectiveDate);
+    if (isSubmitted) return 'submitted';
+    if (sessionCountdown?.state === 'live') return 'live';
+    if (sessionCountdown?.state === 'ended') return 'ended';
+    // Check if it's a past date
+    if (effectiveDate < today) return 'ended';
+    return 'upcoming';
+  }, [effectiveSlot, effectiveDate, submittedSessions, sessionCountdown, today]);
+
+  // Slot lifecycle for calendar coloring
+  const getSlotLifecycle = useCallback((slotId: string, date: string, startTime: string, endTime: string): 'upcoming' | 'live' | 'ended' | 'submitted' => {
+    const isSubmitted = submittedSessions?.some(s => s.slotId === slotId && s.date === date);
+    if (isSubmitted) return 'submitted';
+    if (date < today) return 'ended';
+    if (date > today) return 'upcoming';
+    const startM = parseTimeToMinutes(startTime);
+    const endM = parseTimeToMinutes(endTime);
+    if (nowMinutes >= startM && nowMinutes < endM) return 'live';
+    if (nowMinutes >= endM) return 'ended';
+    return 'upcoming';
+  }, [submittedSessions, today, nowMinutes]);
+
+  // Unsubmitted sessions for this teacher (current week)
+  const unsubmittedSessions = useMemo(() => {
+    if (!teacherSlots || submittedSessions === undefined) return [];
+    const result: Array<{ slotId: string; date: string; startTime: string; endTime: string; dayOfWeek: number }> = [];
+    for (const slot of teacherSlots) {
+      const dateForSlot = weekDates[slot.dayOfWeek - 1];
+      if (!dateForSlot) continue;
+      const isPast = dateForSlot < today;
+      const isToday = dateForSlot === today;
+      const ended = isPast || (isToday && nowMinutes >= parseTimeToMinutes(slot.endTime));
+      if (ended) {
+        const isSubmitted = submittedSessions?.some(s => s.slotId === slot._id && s.date === dateForSlot);
+        if (!isSubmitted) {
+          result.push({ slotId: slot._id, date: dateForSlot, startTime: slot.startTime, endTime: slot.endTime, dayOfWeek: slot.dayOfWeek });
+        }
+      }
     }
-    return sessions.sort((a, b) => a.date.localeCompare(b.date));
-  }, [draftAttendance, draftFinished]);
+    return result.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  }, [teacherSlots, submittedSessions, weekDates, today, nowMinutes]);
+
+  // Oldest unsubmitted session that blocks scoring (excludes current session)
+  const oldestUnsubmitted = useMemo(() => {
+    if (unsubmittedSessions.length === 0) return null;
+    const current = effectiveSlot ? `${effectiveSlot._id}|${effectiveDate}` : '';
+    return unsubmittedSessions.find(s => `${s.slotId}|${s.date}` !== current) ?? null;
+  }, [unsubmittedSessions, effectiveSlot, effectiveDate]);
+
+  // isViewingOther: manually selected a different slot while a live one exists
+  const isViewingOther = !!manualSlotId && effectiveSlot?._id !== activeSlot?._id;
+
+  // Scoring students: ALL students with badge colors
+  const scoringStudents = useMemo(() => {
+    if (!effectiveStudents) return [];
+    return effectiveStudents.map((s: { _id: Id<"students">; name: string; schoolGrade: number }) => {
+      const isPresent = presentStudentIds.has(s._id);
+      const isFinished = finishedStudentIds.has(s._id);
+      const hasEntries = studentsWithEntries.has(s._id);
+      let badgeColor: 'gray' | 'red' | 'yellow' | 'green';
+      if (!isPresent && !hasEntries) badgeColor = 'red';
+      else if (isFinished) badgeColor = 'green';
+      else if (hasEntries) badgeColor = 'yellow';
+      else badgeColor = 'gray';
+      return { ...s, badgeColor, isPresent };
+    }).sort((a, b) => {
+      const order = { gray: 0, yellow: 1, green: 2, red: 3 };
+      return order[a.badgeColor] - order[b.badgeColor];
+    });
+  }, [effectiveStudents, presentStudentIds, finishedStudentIds, studentsWithEntries]);
 
   const hasUnsavedChanges = useMemo(() => {
     if (!scoringExercise) return false;
@@ -278,13 +332,10 @@ export default function ScoreEntryPage() {
     for (const it of items) { if (it.type === 'concept') last = it.name; if (it._id === exId) return last; }
     return last;
   };
-  // Exercise status: 'perfect' = all attempted no skips, 'skipped' = all attempted but has skips, 'wip' = partial, 'none' = not started
   const getExerciseStatus = (sid: string, exId: string, qCount: number): 'perfect' | 'skipped' | 'wip' | 'none' => {
     const entry = allEntries?.find(e => e.studentId === sid && e.exerciseId === exId);
     if (!entry) return 'none';
-    if (entry.totalAttempted >= qCount) return 'perfect'; // all questions answered (correct or wrong)
-    // Check if it was "finished" with skips (totalAttempted < qCount but entry exists with some answers)
-    // We detect skipped by checking if the questions object has skip markers or if totalAttempted < qCount but entry was saved as finished
+    if (entry.totalAttempted >= qCount) return 'perfect';
     const qs = entry.questions as Record<string, string>;
     const hasSkips = Object.values(qs).some(v => v === 'skipped');
     if (hasSkips) return 'skipped';
@@ -311,13 +362,6 @@ export default function ScoreEntryPage() {
       exercises.push({ exId: ex._id, qCount: ex.questionCount, correct: c, wrong: w, skipped: sk, unanswered: ex.questionCount - c - w - sk });
     }
     return { total: exs.length, correctQ, wrongQ, skippedQ, totalQ, exercises };
-  };
-
-  const canSubmitSession = (endTime: string, date: string): boolean => {
-    if (date < today) return true; // past dates always submittable
-    if (date > today) return false;
-    const nowM = now.getHours() * 60 + now.getMinutes();
-    return nowM >= parseTimeToMinutes(endTime);
   };
 
   const selectedUnitExercises = useMemo(() => {
@@ -347,6 +391,12 @@ export default function ScoreEntryPage() {
   // ─── Handlers ───
   const handleAttendanceToggle = (sid: Id<"students">) => {
     if (!sessionKey) return;
+    const isCurrentlyPresent = draftPresentIds.has(sid) || dbPresentIds.has(sid);
+    if (isCurrentlyPresent && studentsWithEntries.has(sid)) {
+      const name = effectiveStudents?.find((s: { _id: string; name: string }) => s._id === sid)?.name || 'This student';
+      setAttendanceGuardDialog({ studentId: sid, name });
+      return;
+    }
     setDraftAttendance(prev => {
       const current = [...(prev[sessionKey] || [])];
       const idx = current.indexOf(sid);
@@ -354,6 +404,17 @@ export default function ScoreEntryPage() {
       else current.push(sid);
       return { ...prev, [sessionKey]: current };
     });
+  };
+
+  const handleForceAbsent = (sid: Id<"students">) => {
+    if (!sessionKey) return;
+    setDraftAttendance(prev => {
+      const current = [...(prev[sessionKey] || [])];
+      const idx = current.indexOf(sid);
+      if (idx >= 0) current.splice(idx, 1);
+      return { ...prev, [sessionKey]: current };
+    });
+    setAttendanceGuardDialog(null);
   };
 
   const handleCalendarSlotTap = (slotId: string, dow: number) => {
@@ -390,6 +451,70 @@ export default function ScoreEntryPage() {
   };
   const toggleQuestion = (q: number) => setQuestionStates(prev => ({ ...prev, [q]: prev[q] === 'unmarked' ? 'correct' : prev[q] === 'correct' ? 'wrong' : 'unmarked' }));
 
+  // Guarded question tap: checks blocking + absent before toggling
+  const handleQuestionTap = (q: number) => {
+    if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
+    if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
+      if (sessionLifecycle === 'live') {
+        setAbsentStudentDialog({ studentId: selectedStudentId, type: 'live' });
+      } else {
+        setAbsentStudentDialog({ studentId: selectedStudentId, type: 'future' });
+      }
+      return;
+    }
+    if (questionStates[q] !== 'skipped') toggleQuestion(q);
+  };
+
+  // Guarded exercise tap: same blocking checks
+  const handleExerciseTap = (ex: NonNullable<typeof allExercises>[0], unitId: string, moduleId: string) => {
+    if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
+    if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
+      if (sessionLifecycle === 'live') {
+        setAbsentStudentDialog({ studentId: selectedStudentId, type: 'live' });
+      } else {
+        setAbsentStudentDialog({ studentId: selectedStudentId, type: 'future' });
+      }
+      return;
+    }
+    setupScoring(ex, unitId, moduleId);
+  };
+
+  const handleMarkPresentFromDialog = () => {
+    if (!absentStudentDialog || !sessionKey) return;
+    setDraftAttendance(prev => {
+      const current = [...(prev[sessionKey] || [])];
+      if (!current.includes(absentStudentDialog.studentId)) current.push(absentStudentDialog.studentId);
+      return { ...prev, [sessionKey]: current };
+    });
+    setAbsentStudentDialog(null);
+    toast.success('Student marked present');
+  };
+
+  const handleGoToUnsubmitted = () => {
+    if (!oldestUnsubmitted) return;
+    setManualSlotId(oldestUnsubmitted.slotId);
+    setAttendanceDate(oldestUnsubmitted.date);
+    setCurrentPage('attendance');
+    setBlockingDialogOpen(false);
+  };
+
+  const handleAlertDotPress = () => {
+    if (unsubmittedSessions.length > 0) {
+      setHighlightUnsubmitted(true);
+      setTimeout(() => setHighlightUnsubmitted(false), 2000);
+      const first = unsubmittedSessions[0];
+      setManualSlotId(first.slotId);
+      setAttendanceDate(first.date);
+      setCurrentPage('attendance');
+    }
+  };
+
+  const handleLiveBadgePress = () => {
+    setManualSlotId('');
+    setAttendanceDate(today);
+    setCurrentPage('attendance');
+  };
+
   const saveEntry = async () => {
     if (!selectedStudentId || !scoringExercise) return;
     const qs: Record<string, string> = {};
@@ -403,7 +528,6 @@ export default function ScoreEntryPage() {
         centerId: slotCenter?._id as Id<"centers"> | undefined,
       });
     }
-    // Ensure student is in draft present (they're scoring, so they're present)
     if (sessionKey && !draftPresentIds.has(selectedStudentId)) {
       setDraftAttendance(prev => ({ ...prev, [sessionKey]: [...(prev[sessionKey] || []), selectedStudentId!] }));
     }
@@ -425,13 +549,11 @@ export default function ScoreEntryPage() {
 
   const handleFinishExercise = async () => {
     if (!selectedStudentId || !scoringExercise) return;
-    // Mark unmarked questions as skipped
     const finalStates = { ...questionStates };
     for (let i = 1; i <= scoringExercise.questionCount; i++) {
       if (finalStates[i] === 'unmarked') finalStates[i] = 'skipped';
     }
     setQuestionStates(finalStates);
-    // Save with skipped
     const qs: Record<string, string> = {};
     let cc = 0, ta = 0;
     for (const [k, v] of Object.entries(finalStates)) { if (v !== 'unmarked') { qs[k] = v; if (v === 'correct') cc++; if (v === 'correct' || v === 'wrong') ta++; } }
@@ -448,7 +570,6 @@ export default function ScoreEntryPage() {
       setDraftAttendance(prev => ({ ...prev, [sessionKey]: [...(prev[sessionKey] || []), selectedStudentId!] }));
     }
     toast.success(`${(selectedStudent as { name: string })?.name}: Exercise finished!`);
-    // Go back to grid
     setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
   };
 
@@ -462,19 +583,43 @@ export default function ScoreEntryPage() {
     toast.success(`${(selectedStudent as { name: string })?.name}: Session complete!`);
   };
 
-  const handleSubmitSession = async (key: string) => {
-    const [slotId, date] = key.split('|');
-    const presentIds = draftAttendance[key] || [];
-    const finIds = draftFinished[key] || [];
-    await submitSessionMut({
-      slotId: slotId as Id<"scheduleSlots">,
-      date,
-      presentStudentIds: presentIds as Id<"students">[],
-      finishedStudentIds: finIds as Id<"students">[],
-    });
-    setDraftAttendance(prev => { const n = { ...prev }; delete n[key]; return n; });
-    setDraftFinished(prev => { const n = { ...prev }; delete n[key]; return n; });
-    toast.success('Session submitted!');
+  const handleSubmitPress = () => {
+    if (!effectiveSlot || !effectiveStudents || !teacher) return;
+    const presentIds = Array.from(presentStudentIds);
+    const unfinished = presentIds.filter(id => !finishedStudentIds.has(id));
+    if (unfinished.length > 0) {
+      const names = unfinished.map(id => effectiveStudents.find((s: { _id: string; name: string }) => s._id === id)?.name || 'Unknown');
+      setUnfinishedAlertStudents(names);
+      return;
+    }
+    setSubmitDialogOpen(true);
+  };
+
+  const handleConfirmSubmit = async () => {
+    if (!effectiveSlot || !effectiveStudents || !teacher) return;
+    const presentIds = Array.from(presentStudentIds) as Id<"students">[];
+    const finishedIds = Array.from(finishedStudentIds) as Id<"students">[];
+    const allIds = effectiveStudents.map((s: { _id: Id<"students"> }) => s._id);
+    const entryCount = (allEntries || []).filter(e => presentIds.includes(e.studentId as Id<"students">) && e.date === effectiveDate).length;
+    try {
+      await submitSessionNewMut({
+        slotId: effectiveSlot._id as Id<"scheduleSlots">,
+        date: effectiveDate,
+        teacherId: teacher._id,
+        presentStudentIds: presentIds,
+        finishedStudentIds: finishedIds,
+        allStudentIds: allIds,
+        entryCount,
+      });
+      if (sessionKey) {
+        setDraftAttendance(prev => { const n = { ...prev }; delete n[sessionKey]; return n; });
+        setDraftFinished(prev => { const n = { ...prev }; delete n[sessionKey]; return n; });
+      }
+      setSubmitDialogOpen(false);
+      toast.success('Session submitted!');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to submit');
+    }
   };
 
   const clearScoring = () => {
@@ -485,7 +630,7 @@ export default function ScoreEntryPage() {
   };
 
   // ─── Loading ───
-  const loading = !students || !allEntries || !todayEntries || !allExercises || settings === undefined || !modulePositions || !allSlots || !rooms;
+  const loading = !students || !allEntries || !todayEntries || !allExercises || settings === undefined || !modulePositions || !allSlots || !rooms || submittedSessions === undefined;
   if (loading) return (
     <div className="px-4 pt-5 pb-6 max-w-lg mx-auto">
       <div className="animate-pulse space-y-3">
@@ -499,20 +644,66 @@ export default function ScoreEntryPage() {
   // ═══ RENDER ═══
   return (
     <div className="px-4 pt-4 pb-6 max-w-lg mx-auto">
-      <Tabs defaultValue="attendance">
-        <TabsList className="w-full mb-4 h-10">
-          <TabsTrigger value="attendance" className="flex-1 text-xs font-semibold">Attendance</TabsTrigger>
-          <TabsTrigger value="scoring" className="flex-1 text-xs font-semibold">
-            Scoring{presentStudents.length > 0 && <span className="ml-1.5 w-5 h-5 rounded-full bg-primary/20 text-primary text-[10px] font-bold inline-flex items-center justify-center">{presentStudents.length}</span>}
-          </TabsTrigger>
-          <TabsTrigger value="submissions" className="flex-1 text-xs font-semibold">
-            Submit{pendingSessions.length > 0 && <span className="ml-1.5 w-5 h-5 rounded-full bg-amber-500/20 text-amber-600 text-[10px] font-bold inline-flex items-center justify-center">{pendingSessions.length}</span>}
-          </TabsTrigger>
-        </TabsList>
+      {/* ═══ SHARED TOP BAR ═══ */}
+      <div className="flex items-center justify-between mb-4">
+        {/* Left: Back button (scoring) or Today's date (attendance) */}
+        <div className="flex items-center gap-2">
+          {currentPage === 'scoring' && (
+            <button onClick={() => { setCurrentPage('attendance'); setSelectedStudentId(null); setScoringExercise(null); }}
+              className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 active:scale-90 transition-transform">
+              <ArrowLeft className="w-4 h-4 text-muted-foreground" />
+            </button>
+          )}
+          <div>
+            <p className="text-sm font-bold text-foreground">{DAY_FULL[now.getDay()]}</p>
+            <p className="text-[11px] text-muted-foreground">{now.getDate()} {MONTHS[now.getMonth()]} {now.getFullYear()}</p>
+          </div>
+        </div>
 
-        {/* ═══ TAB 1: ATTENDANCE ═══ */}
-        <TabsContent value="attendance" className="space-y-3">
-          {/* Student Badges — fixed 2-row grid */}
+        {/* Center: Unsubmitted alert dot */}
+        {unsubmittedSessions.length > 0 && (
+          <button onClick={handleAlertDotPress} className="relative p-2 active:scale-90 transition-transform" title={`${unsubmittedSessions.length} unsubmitted`}>
+            <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse block" />
+            <span className="absolute -top-0.5 -right-0.5 text-[9px] font-bold text-red-500">{unsubmittedSessions.length}</span>
+          </button>
+        )}
+
+        {/* Right: Countdown / LIVE badge */}
+        <div className="shrink-0">
+          {activeSlot && isViewingOther ? (
+            // Browsing a different slot while one is live
+            <button onClick={handleLiveBadgePress} className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 active:scale-95 transition-all">
+              <Radio className="w-3 h-3 text-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-bold text-emerald-600">LIVE</span>
+            </button>
+          ) : sessionCountdown?.state === 'live' ? (
+            // Currently viewing the live slot
+            <div className="text-center px-2.5 py-1.5 rounded-xl bg-emerald-500/15 min-w-[44px]">
+              <div className="flex items-center justify-center gap-1">
+                <Radio className="w-3 h-3 text-emerald-500 animate-pulse" />
+                <p className="text-sm font-black text-emerald-600 leading-none">{sessionCountdown.minsLeft}</p>
+              </div>
+              <p className="text-[9px] font-semibold text-emerald-500/70">min</p>
+            </div>
+          ) : sessionCountdown && sessionCountdown.state === 'upcoming' ? (
+            // Next session countdown
+            (() => {
+              const cd = fmtCountdownCompact(sessionCountdown.minsLeft);
+              return (
+                <div className="text-center px-2.5 py-1.5 rounded-xl bg-primary/10 min-w-[44px]">
+                  <p className="text-sm font-black text-primary leading-none">{cd.value}</p>
+                  <p className="text-[9px] font-semibold text-primary/70">{cd.unit}</p>
+                </div>
+              );
+            })()
+          ) : null}
+        </div>
+      </div>
+
+      {/* ═══ PAGE: ATTENDANCE ═══ */}
+      {currentPage === 'attendance' && (
+        <div className="space-y-3">
+          {/* Student Badges — attendance toggles */}
           <div className="min-h-[84px] flex flex-wrap content-start gap-1.5 overflow-hidden">
             {effectiveSlot && effectiveStudents && effectiveStudents.length > 0 ? (
               effectiveStudents.map((s: { _id: Id<"students">; name: string }) => {
@@ -534,70 +725,72 @@ export default function ScoreEntryPage() {
             )}
           </div>
 
-          {/* Compact Info Strip */}
-          <div className="rounded-2xl bg-card border border-border/50 overflow-hidden">
+          {/* Session Info Card — pressable → goes to scoring */}
+          <button
+            onClick={() => effectiveSlot && setCurrentPage('scoring')}
+            className={`w-full rounded-2xl border overflow-hidden text-left transition-all active:scale-[0.98]
+              ${sessionLifecycle === 'live' ? 'bg-blue-500/5 border-blue-500/30'
+                : sessionLifecycle === 'ended' ? 'bg-red-500/5 border-red-500/30'
+                : sessionLifecycle === 'submitted' ? 'bg-emerald-500/5 border-emerald-500/30'
+                : 'bg-card border-border/50'}`}
+          >
             <div className="px-4 py-3 flex items-center gap-3">
-              {/* Date + slot info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-bold text-foreground">{DAY_SHORT[now.getDay() === 0 ? 7 : now.getDay()]}</p>
-                  <span className="text-[11px] text-muted-foreground">{now.getDate()} {MONTHS[now.getMonth()].slice(0, 3)}</span>
-                  {slotModule && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: slotModule.color + '20', color: slotModule.color }}>{slotModule.id}</span>
+                  {effectiveSlot ? (
+                    <>
+                      <span className="text-sm font-bold text-foreground">{DAY_SHORT[effectiveSlot.dayOfWeek]} {fmt12s(effectiveSlot.startTime)}–{fmt12s(effectiveSlot.endTime)}</span>
+                      {slotModule && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: slotModule.color + '20', color: slotModule.color }}>{slotModule.id}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">No session selected</span>
                   )}
                 </div>
-                {effectiveSlot && slotRoom ? (
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="text-[11px] text-foreground font-medium">{fmt12s(effectiveSlot.startTime)}–{fmt12s(effectiveSlot.endTime)}</span>
-                    <span className="text-[11px] text-muted-foreground">· {(slotRoom as { name: string }).name}</span>
-                  </div>
-                ) : (
-                  <p className="text-[11px] text-muted-foreground mt-0.5">No sessions scheduled</p>
-                )}
-                {isViewingOther && effectiveSlot && (
-                  <p className="text-[10px] text-amber-500 font-medium mt-0.5">Viewing: {DAY_SHORT[effectiveSlot.dayOfWeek]} {fmt12s(effectiveSlot.startTime)}</p>
+                {effectiveSlot && slotRoom && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{(slotRoom as { name: string }).name}{slotCenter ? ` · ${(slotCenter as { name: string }).name}` : ''}</p>
                 )}
               </div>
-              {/* Right side: countdown + attendance */}
               <div className="flex items-center gap-2 shrink-0">
                 {effectiveStudents && effectiveStudents.length > 0 && (
                   <div className="text-center px-2 py-1 rounded-lg bg-muted/50">
-                    <p className="text-sm font-black text-foreground leading-none">{draftPresentIds.size}<span className="text-muted-foreground font-medium">/{effectiveStudents.length}</span></p>
+                    <p className="text-sm font-black text-foreground leading-none">{presentStudentIds.size}<span className="text-muted-foreground font-medium">/{effectiveStudents.length}</span></p>
                   </div>
                 )}
-                {sessionCountdown ? (
-                  <div className={`text-center px-2.5 py-1.5 rounded-xl min-w-[44px] ${sessionCountdown.state === 'live' ? 'bg-emerald-500/15' : sessionCountdown.state === 'ended' ? 'bg-destructive/10' : 'bg-primary/10'}`}>
-                    {sessionCountdown.state === 'live' ? (
-                      <>
-                        <div className="flex items-center justify-center gap-1">
-                          <Radio className="w-3 h-3 text-emerald-500 animate-pulse" />
-                          <p className="text-sm font-black text-emerald-600 leading-none">{sessionCountdown.minsLeft}</p>
-                        </div>
-                        <p className="text-[9px] font-semibold text-emerald-500/70">LIVE</p>
-                      </>
-                    ) : sessionCountdown.state === 'ended' ? (
-                      <>
-                        <p className="text-sm font-black text-destructive leading-none">0</p>
-                        <p className="text-[9px] font-semibold text-destructive/70">END</p>
-                      </>
-                    ) : (() => {
-                      const cd = fmtCountdownCompact(sessionCountdown.minsLeft);
-                      return <>
-                        <p className="text-sm font-black text-primary leading-none">{cd.value}</p>
-                        <p className="text-[9px] font-semibold text-primary/70">{cd.unit}</p>
-                      </>;
-                    })()}
-                  </div>
-                ) : null}
+                {/* Lifecycle badge */}
+                {sessionLifecycle === 'live' && (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-500/15 px-2 py-1 rounded-lg">
+                    <Radio className="w-2.5 h-2.5 animate-pulse" />LIVE
+                  </span>
+                )}
+                {sessionLifecycle === 'ended' && (
+                  <span className="text-[10px] font-bold text-red-600 bg-red-500/15 px-2 py-1 rounded-lg">ENDED</span>
+                )}
+                {sessionLifecycle === 'submitted' && (
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/15 px-2 py-1 rounded-lg flex items-center gap-1">
+                    <CheckCircle2 className="w-2.5 h-2.5" />DONE
+                  </span>
+                )}
+                {sessionLifecycle === 'upcoming' && effectiveSlot && (
+                  <span className="text-[10px] font-bold text-muted-foreground bg-muted px-2 py-1 rounded-lg">UPCOMING</span>
+                )}
               </div>
             </div>
             {/* Progress bar */}
             {effectiveSlot && effectiveStudents && effectiveStudents.length > 0 && (
-              <div className="h-1 bg-muted"><div className="h-full bg-primary transition-all duration-300" style={{ width: `${(draftPresentIds.size / effectiveStudents.length) * 100}%` }} /></div>
+              <div className="h-1 bg-muted"><div className="h-full bg-primary transition-all duration-300" style={{ width: `${(presentStudentIds.size / effectiveStudents.length) * 100}%` }} /></div>
             )}
-          </div>
+          </button>
 
-          {/* Weekly Calendar — 3 days at a time */}
+          {/* Submit button — only when session ended and not submitted */}
+          {sessionLifecycle === 'ended' && effectiveSlot && (
+            <Button onClick={handleSubmitPress} className="w-full h-10 rounded-xl text-sm font-semibold bg-red-600 hover:bg-red-700">
+              <Send className="w-3.5 h-3.5 mr-1.5" />Submit Session
+            </Button>
+          )}
+
+          {/* Weekly Calendar — 3 days at a time, color-coded */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">This Week</p>
@@ -620,15 +813,24 @@ export default function ScoreEntryPage() {
                   <div key={dow} className={`rounded-xl p-2 ${isToday ? 'bg-primary/10 border border-primary/20' : 'bg-muted/30 border border-transparent'}`}>
                     <p className={`text-[10px] font-bold text-center mb-1.5 ${isToday ? 'text-primary' : 'text-muted-foreground'}`}>{DAY_SHORT[dow]}</p>
                     <div className="space-y-1">
-                      {daySlots.map((slot: { _id: string; startTime: string; endTime: string; roomId: string }) => {
+                      {daySlots.map((slot: { _id: string; startTime: string; endTime: string; roomId: string; dayOfWeek: number }) => {
                         const isActive = slot._id === effectiveSlot?._id && weekDates[dow - 1] === effectiveDate;
-                        const dKey = `${slot._id}|${weekDates[dow - 1]}`;
-                        const hasDraft = (draftAttendance[dKey] || []).length > 0;
+                        const lifecycle = getSlotLifecycle(slot._id, weekDates[dow - 1], slot.startTime, slot.endTime);
+                        const shouldHighlight = highlightUnsubmitted && lifecycle === 'ended';
                         return (
                           <button key={slot._id} onClick={() => handleCalendarSlotTap(slot._id, dow)}
                             className={`w-full rounded-lg px-1.5 py-1 text-[10px] text-left transition-all active:scale-95
-                              ${isActive ? 'bg-primary text-primary-foreground shadow-sm' : hasDraft ? 'bg-primary/20 text-primary' : 'bg-card text-muted-foreground hover:bg-card/80'}`}>
-                            <p className="font-medium leading-tight">{fmt12s(slot.startTime)}–{fmt12s(slot.endTime)}</p>
+                              ${isActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''}
+                              ${shouldHighlight ? 'ring-2 ring-red-500 ring-offset-1 animate-pulse' : ''}
+                              ${lifecycle === 'submitted' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                : lifecycle === 'live' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+                                : lifecycle === 'ended' ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                                : 'bg-card text-muted-foreground hover:bg-card/80'}`}>
+                            <div className="flex items-center gap-1">
+                              {lifecycle === 'live' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />}
+                              {lifecycle === 'submitted' && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500 shrink-0" />}
+                              <p className="font-medium leading-tight truncate">{fmt12s(slot.startTime)}–{fmt12s(slot.endTime)}</p>
+                            </div>
                             <p className="opacity-70 leading-tight truncate">{getRoomName(slot.roomId)}</p>
                           </button>
                         );
@@ -640,20 +842,27 @@ export default function ScoreEntryPage() {
               })}
             </div>
           </div>
-        </TabsContent>
+        </div>
+      )}
 
-        {/* ═══ TAB 2: SCORING ═══ */}
-        <TabsContent value="scoring">
-          {presentStudents.length > 0 ? (
+      {/* ═══ PAGE: SCORING ═══ */}
+      {currentPage === 'scoring' && (
+        <div>
+          {/* Student badges — ALL students, color-coded */}
+          {scoringStudents.length > 0 ? (
             <div className="flex flex-wrap gap-1.5 mb-4">
-              {presentStudents.map((s: { _id: Id<"students">; name: string }) => {
-                const fin = finishedStudentIds.has(s._id);
-                const hasE = studentsWithEntries.has(s._id);
+              {scoringStudents.map((s) => {
                 const isSel = s._id === selectedStudentId;
+                const colorMap = {
+                  gray: 'bg-muted text-muted-foreground',
+                  red: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
+                  yellow: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+                  green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+                };
                 return (
                   <button key={s._id} onClick={() => handleStudentSelect(s._id)}
                     className={`px-3 py-2 rounded-xl text-xs font-medium transition-all active:scale-95 min-h-[36px]
-                      ${fin ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' : hasE ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' : 'bg-muted text-muted-foreground'}
+                      ${colorMap[s.badgeColor]}
                       ${isSel ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''}`}>
                     {s.name.split(' ')[0]}
                   </button>
@@ -661,9 +870,10 @@ export default function ScoreEntryPage() {
               })}
             </div>
           ) : (
-            <Card className="border-border/50 mb-4"><CardContent className="p-6 text-center"><p className="text-sm text-muted-foreground">No present students</p><p className="text-xs text-muted-foreground mt-1">Mark attendance in the Attendance tab first</p></CardContent></Card>
+            <Card className="border-border/50 mb-4"><CardContent className="p-6 text-center"><p className="text-sm text-muted-foreground">No students in this session</p></CardContent></Card>
           )}
 
+          {/* Selected student scoring UI */}
           {selectedStudentId && selectedStudent && (() => {
             const pos = studentPositions.get(selectedStudentId);
             const termUnits = getStudentTermUnits(selectedStudentId);
@@ -702,7 +912,6 @@ export default function ScoreEntryPage() {
                       <p className="text-xs font-medium text-foreground truncate flex-1 mr-2">{selectedUnitName}</p>
                       <span className="text-[10px] text-muted-foreground shrink-0">{up.correctQ + up.wrongQ + up.skippedQ}/{up.totalQ}Q</span>
                     </div>
-                    {/* Segmented progress bar: one segment per exercise, each split by questions */}
                     <div className="h-2.5 bg-muted rounded-full overflow-hidden flex">
                       {up.exercises.map((exb, ei) => {
                         const segW = up.totalQ > 0 ? (exb.qCount / up.totalQ) * 100 : 0;
@@ -737,7 +946,7 @@ export default function ScoreEntryPage() {
                       {selectedUnitExercises.map(ex => {
                         const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount);
                         const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : ex.name;
-                        return <button key={ex._id} onClick={() => slotModule && setupScoring(ex, selectedUnitId, slotModule.id)}
+                        return <button key={ex._id} onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
                           className={`aspect-square rounded-xl text-xs font-bold transition-all active:scale-90 flex items-center justify-center
                             ${st === 'perfect' ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/25'
                               : st === 'skipped' ? 'bg-emerald-300 text-emerald-800 dark:bg-emerald-400/30 dark:text-emerald-300 shadow-sm'
@@ -765,6 +974,27 @@ export default function ScoreEntryPage() {
                         {scoringExercise.pageNumber !== undefined && (
                           <span className="text-[10px] text-muted-foreground bg-muted rounded-lg px-2 py-1 shrink-0">p.{scoringExercise.pageNumber}</span>
                         )}
+                      </div>
+
+                      {/* Tiny exercise number boxes */}
+                      <div className="flex gap-1 overflow-x-auto pb-1">
+                        {selectedUnitExercises.map(ex => {
+                          const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount);
+                          const isCurrent = ex._id === scoringExercise._id;
+                          const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : String(ex.order);
+                          return (
+                            <button key={ex._id}
+                              onClick={() => slotModule && setupScoring(ex, selectedUnitId, slotModule.id)}
+                              className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
+                                ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
+                                ${st === 'perfect' ? 'bg-emerald-500 text-white'
+                                  : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
+                                  : st === 'wip' ? 'bg-amber-400 text-white'
+                                  : 'bg-muted text-muted-foreground'}`}>
+                              {lbl}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       {/* Scoring progress strip */}
@@ -795,7 +1025,7 @@ export default function ScoreEntryPage() {
                         {Array.from({ length: scoringExercise.questionCount }, (_, i) => {
                           const q = i + 1, s = questionStates[q] || 'unmarked';
                           return (
-                            <button key={q} onClick={() => s !== 'skipped' ? toggleQuestion(q) : undefined}
+                            <button key={q} onClick={() => handleQuestionTap(q)}
                               className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
                                 ${s === 'correct'
                                   ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
@@ -812,11 +1042,23 @@ export default function ScoreEntryPage() {
 
                       {/* Quick actions */}
                       <div className="flex gap-1.5">
-                        <button onClick={() => { const s: Record<number, 'correct' | 'wrong' | 'unmarked'> = {}; for (let i = 1; i <= scoringExercise.questionCount; i++) s[i] = 'correct'; setQuestionStates(s); }}
+                        <button onClick={() => {
+                          if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
+                          if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
+                            setAbsentStudentDialog({ studentId: selectedStudentId, type: sessionLifecycle === 'live' ? 'live' : 'future' }); return;
+                          }
+                          const s: Record<number, 'correct' | 'wrong' | 'unmarked'> = {}; for (let i = 1; i <= scoringExercise.questionCount; i++) s[i] = 'correct'; setQuestionStates(s);
+                        }}
                           className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 active:scale-95 transition-all">
                           <Sparkles className="w-3 h-3" />All Correct
                         </button>
-                        <button onClick={() => setQuestionStates(prev => { const n = { ...prev }; for (let i = 1; i <= scoringExercise.questionCount; i++) { if (n[i] === 'unmarked') n[i] = 'correct'; } return n; })}
+                        <button onClick={() => {
+                          if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
+                          if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
+                            setAbsentStudentDialog({ studentId: selectedStudentId, type: sessionLifecycle === 'live' ? 'live' : 'future' }); return;
+                          }
+                          setQuestionStates(prev => { const n = { ...prev }; for (let i = 1; i <= scoringExercise.questionCount; i++) { if (n[i] === 'unmarked') n[i] = 'correct'; } return n; });
+                        }}
                           className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-muted text-muted-foreground hover:text-foreground active:scale-95 transition-all">
                           <SkipForward className="w-3 h-3" />Rest Correct
                         </button>
@@ -864,79 +1106,30 @@ export default function ScoreEntryPage() {
             );
           })()}
 
-          {!selectedStudentId && presentStudents.length > 0 && (() => {
-            const inProg = presentStudents.filter((s: { _id: string }) => studentsWithEntries.has(s._id) && !finishedStudentIds.has(s._id)).length;
-            const fin = presentStudents.filter((s: { _id: string }) => finishedStudentIds.has(s._id)).length;
+          {/* Summary when no student selected */}
+          {!selectedStudentId && scoringStudents.length > 0 && (() => {
+            const inProg = scoringStudents.filter(s => s.badgeColor === 'yellow').length;
+            const fin = scoringStudents.filter(s => s.badgeColor === 'green').length;
+            const absent = scoringStudents.filter(s => s.badgeColor === 'red').length;
+            const pending = scoringStudents.filter(s => s.badgeColor === 'gray').length;
             return (
               <div className="rounded-2xl bg-card border border-border/50 p-5">
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  <div className="text-center"><p className="text-2xl font-bold text-muted-foreground">{presentStudents.length - inProg - fin}</p><p className="text-[10px] text-muted-foreground">Pending</p></div>
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  <div className="text-center"><p className="text-2xl font-bold text-muted-foreground">{pending}</p><p className="text-[10px] text-muted-foreground">Pending</p></div>
                   <div className="text-center"><p className="text-2xl font-bold text-amber-500">{inProg}</p><p className="text-[10px] text-amber-500/70">Scoring</p></div>
                   <div className="text-center"><p className="text-2xl font-bold text-emerald-500">{fin}</p><p className="text-[10px] text-emerald-500/70">Done</p></div>
+                  <div className="text-center"><p className="text-2xl font-bold text-red-500">{absent}</p><p className="text-[10px] text-red-500/70">Absent</p></div>
                 </div>
                 <p className="text-xs text-muted-foreground text-center">Tap a student to start scoring</p>
               </div>
             );
           })()}
-        </TabsContent>
-
-        {/* ═══ TAB 3: SUBMISSIONS ═══ */}
-        <TabsContent value="submissions">
-          {pendingSessions.length > 0 ? (
-            <div className="space-y-3">
-              {pendingSessions.map(session => {
-                const slot = allSlots?.find((s: { _id: string }) => s._id === session.slotId);
-                if (!slot) return null;
-                const room = rooms?.find((r: { _id: string }) => r._id === slot.roomId);
-                const center = room ? centers?.find((c: { _id: string }) => c._id === (room as { centerId: string }).centerId) : null;
-                const canSubmit = canSubmitSession(slot.endTime, session.date);
-                const dayIdx = slot.dayOfWeek;
-                const entryCount = allEntries?.filter(e => {
-                  const presentSet = new Set(draftAttendance[session.key] || []);
-                  return presentSet.has(e.studentId) && e.date === session.date;
-                }).length || 0;
-
-                return (
-                  <div key={session.key} className="rounded-2xl bg-card border border-border/50 p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <p className="text-sm font-bold text-foreground">{DAY_SHORT[dayIdx]} · {session.date}</p>
-                        <p className="text-xs text-muted-foreground">{fmt12(slot.startTime)} – {fmt12(slot.endTime)}</p>
-                        {room && <p className="text-xs text-muted-foreground">{(room as { name: string }).name}{center ? ` · ${(center as { name: string }).name}` : ''}</p>}
-                      </div>
-                      <div className="text-right">
-                        <p className="text-lg font-bold text-primary">{session.presentCount}</p>
-                        <p className="text-[10px] text-muted-foreground">present</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
-                      <span>{session.finishedCount} finished</span>
-                      <span>·</span>
-                      <span>{entryCount} entries</span>
-                    </div>
-
-                    <Button
-                      onClick={() => handleSubmitSession(session.key)}
-                      disabled={!canSubmit}
-                      className={`w-full h-10 rounded-xl text-sm font-semibold transition-all ${canSubmit ? 'bg-primary hover:bg-primary/90' : 'opacity-40 cursor-not-allowed'}`}>
-                      <Send className="w-3.5 h-3.5 mr-1.5" />
-                      {canSubmit ? 'Submit Session' : `Submittable after ${fmt12(slot.endTime)}`}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="rounded-2xl bg-card border border-border/50 p-8 text-center">
-              <p className="text-sm text-muted-foreground">No pending submissions</p>
-              <p className="text-xs text-muted-foreground mt-1">Sessions with attendance will appear here</p>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
 
       {/* ═══ DIALOGS ═══ */}
+
+      {/* Unsaved changes */}
       <Dialog open={showUnsavedDialog} onOpenChange={o => { if (!o) { setShowUnsavedDialog(false); setPendingAction(null); } }}>
         <DialogContent showCloseButton={false}>
           <DialogHeader><DialogTitle>Unsaved Changes</DialogTitle><DialogDescription>You have unsaved marks. Save before leaving?</DialogDescription></DialogHeader>
@@ -947,6 +1140,7 @@ export default function ScoreEntryPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Position override */}
       <Dialog open={positionDialogOpen} onOpenChange={setPositionDialogOpen}>
         <DialogContent className="max-w-sm mx-auto">
           <DialogHeader><DialogTitle>Change Position</DialogTitle><DialogDescription>Override module, grade, and term</DialogDescription></DialogHeader>
@@ -978,6 +1172,98 @@ export default function ScoreEntryPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Attendance guard — student has scoring data but teacher wants to mark absent */}
+      <Dialog open={!!attendanceGuardDialog} onOpenChange={o => { if (!o) setAttendanceGuardDialog(null); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Student Has Scoring Data</DialogTitle>
+            <DialogDescription>{attendanceGuardDialog?.name} has scoring entries for this session. Mark as absent anyway?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAttendanceGuardDialog(null)}>Keep Present</Button>
+            <Button variant="destructive" onClick={() => attendanceGuardDialog && handleForceAbsent(attendanceGuardDialog.studentId)}>Mark Absent</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Submit confirmation */}
+      <Dialog open={submitDialogOpen} onOpenChange={setSubmitDialogOpen}>
+        <DialogContent className="max-w-sm mx-auto">
+          <DialogHeader><DialogTitle>Submit Session</DialogTitle></DialogHeader>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span className="font-medium">{effectiveSlot ? `${DAY_SHORT[effectiveSlot.dayOfWeek]}, ${effectiveDate}` : ''}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="font-medium">{effectiveSlot ? `${fmt12(effectiveSlot.startTime)} – ${fmt12(effectiveSlot.endTime)}` : ''}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Room</span><span className="font-medium">{slotRoom ? (slotRoom as { name: string }).name : ''}</span></div>
+            {slotModule && <div className="flex justify-between"><span className="text-muted-foreground">Module</span><span className="font-medium" style={{ color: slotModule.color }}>{slotModule.id}: {slotModule.name}</span></div>}
+            <div className="border-t border-border/50 pt-2 mt-2" />
+            <div className="flex justify-between"><span className="text-muted-foreground">Present</span><span className="font-bold text-emerald-600">{presentStudentIds.size} students</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Absent</span><span className="font-bold text-red-500">{(effectiveStudents?.length || 0) - presentStudentIds.size} students</span></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubmitDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleConfirmSubmit} className="bg-emerald-600 hover:bg-emerald-700"><Send className="w-3.5 h-3.5 mr-1.5" />Confirm Submit</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Unfinished students alert */}
+      <Dialog open={unfinishedAlertStudents.length > 0} onOpenChange={o => { if (!o) setUnfinishedAlertStudents([]); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-500" />Students Not Finished</DialogTitle>
+            <DialogDescription>Finish all present students before submitting. Go to the scoring page and press &quot;Finish&quot; for each student.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-1.5 my-2">
+            {unfinishedAlertStudents.map((name, i) => (
+              <span key={i} className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 text-xs font-medium">{name}</span>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => { setUnfinishedAlertStudents([]); setCurrentPage('scoring'); }}>Go to Scoring</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Absent student dialog */}
+      <Dialog open={!!absentStudentDialog} onOpenChange={o => { if (!o) setAbsentStudentDialog(null); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Student Not Present</DialogTitle>
+            <DialogDescription>
+              {absentStudentDialog?.type === 'live'
+                ? 'This student is marked absent. Mark them as present to start scoring.'
+                : 'This student is not present in this session. Switch to a live session to score.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            {absentStudentDialog?.type === 'live' ? (
+              <>
+                <Button variant="outline" onClick={() => setAbsentStudentDialog(null)}>Cancel</Button>
+                <Button onClick={handleMarkPresentFromDialog} className="bg-blue-600 hover:bg-blue-700">Mark Present</Button>
+              </>
+            ) : (
+              <Button onClick={() => setAbsentStudentDialog(null)}>OK</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Blocking dialog — older session unsubmitted */}
+      <Dialog open={blockingDialogOpen} onOpenChange={setBlockingDialogOpen}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-red-500" />Previous Session Not Submitted</DialogTitle>
+            <DialogDescription>
+              Submit your {oldestUnsubmitted ? `${DAY_SHORT[oldestUnsubmitted.dayOfWeek]} ${fmt12s(oldestUnsubmitted.startTime)}–${fmt12s(oldestUnsubmitted.endTime)}` : ''} session before scoring in another session.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBlockingDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleGoToUnsubmitted} className="bg-red-600 hover:bg-red-700">Go to Session</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Concept Drawer */}
       <Sheet open={conceptDrawerOpen} onOpenChange={setConceptDrawerOpen}>
         <SheetContent side="right" className="overflow-y-auto">
@@ -992,7 +1278,6 @@ export default function ScoreEntryPage() {
               selectedStudentId, slotModule.id, allEntries || [], allExercises || [], units, 20,
               getPositionOpts(selectedStudentId, slotModule.id, (selectedStudent as { schoolGrade: number })?.schoolGrade ?? 6)
             );
-            // Also get all items in the selected unit
             const unitItems = (allExercises || []).filter(e => e.unitId === selectedUnitId).sort((a, b) => a.order - b.order);
             const unitInfo = findUnit(selectedUnitId);
             return (

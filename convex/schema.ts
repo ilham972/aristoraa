@@ -106,4 +106,16 @@ export default defineSchema({
     grade: v.number(),
     term: v.number(),
   }).index("by_student_module", ["studentId", "moduleId"]),
+
+  sessionSubmissions: defineTable({
+    slotId: v.id("scheduleSlots"),
+    date: v.string(),
+    teacherId: v.id("teachers"),
+    presentCount: v.number(),
+    absentCount: v.number(),
+    entryCount: v.number(),
+    submittedAt: v.number(),
+  })
+    .index("by_slot_date", ["slotId", "date"])
+    .index("by_teacher", ["teacherId"]),
 });
