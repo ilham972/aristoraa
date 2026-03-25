@@ -20,6 +20,7 @@ import type { Id } from '@/lib/convex';
 
 export default function StudentsPage() {
   const [filterGrade, setFilterGrade] = useState<string>('all');
+  const [filterCenter, setFilterCenter] = useState<string>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<Id<"students"> | null>(null);
 
@@ -27,10 +28,12 @@ export default function StudentsPage() {
   const [formGrade, setFormGrade] = useState('6');
   const [formPhone, setFormPhone] = useState('');
   const [formSchool, setFormSchool] = useState('');
+  const [formCenterId, setFormCenterId] = useState<string>('');
 
   const students = useQuery(api.students.list);
   const allEntries = useQuery(api.entries.list);
   const allExercises = useQuery(api.exercises.list);
+  const centers = useQuery(api.centers.list);
 
   const addStudentMutation = useMutation(api.students.add);
   const updateStudentMutation = useMutation(api.students.update);
@@ -49,6 +52,11 @@ export default function StudentsPage() {
 
   const filteredStudents = students.filter(s => {
     if (filterGrade !== 'all' && s.schoolGrade !== parseInt(filterGrade)) return false;
+    if (filterCenter !== 'all') {
+      const studentCenterId = (s as { centerId?: string }).centerId;
+      if (filterCenter === 'none') { if (studentCenterId) return false; }
+      else if (studentCenterId !== filterCenter) return false;
+    }
     return true;
   });
 
@@ -65,6 +73,7 @@ export default function StudentsPage() {
         schoolGrade: parseInt(formGrade),
         parentPhone: formPhone,
         schoolName: formSchool,
+        centerId: formCenterId ? formCenterId as Id<"centers"> : undefined,
       });
       toast.success('Student updated');
     } else {
@@ -73,6 +82,7 @@ export default function StudentsPage() {
         schoolGrade: parseInt(formGrade),
         parentPhone: formPhone,
         schoolName: formSchool,
+        centerId: formCenterId ? formCenterId as Id<"centers"> : undefined,
       });
       toast.success('Student added');
     }
@@ -87,6 +97,7 @@ export default function StudentsPage() {
     setFormGrade(String(student.schoolGrade));
     setFormPhone(student.parentPhone);
     setFormSchool(student.schoolName);
+    setFormCenterId((student as { centerId?: string }).centerId || '');
     setDialogOpen(true);
   };
 
@@ -103,6 +114,7 @@ export default function StudentsPage() {
     setFormGrade('6');
     setFormPhone('');
     setFormSchool('');
+    setFormCenterId('');
   };
 
   const openAdd = () => {
@@ -140,15 +152,27 @@ export default function StudentsPage() {
       </div>
 
       {/* Filters */}
-      <div className="mb-4">
+      <div className="flex gap-2 mb-4">
         <Select value={filterGrade} onValueChange={(v) => setFilterGrade(v ?? 'all')}>
-          <SelectTrigger className="h-10 text-sm">
+          <SelectTrigger className="h-10 text-sm flex-1">
             <SelectValue placeholder="Grade" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Grades</SelectItem>
             {[6, 7, 8, 9, 10, 11].map(g => (
               <SelectItem key={g} value={String(g)}>Grade {g}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={filterCenter} onValueChange={(v) => setFilterCenter(v ?? 'all')}>
+          <SelectTrigger className="h-10 text-sm flex-1">
+            <SelectValue placeholder="Center" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Centers</SelectItem>
+            <SelectItem value="none">No Center</SelectItem>
+            {centers?.map((c: { _id: string; name: string }) => (
+              <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -167,6 +191,11 @@ export default function StudentsPage() {
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-foreground text-sm truncate">{student.name}</p>
                       <Badge variant="secondary" className="text-[10px] shrink-0">G{student.schoolGrade}</Badge>
+                      {(() => {
+                        const cid = (student as { centerId?: string }).centerId;
+                        const center = cid ? centers?.find((c: { _id: string }) => c._id === cid) : null;
+                        return center ? <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-medium">{(center as { name: string }).name}</span> : null;
+                      })()}
                     </div>
                     <div className="flex gap-1 mt-2 flex-wrap">
                       {CURRICULUM_MODULES.map(mod => (
@@ -228,6 +257,18 @@ export default function StudentsPage() {
             <div>
               <Label htmlFor="school" className="text-sm">School Name</Label>
               <Input id="school" value={formSchool} onChange={e => setFormSchool(e.target.value)} placeholder="School name" className="mt-1" />
+            </div>
+            <div>
+              <Label className="text-sm">Center</Label>
+              <Select value={formCenterId} onValueChange={(v) => setFormCenterId(v ?? '')}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Select center (optional)" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">No Center</SelectItem>
+                  {centers?.map((c: { _id: string; name: string }) => (
+                    <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button onClick={handleSave} className="w-full rounded-xl">{editingStudentId ? 'Update' : 'Add Student'}</Button>
           </div>

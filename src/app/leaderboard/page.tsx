@@ -17,11 +17,13 @@ type Period = 'daily' | 'weekly' | 'monthly';
 export default function LeaderboardPage() {
   const [period, setPeriod] = useState<Period>('daily');
   const [gradeFilter, setGradeFilter] = useState<string>('all');
+  const [centerFilter, setCenterFilter] = useState<string>('all');
   const [date, setDate] = useState(getTodayDateStr());
 
   const students = useQuery(api.students.list);
   const entries = useQuery(api.entries.list);
   const settings = useQuery(api.settings.get);
+  const centers = useQuery(api.centers.list);
 
   const dates = period === 'daily'
     ? [date]
@@ -30,7 +32,13 @@ export default function LeaderboardPage() {
     : getMonthDates(parseInt(date.split('-')[0]), parseInt(date.split('-')[1]));
 
   const gradeNum = gradeFilter !== 'all' ? parseInt(gradeFilter) : undefined;
-  const leaderboard = students && entries ? getLeaderboard(entries, students, dates, gradeNum) : [];
+  // Filter students by center before computing leaderboard
+  const filteredStudents = students ? students.filter(s => {
+    if (centerFilter === 'all') return true;
+    if (centerFilter === 'none') return !(s as { centerId?: string }).centerId;
+    return (s as { centerId?: string }).centerId === centerFilter;
+  }) : undefined;
+  const leaderboard = filteredStudents && entries ? getLeaderboard(entries, filteredStudents, dates, gradeNum) : [];
   const tuitionName = 'Aristora';
 
   const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -181,13 +189,25 @@ export default function LeaderboardPage() {
           className="flex-1 h-10 px-3 text-sm border border-border rounded-xl bg-card text-foreground"
         />
         <Select value={gradeFilter} onValueChange={(v) => setGradeFilter(v ?? 'all')}>
-          <SelectTrigger className="w-32 h-10 text-sm">
+          <SelectTrigger className="w-28 h-10 text-sm">
             <SelectValue placeholder="Grade" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Grades</SelectItem>
             {[6, 7, 8, 9, 10, 11].map(g => (
               <SelectItem key={g} value={String(g)}>Grade {g}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={centerFilter} onValueChange={(v) => setCenterFilter(v ?? 'all')}>
+          <SelectTrigger className="w-28 h-10 text-sm">
+            <SelectValue placeholder="Center" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Centers</SelectItem>
+            <SelectItem value="none">No Center</SelectItem>
+            {centers?.map((c: { _id: string; name: string }) => (
+              <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>

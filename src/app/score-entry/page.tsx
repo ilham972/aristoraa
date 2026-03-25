@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from 'convex/react';
 import { Check, BookOpen, CheckCircle2, Clock, MapPin, Send, ChevronLeft, ChevronRight, Sparkles, Zap, SkipForward, Radio, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { useActiveSlot } from '@/hooks/useActiveSlot';
+import { useNavVisibility } from '@/contexts/nav-visibility';
 import type { Id } from '@/lib/convex';
 
 // ─── Helpers ───
@@ -54,8 +55,15 @@ export default function ScoreEntryPage() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const iv = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(iv); }, []);
 
+  // ─── Nav visibility ───
+  const { setHideBottomNav } = useNavVisibility();
+
   // ─── State ───
   const [currentPage, setCurrentPage] = useState<'attendance' | 'scoring'>('attendance');
+  useEffect(() => {
+    setHideBottomNav(currentPage === 'scoring');
+    return () => setHideBottomNav(false);
+  }, [currentPage, setHideBottomNav]);
   const [manualSlotId, setManualSlotId] = useState('');
   const [attendanceDate, setAttendanceDate] = useState(() => getTodayDateStr());
   const [calPage, setCalPage] = useState(0);
@@ -73,6 +81,11 @@ export default function ScoreEntryPage() {
   const [questionStates, setQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
   const [existingEntryId, setExistingEntryId] = useState<Id<"entries"> | null>(null);
   const [initialQuestionStates, setInitialQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
+
+  // Live-save refs
+  const liveEntryIdRef = useRef<Id<"entries"> | null>(null);
+  const saveLockRef = useRef(false);
+  const pendingSaveRef = useRef<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> | null>(null);
 
   // Dialogs
   const [positionDialogOpen, setPositionDialogOpen] = useState(false);
@@ -117,10 +130,32 @@ export default function ScoreEntryPage() {
 
   const { activeSlot, nextSlot, minutesRemaining } = useActiveSlot(teacherSlots);
 
+  // ─── Derived (early) ───
+  const todayDow = useMemo(() => { const d = now.getDay(); return d === 0 ? 7 : d; }, [now]);
+  const weekDates = useMemo(() => getWeekDates(today), [today]);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  // Fallback: most recently ended slot (today first, then previous days)
+  const fallbackSlot = useMemo(() => {
+    if (!teacherSlots || teacherSlots.length === 0) return null;
+    const todayEnded = teacherSlots
+      .filter((s: { dayOfWeek: number; endTime: string }) => s.dayOfWeek === todayDow && nowMinutes >= parseTimeToMinutes(s.endTime))
+      .sort((a: { endTime: string }, b: { endTime: string }) => parseTimeToMinutes(b.endTime) - parseTimeToMinutes(a.endTime));
+    if (todayEnded.length > 0) return todayEnded[0];
+    for (let diff = 1; diff <= 6; diff++) {
+      let dow = todayDow - diff;
+      if (dow <= 0) dow += 7;
+      const daySlots = teacherSlots.filter((s: { dayOfWeek: number }) => s.dayOfWeek === dow)
+        .sort((a: { endTime: string }, b: { endTime: string }) => parseTimeToMinutes(b.endTime) - parseTimeToMinutes(a.endTime));
+      if (daySlots.length > 0) return daySlots[0];
+    }
+    return null;
+  }, [teacherSlots, todayDow, nowMinutes]);
+
   const effectiveSlot = useMemo(() => {
     if (manualSlotId) return allSlots?.find((s: { _id: string }) => s._id === manualSlotId) ?? null;
-    return activeSlot ?? nextSlot ?? null;
-  }, [manualSlotId, allSlots, activeSlot, nextSlot]);
+    return activeSlot ?? nextSlot ?? fallbackSlot ?? null;
+  }, [manualSlotId, allSlots, activeSlot, nextSlot, fallbackSlot]);
 
   // Derive module from room's timetable for the slot's day
   const slotModule = useMemo(() => {
@@ -133,7 +168,12 @@ export default function ScoreEntryPage() {
     return getModuleForDay(effectiveSlot.dayOfWeek) ?? null;
   }, [effectiveSlot, rooms]);
 
-  const effectiveDate = manualSlotId ? attendanceDate : today;
+  const effectiveDate = useMemo(() => {
+    if (manualSlotId) return attendanceDate;
+    if (activeSlot || nextSlot) return today;
+    if (fallbackSlot) return weekDates[(fallbackSlot as { dayOfWeek: number }).dayOfWeek - 1];
+    return today;
+  }, [manualSlotId, attendanceDate, activeSlot, nextSlot, fallbackSlot, today, weekDates]);
   const sessionKey = effectiveSlot ? `${effectiveSlot._id}|${effectiveDate}` : '';
 
   const effectiveStudents = useQuery(
@@ -150,11 +190,6 @@ export default function ScoreEntryPage() {
   const updateEntryMut = useMutation(api.entries.update);
   const setModulePosMut = useMutation(api.studentModulePositions.set);
   const submitSessionNewMut = useMutation(api.sessionSubmissions.submit);
-
-  // ─── Derived ───
-  const todayDow = useMemo(() => { const d = now.getDay(); return d === 0 ? 7 : d; }, [now]);
-  const weekDates = useMemo(() => getWeekDates(today), [today]);
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
   // Draft present IDs for current session
   const draftPresentIds = useMemo(() => new Set(draftAttendance[sessionKey] || []), [draftAttendance, sessionKey]);
@@ -309,6 +344,25 @@ export default function ScoreEntryPage() {
     return false;
   }, [scoringExercise, questionStates, initialQuestionStates]);
 
+  // Auto-select first student when entering scoring page
+  useEffect(() => {
+    if (currentPage !== 'scoring' || !effectiveStudents || effectiveStudents.length === 0) return;
+    if (selectedStudentId && effectiveStudents.some((s: { _id: string }) => s._id === selectedStudentId)) return;
+    // Select first student — selectStudent handles exercise auto-selection
+    selectStudent(effectiveStudents[0]._id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, effectiveStudents, selectedStudentId]);
+
+  // Re-attempt exercise auto-selection when data loads (covers timing issues)
+  useEffect(() => {
+    if (currentPage !== 'scoring' || !selectedStudentId || scoringExercise) return;
+    if (!allExercises || !slotModule || !studentPositions) return;
+    const p = studentPositions.get(selectedStudentId);
+    const unitId = p?.unitId || selectedUnitId;
+    if (unitId) autoSelectExerciseForUnit(unitId, selectedStudentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, selectedStudentId, scoringExercise, allExercises, slotModule, studentPositions]);
+
   // ─── Helpers ───
   const getRoomName = useCallback((roomId: string) => rooms?.find((r: { _id: string; name: string }) => r._id === roomId)?.name || 'Room', [rooms]);
   const slotRoom = effectiveSlot ? rooms?.find((r: { _id: string }) => r._id === effectiveSlot.roomId) : null;
@@ -332,13 +386,23 @@ export default function ScoreEntryPage() {
     for (const it of items) { if (it.type === 'concept') last = it.name; if (it._id === exId) return last; }
     return last;
   };
-  const getExerciseStatus = (sid: string, exId: string, qCount: number): 'perfect' | 'skipped' | 'wip' | 'none' => {
+  // Check if student has entries for any later exercise in the same unit (implicit completion)
+  const hasProgressedPast = (sid: string, unitId: string, exOrder: number): boolean => {
+    if (!allExercises || !allEntries) return false;
+    return allExercises.some(ex =>
+      ex.unitId === unitId && (ex.type || 'exercise') === 'exercise' && ex.order > exOrder &&
+      allEntries.some(e => e.studentId === sid && e.exerciseId === ex._id && e.totalAttempted > 0)
+    );
+  };
+  const getExerciseStatus = (sid: string, exId: string, qCount: number, unitId: string, exOrder: number): 'perfect' | 'skipped' | 'wip' | 'none' => {
     const entry = allEntries?.find(e => e.studentId === sid && e.exerciseId === exId);
     if (!entry) return 'none';
     if (entry.totalAttempted >= qCount) return 'perfect';
     const qs = entry.questions as Record<string, string>;
-    const hasSkips = Object.values(qs).some(v => v === 'skipped');
-    if (hasSkips) return 'skipped';
+    const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+    if (addressed >= qCount) return 'skipped';
+    // Implicit completion: student progressed past this exercise
+    if (hasProgressedPast(sid, unitId, exOrder)) return 'skipped';
     return 'wip';
   };
   type ExerciseBreakdown = { exId: string; qCount: number; correct: number; wrong: number; skipped: number; unanswered: number };
@@ -373,7 +437,17 @@ export default function ScoreEntryPage() {
     if (!selectedStudentId || !selectedUnitId || !allExercises || !allEntries) return null;
     if (scoringExercise) return getConceptForExercise(scoringExercise._id, scoringExercise.unitId);
     const exs = allExercises.filter(e => e.unitId === selectedUnitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
-    for (const ex of exs) { const en = allEntries.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id); if (!en || en.totalAttempted < ex.questionCount) return getConceptForExercise(ex._id, selectedUnitId); }
+    for (const ex of exs) {
+      const en = allEntries.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
+      if (!en) return getConceptForExercise(ex._id, selectedUnitId);
+      if (en.totalAttempted < ex.questionCount) {
+        const qs = en.questions as Record<string, string>;
+        const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+        if (addressed < ex.questionCount && !hasProgressedPast(selectedStudentId, selectedUnitId, ex.order)) {
+          return getConceptForExercise(ex._id, selectedUnitId);
+        }
+      }
+    }
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStudentId, selectedUnitId, scoringExercise, allExercises, allEntries]);
@@ -425,10 +499,56 @@ export default function ScoreEntryPage() {
     }
   };
 
+  const autoSelectExerciseForUnit = (unitId: string, sid: string) => {
+    if (!allExercises || !slotModule) {
+      setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
+      return;
+    }
+    const exs = allExercises.filter(e => e.unitId === unitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
+    const nextEx = exs.find(ex => {
+      const entry = allEntries?.find(e => e.studentId === sid && e.exerciseId === ex._id);
+      if (!entry) return true;
+      if (entry.totalAttempted >= ex.questionCount) return false;
+      const qs = entry.questions as Record<string, string>;
+      const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+      if (addressed >= ex.questionCount) return false;
+      // Implicit completion: student has entries for later exercises
+      if (hasProgressedPast(sid, unitId, ex.order)) return false;
+      return true;
+    });
+    // Smart preselect: next incomplete exercise, or last exercise if all done
+    const targetEx = nextEx || (exs.length > 0 ? exs[exs.length - 1] : null);
+    if (targetEx) {
+      setupScoring(targetEx, unitId, slotModule.id);
+    } else {
+      setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
+    }
+  };
+
   const selectStudent = (sid: Id<"students">) => {
-    setSelectedStudentId(sid); setScoringExercise(null);
-    setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
-    const p = studentPositions.get(sid); setSelectedUnitId(p?.unitId ?? '');
+    setSelectedStudentId(sid);
+    const p = studentPositions.get(sid);
+    let unitId = p?.unitId ?? '';
+    // Fallback: if no position (all exercises done), find the student's current grade/term unit
+    if (!unitId && slotModule) {
+      const student = effectiveStudents?.find((s: { _id: string }) => s._id === sid);
+      if (student) {
+        const ov = modulePositions?.find((mp: { studentId: string; moduleId: string }) => mp.studentId === sid && mp.moduleId === slotModule.id);
+        const grade = ov?.grade ?? (student as { schoolGrade: number }).schoolGrade;
+        const term = ov?.term ?? 1;
+        const mod = CURRICULUM_MODULES.find(m => m.id === slotModule.id);
+        const termData = mod?.grades.find(g => g.grade === grade)?.terms.find(t => t.term === term);
+        if (termData && termData.units.length > 0) {
+          unitId = termData.units[0].id;
+        }
+      }
+    }
+    setSelectedUnitId(unitId);
+    if (unitId) {
+      autoSelectExerciseForUnit(unitId, sid);
+    } else {
+      setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
+    }
   };
   const handleStudentSelect = (sid: Id<"students">) => {
     if (sid === selectedStudentId) return;
@@ -442,16 +562,52 @@ export default function ScoreEntryPage() {
     const st: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
     if (existing) {
       setExistingEntryId(existing._id);
+      liveEntryIdRef.current = existing._id;
       for (let i = 1; i <= ex.questionCount; i++) {
         const v = existing.questions[String(i)];
         st[i] = (v === 'correct' || v === 'wrong' || v === 'skipped') ? v : 'unmarked';
       }
-    } else { setExistingEntryId(null); for (let i = 1; i <= ex.questionCount; i++) st[i] = 'unmarked'; }
+    } else { setExistingEntryId(null); liveEntryIdRef.current = null; for (let i = 1; i <= ex.questionCount; i++) st[i] = 'unmarked'; }
     setQuestionStates(st); setInitialQuestionStates({ ...st });
+    saveLockRef.current = false; pendingSaveRef.current = null;
   };
-  const toggleQuestion = (q: number) => setQuestionStates(prev => ({ ...prev, [q]: prev[q] === 'unmarked' ? 'correct' : prev[q] === 'correct' ? 'wrong' : 'unmarked' }));
+  // Live-save: persists question states to DB immediately
+  const liveSave = async (states: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>) => {
+    if (!selectedStudentId || !scoringExercise) return;
+    if (saveLockRef.current) { pendingSaveRef.current = states; return; }
+    saveLockRef.current = true;
+    try {
+      const qs: Record<string, string> = {};
+      let cc = 0, ta = 0;
+      for (const [k, v] of Object.entries(states)) {
+        if (v !== 'unmarked') { qs[k] = v; if (v === 'correct') cc++; if (v === 'correct' || v === 'wrong') ta++; }
+      }
+      if (liveEntryIdRef.current) {
+        await updateEntryMut({ id: liveEntryIdRef.current, questions: qs, correctCount: cc, totalAttempted: ta });
+      } else {
+        const newId = await addEntryMut({
+          studentId: selectedStudentId, date: today, exerciseId: scoringExercise._id, unitId: scoringExercise.unitId, moduleId: scoringExercise.moduleId, questions: qs, correctCount: cc, totalAttempted: ta,
+          slotId: effectiveSlot?._id as Id<"scheduleSlots"> | undefined,
+          centerId: slotCenter?._id as Id<"centers"> | undefined,
+        });
+        liveEntryIdRef.current = newId;
+        setExistingEntryId(newId);
+      }
+      if (sessionKey && !draftPresentIds.has(selectedStudentId)) {
+        setDraftAttendance(prev => ({ ...prev, [sessionKey]: [...(prev[sessionKey] || []), selectedStudentId!] }));
+      }
+      setInitialQuestionStates({ ...states });
+    } finally {
+      saveLockRef.current = false;
+      if (pendingSaveRef.current) {
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        liveSave(pending);
+      }
+    }
+  };
 
-  // Guarded question tap: checks blocking + absent before toggling
+  // Guarded question tap: checks blocking + absent, then toggles + live-saves
   const handleQuestionTap = (q: number) => {
     if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
     if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
@@ -462,7 +618,11 @@ export default function ScoreEntryPage() {
       }
       return;
     }
-    if (questionStates[q] !== 'skipped') toggleQuestion(q);
+    if (questionStates[q] === 'skipped') return;
+    const newVal = questionStates[q] === 'unmarked' ? 'correct' as const : questionStates[q] === 'correct' ? 'wrong' as const : 'unmarked' as const;
+    const newStates = { ...questionStates, [q]: newVal };
+    setQuestionStates(newStates);
+    liveSave(newStates);
   };
 
   // Guarded exercise tap: same blocking checks
@@ -533,44 +693,84 @@ export default function ScoreEntryPage() {
     }
   };
 
-  const handleSave = async () => {
-    await saveEntry();
-    toast.success(`${(selectedStudent as { name: string })?.name}: ${correctCount} correct = ${pointsThisEntry} pts`);
+  const handleNextExercise = () => {
     if (!scoringExercise || !slotModule) return;
     const curOrder = scoringExercise.order;
     const nextEx = selectedUnitExercises.find(ex => {
       if (ex.order <= curOrder) return false;
       const en = allEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
-      return !en || en.totalAttempted < ex.questionCount;
+      if (!en) return true;
+      if (en.totalAttempted >= ex.questionCount) return false;
+      const qs = en.questions as Record<string, string>;
+      const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+      if (addressed >= ex.questionCount) return false;
+      if (hasProgressedPast(selectedStudentId!, selectedUnitId, ex.order)) return false;
+      return true;
     });
     if (nextEx) setupScoring(nextEx, selectedUnitId, slotModule.id);
-    else { setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null); }
   };
 
   const handleFinishExercise = async () => {
     if (!selectedStudentId || !scoringExercise) return;
+    // Capture context before anything changes
+    const finishEntryId = liveEntryIdRef.current;
+    const finishStudentId = selectedStudentId;
+    const finishExercise = scoringExercise;
+
     const finalStates = { ...questionStates };
-    for (let i = 1; i <= scoringExercise.questionCount; i++) {
+    for (let i = 1; i <= finishExercise.questionCount; i++) {
       if (finalStates[i] === 'unmarked') finalStates[i] = 'skipped';
     }
     setQuestionStates(finalStates);
+
+    // Cancel any queued liveSave — our finish data supersedes it
+    pendingSaveRef.current = null;
+
+    // Direct save with captured entry ID (bypasses liveSave race condition)
     const qs: Record<string, string> = {};
     let cc = 0, ta = 0;
-    for (const [k, v] of Object.entries(finalStates)) { if (v !== 'unmarked') { qs[k] = v; if (v === 'correct') cc++; if (v === 'correct' || v === 'wrong') ta++; } }
-    if (existingEntryId) {
-      await updateEntryMut({ id: existingEntryId, questions: qs, correctCount: cc, totalAttempted: ta });
-    } else {
-      await addEntryMut({
-        studentId: selectedStudentId, date: today, exerciseId: scoringExercise._id, unitId: scoringExercise.unitId, moduleId: scoringExercise.moduleId, questions: qs, correctCount: cc, totalAttempted: ta,
-        slotId: effectiveSlot?._id as Id<"scheduleSlots"> | undefined,
-        centerId: slotCenter?._id as Id<"centers"> | undefined,
+    for (const [k, v] of Object.entries(finalStates)) {
+      if (v !== 'unmarked') { qs[k] = v; if (v === 'correct') cc++; if (v === 'correct' || v === 'wrong') ta++; }
+    }
+    try {
+      if (finishEntryId) {
+        await updateEntryMut({ id: finishEntryId, questions: qs, correctCount: cc, totalAttempted: ta });
+      } else {
+        const newId = await addEntryMut({
+          studentId: finishStudentId, date: today, exerciseId: finishExercise._id,
+          unitId: finishExercise.unitId, moduleId: finishExercise.moduleId,
+          questions: qs, correctCount: cc, totalAttempted: ta,
+          slotId: effectiveSlot?._id as Id<"scheduleSlots"> | undefined,
+          centerId: slotCenter?._id as Id<"centers"> | undefined,
+        });
+        liveEntryIdRef.current = newId;
+      }
+      if (sessionKey && !draftPresentIds.has(finishStudentId)) {
+        setDraftAttendance(prev => ({ ...prev, [sessionKey]: [...(prev[sessionKey] || []), finishStudentId] }));
+      }
+      setInitialQuestionStates({ ...finalStates });
+    } catch (err) {
+      console.error('Failed to save finished exercise:', err);
+    }
+
+    toast.success(`${(selectedStudent as { name: string })?.name}: ${finishExercise.name} finished!`);
+    // Advance to next exercise
+    if (slotModule) {
+      const curOrder = finishExercise.order;
+      const nextEx = selectedUnitExercises.find(ex => {
+        if (ex.order <= curOrder) return false;
+        const en = allEntries?.find(e => e.studentId === finishStudentId && e.exerciseId === ex._id);
+        if (!en) return true;
+        if (en.totalAttempted >= ex.questionCount) return false;
+        const eqs = en.questions as Record<string, string>;
+        const addressed = Object.values(eqs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+        if (addressed >= ex.questionCount) return false;
+        if (hasProgressedPast(finishStudentId, selectedUnitId, ex.order)) return false;
+        return true;
       });
+      if (nextEx) setupScoring(nextEx, selectedUnitId, slotModule.id);
+      else { setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null); liveEntryIdRef.current = null; }
     }
-    if (sessionKey && !draftPresentIds.has(selectedStudentId)) {
-      setDraftAttendance(prev => ({ ...prev, [sessionKey]: [...(prev[sessionKey] || []), selectedStudentId!] }));
-    }
-    toast.success(`${(selectedStudent as { name: string })?.name}: Exercise finished!`);
-    setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
   };
 
   const handleFinishSession = () => {
@@ -646,19 +846,33 @@ export default function ScoreEntryPage() {
     <div className="px-4 pt-4 pb-6 max-w-lg mx-auto">
       {/* ═══ SHARED TOP BAR ═══ */}
       <div className="flex items-center justify-between mb-4">
-        {/* Left: Back button (scoring) or Today's date (attendance) */}
-        <div className="flex items-center gap-2">
-          {currentPage === 'scoring' && (
-            <button onClick={() => { setCurrentPage('attendance'); setSelectedStudentId(null); setScoringExercise(null); }}
-              className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 active:scale-90 transition-transform">
-              <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-            </button>
-          )}
-          <div>
-            <p className="text-sm font-bold text-foreground">{DAY_FULL[now.getDay()]}</p>
-            <p className="text-[11px] text-muted-foreground">{now.getDate()} {MONTHS[now.getMonth()]} {now.getFullYear()}</p>
+        {/* Left: Session info (scoring) or Today's date (attendance) */}
+        {currentPage === 'scoring' && effectiveSlot ? (
+          <button
+            onClick={() => { setCurrentPage('attendance'); setScoringExercise(null); liveEntryIdRef.current = null; }}
+            className="flex items-center gap-2 active:scale-[0.97] transition-all min-w-0"
+          >
+            <ArrowLeft className="w-4 h-4 text-muted-foreground shrink-0" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-bold text-foreground">{DAY_SHORT[effectiveSlot.dayOfWeek]} {fmt12s(effectiveSlot.startTime)}–{fmt12s(effectiveSlot.endTime)}</span>
+                {slotModule && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: slotModule.color + '20', color: slotModule.color }}>{slotModule.id}</span>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground text-left truncate">
+                {slotRoom ? (slotRoom as { name: string }).name : ''}{slotCenter ? ` · ${(slotCenter as { name: string }).name}` : ''}
+              </p>
+            </div>
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div>
+              <p className="text-sm font-bold text-foreground">{DAY_FULL[now.getDay()]}</p>
+              <p className="text-[11px] text-muted-foreground">{now.getDate()} {MONTHS[now.getMonth()]} {now.getFullYear()}</p>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Center: Unsubmitted alert dot */}
         {unsubmittedSessions.length > 0 && (
@@ -725,71 +939,6 @@ export default function ScoreEntryPage() {
             )}
           </div>
 
-          {/* Session Info Card — pressable → goes to scoring */}
-          <button
-            onClick={() => effectiveSlot && setCurrentPage('scoring')}
-            className={`w-full rounded-2xl border overflow-hidden text-left transition-all active:scale-[0.98]
-              ${sessionLifecycle === 'live' ? 'bg-blue-500/5 border-blue-500/30'
-                : sessionLifecycle === 'ended' ? 'bg-red-500/5 border-red-500/30'
-                : sessionLifecycle === 'submitted' ? 'bg-emerald-500/5 border-emerald-500/30'
-                : 'bg-card border-border/50'}`}
-          >
-            <div className="px-4 py-3 flex items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {effectiveSlot ? (
-                    <>
-                      <span className="text-sm font-bold text-foreground">{DAY_SHORT[effectiveSlot.dayOfWeek]} {fmt12s(effectiveSlot.startTime)}–{fmt12s(effectiveSlot.endTime)}</span>
-                      {slotModule && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: slotModule.color + '20', color: slotModule.color }}>{slotModule.id}</span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">No session selected</span>
-                  )}
-                </div>
-                {effectiveSlot && slotRoom && (
-                  <p className="text-[11px] text-muted-foreground mt-0.5">{(slotRoom as { name: string }).name}{slotCenter ? ` · ${(slotCenter as { name: string }).name}` : ''}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {effectiveStudents && effectiveStudents.length > 0 && (
-                  <div className="text-center px-2 py-1 rounded-lg bg-muted/50">
-                    <p className="text-sm font-black text-foreground leading-none">{presentStudentIds.size}<span className="text-muted-foreground font-medium">/{effectiveStudents.length}</span></p>
-                  </div>
-                )}
-                {/* Lifecycle badge */}
-                {sessionLifecycle === 'live' && (
-                  <span className="flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-500/15 px-2 py-1 rounded-lg">
-                    <Radio className="w-2.5 h-2.5 animate-pulse" />LIVE
-                  </span>
-                )}
-                {sessionLifecycle === 'ended' && (
-                  <span className="text-[10px] font-bold text-red-600 bg-red-500/15 px-2 py-1 rounded-lg">ENDED</span>
-                )}
-                {sessionLifecycle === 'submitted' && (
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/15 px-2 py-1 rounded-lg flex items-center gap-1">
-                    <CheckCircle2 className="w-2.5 h-2.5" />DONE
-                  </span>
-                )}
-                {sessionLifecycle === 'upcoming' && effectiveSlot && (
-                  <span className="text-[10px] font-bold text-muted-foreground bg-muted px-2 py-1 rounded-lg">UPCOMING</span>
-                )}
-              </div>
-            </div>
-            {/* Progress bar */}
-            {effectiveSlot && effectiveStudents && effectiveStudents.length > 0 && (
-              <div className="h-1 bg-muted"><div className="h-full bg-primary transition-all duration-300" style={{ width: `${(presentStudentIds.size / effectiveStudents.length) * 100}%` }} /></div>
-            )}
-          </button>
-
-          {/* Submit button — only when session ended and not submitted */}
-          {sessionLifecycle === 'ended' && effectiveSlot && (
-            <Button onClick={handleSubmitPress} className="w-full h-10 rounded-xl text-sm font-semibold bg-red-600 hover:bg-red-700">
-              <Send className="w-3.5 h-3.5 mr-1.5" />Submit Session
-            </Button>
-          )}
-
           {/* Weekly Calendar — 3 days at a time, color-coded */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -817,21 +966,38 @@ export default function ScoreEntryPage() {
                         const isActive = slot._id === effectiveSlot?._id && weekDates[dow - 1] === effectiveDate;
                         const lifecycle = getSlotLifecycle(slot._id, weekDates[dow - 1], slot.startTime, slot.endTime);
                         const shouldHighlight = highlightUnsubmitted && lifecycle === 'ended';
+                        const rm = rooms?.find((r: { _id: string }) => r._id === slot.roomId);
+                        const rmTt = (rm as { moduleTimetable?: Record<string, string> } | undefined)?.moduleTimetable;
+                        const slotMod = rmTt?.[String(slot.dayOfWeek)] ? getModuleById(rmTt[String(slot.dayOfWeek)]) : null;
+                        const sub = submittedSessions?.find((s: { slotId: string; date: string }) => s.slotId === slot._id && s.date === weekDates[dow - 1]);
+                        const pCnt = sub ? (sub as { presentCount: number }).presentCount : isActive ? presentStudentIds.size : null;
+                        const tCnt = sub ? (sub as { presentCount: number; absentCount: number }).presentCount + (sub as { absentCount: number }).absentCount : isActive && effectiveStudents ? effectiveStudents.length : null;
                         return (
-                          <button key={slot._id} onClick={() => handleCalendarSlotTap(slot._id, dow)}
-                            className={`w-full rounded-lg px-1.5 py-1 text-[10px] text-left transition-all active:scale-95
+                          <button key={slot._id}
+                            onClick={() => { setManualSlotId(slot._id); setAttendanceDate(weekDates[dow - 1]); setCurrentPage('scoring'); }}
+                            className={`w-full rounded-xl px-2 py-2 text-[10px] text-left transition-all active:scale-95 overflow-hidden
                               ${isActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''}
                               ${shouldHighlight ? 'ring-2 ring-red-500 ring-offset-1 animate-pulse' : ''}
                               ${lifecycle === 'submitted' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                                 : lifecycle === 'live' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
                                 : lifecycle === 'ended' ? 'bg-red-500/10 text-red-700 dark:text-red-300'
                                 : 'bg-card text-muted-foreground hover:bg-card/80'}`}>
-                            <div className="flex items-center gap-1">
-                              {lifecycle === 'live' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />}
-                              {lifecycle === 'submitted' && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500 shrink-0" />}
-                              <p className="font-medium leading-tight truncate">{fmt12s(slot.startTime)}–{fmt12s(slot.endTime)}</p>
+                            {/* Time + Module badge */}
+                            <div className="flex items-center justify-between gap-0.5">
+                              <div className="flex items-center gap-1 min-w-0">
+                                {lifecycle === 'live' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />}
+                                {lifecycle === 'submitted' && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500 shrink-0" />}
+                                <p className="font-bold leading-tight truncate">{fmt12s(slot.startTime)}–{fmt12s(slot.endTime)}</p>
+                              </div>
+                              {slotMod && <span className="text-[8px] font-bold px-1 py-0.5 rounded shrink-0" style={{ backgroundColor: slotMod.color + '25', color: slotMod.color }}>{slotMod.id}</span>}
                             </div>
-                            <p className="opacity-70 leading-tight truncate">{getRoomName(slot.roomId)}</p>
+                            {/* Room + Count */}
+                            <div className="flex items-center justify-between mt-0.5">
+                              <p className="opacity-60 leading-tight truncate">{(rm as { name: string } | undefined)?.name || 'Room'}</p>
+                              {pCnt !== null && tCnt !== null && tCnt > 0 && (
+                                <span className="text-[9px] font-bold opacity-70 shrink-0">{pCnt}/{tCnt}</span>
+                              )}
+                            </div>
                           </button>
                         );
                       })}
@@ -881,28 +1047,19 @@ export default function ScoreEntryPage() {
             const dayCorrect = (todayEntries || []).filter(e => e.studentId === selectedStudentId).reduce((s, e) => s + e.correctCount, 0);
             return (
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <p className="text-sm font-bold text-foreground">{(selectedStudent as { name: string }).name}</p>
-                    {dayCorrect > 0 && <p className="text-[11px] text-emerald-600 font-medium">{dayCorrect} correct · {calculateDailyPoints(dayCorrect)} pts</p>}
-                  </div>
-                  {!finishedStudentIds.has(selectedStudentId) && !scoringExercise && <Button size="sm" onClick={handleFinishSession} className="h-8 rounded-xl text-xs bg-emerald-600 hover:bg-emerald-700"><CheckCircle2 className="w-3.5 h-3.5 mr-1" />Finish</Button>}
-                  {finishedStudentIds.has(selectedStudentId) && <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 text-[10px]">Done</Badge>}
-                </div>
-
                 {pos && (
                   <div className="flex items-center justify-between mb-3">
+                    <div className="flex gap-1">
+                      {termUnits.map(unit => {
+                        const num = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 2);
+                        return <button key={unit.id} onClick={() => { setSelectedUnitId(unit.id); autoSelectExerciseForUnit(unit.id, selectedStudentId!); }}
+                          className={`w-8 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 ${unit.id === selectedUnitId ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{num}</button>;
+                      })}
+                    </div>
                     <button onClick={() => { setPositionDialogStudentId(selectedStudentId); setDialogModule(slotModule?.id ?? ''); setDialogGrade(String(pos.grade)); setDialogTerm(String(pos.term)); setDialogPermanent(false); setPositionDialogOpen(true); }}
                       className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-semibold text-foreground transition-all active:scale-95">
                       {pos.moduleId} · G{pos.grade} · T{pos.term}
                     </button>
-                    <div className="flex gap-1">
-                      {termUnits.map(unit => {
-                        const num = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 2);
-                        return <button key={unit.id} onClick={() => { setSelectedUnitId(unit.id); setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null); }}
-                          className={`w-8 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 ${unit.id === selectedUnitId ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{num}</button>;
-                      })}
-                    </div>
                   </div>
                 )}
 
@@ -928,6 +1085,7 @@ export default function ScoreEntryPage() {
                       <span className="text-[10px] text-emerald-600 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{up.correctQ}</span>
                       <span className="text-[10px] text-red-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{up.wrongQ}</span>
                       {up.skippedQ > 0 && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{up.skippedQ} skip</span>}
+                      {dayCorrect > 0 && <span className="text-[10px] text-emerald-600 font-semibold ml-auto">{dayCorrect}✓ · {calculateDailyPoints(dayCorrect)} pts</span>}
                     </div>
                   </div>
                 )}
@@ -940,68 +1098,46 @@ export default function ScoreEntryPage() {
                   </button>
                 )}
 
-                {!scoringExercise ? (
-                  selectedUnitExercises.length > 0 ? (
-                    <div className="grid grid-cols-5 gap-2 mb-3">
-                      {selectedUnitExercises.map(ex => {
-                        const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount);
-                        const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : ex.name;
-                        return <button key={ex._id} onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
-                          className={`aspect-square rounded-xl text-xs font-bold transition-all active:scale-90 flex items-center justify-center
-                            ${st === 'perfect' ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/25'
-                              : st === 'skipped' ? 'bg-emerald-300 text-emerald-800 dark:bg-emerald-400/30 dark:text-emerald-300 shadow-sm'
-                              : st === 'wip' ? 'bg-amber-400 text-white shadow-sm shadow-amber-400/25'
-                              : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>{lbl}</button>;
-                      })}
-                    </div>
-                  ) : selectedUnitId ? <div className="text-center py-6 mb-3"><p className="text-xs text-muted-foreground">No exercises in this unit yet</p></div> : null
-                ) : (() => {
+                {/* Exercise selector boxes - always visible */}
+                {selectedUnitExercises.length > 0 && (
+                  <div className="flex gap-1 overflow-x-auto pb-1 mb-3">
+                    {selectedUnitExercises.map(ex => {
+                      const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount, selectedUnitId, ex.order);
+                      const isCurrent = scoringExercise && ex._id === scoringExercise._id;
+                      const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : String(ex.order);
+                      return (
+                        <button key={ex._id}
+                          onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
+                          className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
+                            ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
+                            ${st === 'perfect' ? 'bg-emerald-500 text-white'
+                              : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
+                              : st === 'wip' ? 'bg-amber-400 text-white'
+                              : 'bg-muted text-muted-foreground'}`}>
+                          {lbl}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {scoringExercise ? (() => {
                   const euInfo = findUnit(scoringExercise.unitId);
                   const unmarkedCount = Object.values(questionStates).filter(v => v === 'unmarked').length;
                   const markedCount = correctCount + wrongCount + skippedCount;
                   const progressPct = scoringExercise.questionCount > 0 ? ((markedCount / scoringExercise.questionCount) * 100) : 0;
                   return (
                     <div className="space-y-3">
-                      {/* Header */}
-                      <div className="flex items-center gap-3">
-                        <button onClick={clearScoring} className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 active:scale-90 transition-transform">
-                          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-foreground leading-tight">{scoringExercise.name}</p>
-                          {euInfo && <p className="text-[11px] text-muted-foreground truncate">{euInfo.unit.name}</p>}
-                        </div>
-                        {scoringExercise.pageNumber !== undefined && (
-                          <span className="text-[10px] text-muted-foreground bg-muted rounded-lg px-2 py-1 shrink-0">p.{scoringExercise.pageNumber}</span>
-                        )}
-                      </div>
-
-                      {/* Tiny exercise number boxes */}
-                      <div className="flex gap-1 overflow-x-auto pb-1">
-                        {selectedUnitExercises.map(ex => {
-                          const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount);
-                          const isCurrent = ex._id === scoringExercise._id;
-                          const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : String(ex.order);
-                          return (
-                            <button key={ex._id}
-                              onClick={() => slotModule && setupScoring(ex, selectedUnitId, slotModule.id)}
-                              className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
-                                ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
-                                ${st === 'perfect' ? 'bg-emerald-500 text-white'
-                                  : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
-                                  : st === 'wip' ? 'bg-amber-400 text-white'
-                                  : 'bg-muted text-muted-foreground'}`}>
-                              {lbl}
-                            </button>
-                          );
-                        })}
-                      </div>
-
                       {/* Scoring progress strip */}
                       <div className="rounded-2xl bg-card border border-border/50 p-3">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{markedCount}/{scoringExercise.questionCount} marked</span>
-                          <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
+                          <div className="flex items-center gap-2">
+                            {scoringExercise.pageNumber !== undefined && (
+                              <span className="text-[10px] text-muted-foreground">p.{scoringExercise.pageNumber}</span>
+                            )}
+                            <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
+                          </div>
                         </div>
                         <div className="h-1.5 bg-muted rounded-full overflow-hidden flex">
                           {correctCount > 0 && <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${(correctCount / scoringExercise.questionCount) * 100}%` }} />}
@@ -1047,61 +1183,43 @@ export default function ScoreEntryPage() {
                           if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
                             setAbsentStudentDialog({ studentId: selectedStudentId, type: sessionLifecycle === 'live' ? 'live' : 'future' }); return;
                           }
-                          const s: Record<number, 'correct' | 'wrong' | 'unmarked'> = {}; for (let i = 1; i <= scoringExercise.questionCount; i++) s[i] = 'correct'; setQuestionStates(s);
+                          const s: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
+                          for (let i = 1; i <= scoringExercise.questionCount; i++) s[i] = questionStates[i] === 'skipped' ? 'skipped' : 'correct';
+                          setQuestionStates(s); liveSave(s);
                         }}
                           className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 active:scale-95 transition-all">
-                          <Sparkles className="w-3 h-3" />All Correct
+                          <Sparkles className="w-3 h-3" />All ✓
                         </button>
                         <button onClick={() => {
                           if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
                           if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
                             setAbsentStudentDialog({ studentId: selectedStudentId, type: sessionLifecycle === 'live' ? 'live' : 'future' }); return;
                           }
-                          setQuestionStates(prev => { const n = { ...prev }; for (let i = 1; i <= scoringExercise.questionCount; i++) { if (n[i] === 'unmarked') n[i] = 'correct'; } return n; });
+                          const n = { ...questionStates }; for (let i = 1; i <= scoringExercise.questionCount; i++) { if (n[i] === 'unmarked') n[i] = 'correct'; }
+                          setQuestionStates(n); liveSave(n);
                         }}
                           className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-muted text-muted-foreground hover:text-foreground active:scale-95 transition-all">
-                          <SkipForward className="w-3 h-3" />Rest Correct
+                          <SkipForward className="w-3 h-3" />Rest ✓
+                        </button>
+                        <button onClick={handleNextExercise}
+                          className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-primary/10 text-primary active:scale-95 transition-all">
+                          <ChevronRight className="w-3 h-3" />Next
+                        </button>
+                        <button onClick={handleFinishExercise}
+                          className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 active:scale-95 transition-all">
+                          <CheckCircle2 className="w-3 h-3" />Finish
                         </button>
                       </div>
 
-                      {/* Daily points card */}
-                      {(correctCount > 0 || priorCorrectToday > 0) && (
-                        <div className="rounded-2xl overflow-hidden">
-                          <div className="bg-gradient-to-br from-primary/90 to-teal-500 p-3 text-white">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="text-[10px] font-medium opacity-70 uppercase tracking-wider">Today&apos;s Total</p>
-                                <p className="text-xl font-black tracking-tight">{dailyPoints}<span className="text-xs font-semibold opacity-70 ml-1">pts</span></p>
-                              </div>
-                              <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center">
-                                <p className="text-lg font-black">{totalCorrectToday}</p>
-                              </div>
-                            </div>
-                            {correctCount > 0 && (
-                              <div className="flex gap-1 mt-2 flex-wrap">
-                                {Array.from({ length: correctCount }, (_, i) => (
-                                  <span key={i} className="text-[9px] bg-white/20 backdrop-blur-sm rounded-md px-1.5 py-0.5 font-bold tabular-nums">+{(priorCorrectToday + i + 1) * 5}</span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Action buttons */}
-                      <div className="flex gap-2 pt-1">
-                        <Button variant="outline" onClick={handleSave} disabled={attempted === 0}
-                          className="flex-1 h-11 text-sm font-bold rounded-xl border-border/50 disabled:opacity-30">
-                          Save & Next
-                        </Button>
-                        <Button onClick={handleFinishExercise}
-                          className="flex-1 h-11 text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700">
-                          <CheckCircle2 className="w-4 h-4 mr-1.5" />Finish
-                        </Button>
-                      </div>
+                      {/* Spacer for sticky bottom bar */}
+                      <div className="h-16" />
                     </div>
                   );
-                })()}
+                })() : selectedUnitId && selectedUnitExercises.length === 0 ? (
+                  <div className="text-center py-6 mb-3"><p className="text-xs text-muted-foreground">No exercises in this unit yet</p></div>
+                ) : null}
+                {/* Spacer for sticky bottom bar when no exercise selected */}
+                {!scoringExercise && <div className="h-16" />}
               </div>
             );
           })()}
@@ -1124,6 +1242,46 @@ export default function ScoreEntryPage() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* ═══ STICKY BOTTOM BAR ═══ */}
+      {currentPage === 'scoring' && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-xl border-t border-border/50 px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          <div className="flex gap-2 max-w-lg mx-auto">
+            <Button onClick={() => { setCurrentPage('attendance'); setScoringExercise(null); liveEntryIdRef.current = null; }}
+              className="flex-1 h-12 text-sm font-bold rounded-xl bg-muted hover:bg-muted/80 text-foreground">
+              <ArrowLeft className="w-4 h-4 mr-1.5" />Back
+            </Button>
+            {selectedStudentId && (!finishedStudentIds.has(selectedStudentId) ? (
+              <Button onClick={handleFinishSession}
+                className="flex-1 h-12 text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700">
+                <CheckCircle2 className="w-4 h-4 mr-1.5" />End {(selectedStudent as { name: string })?.name?.split(' ')[0]}
+              </Button>
+            ) : (
+              <div className="flex-1 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <span className="text-sm font-bold text-emerald-600 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" />{(selectedStudent as { name: string })?.name?.split(' ')[0]} Done</span>
+              </div>
+            ))}
+            {sessionLifecycle === 'submitted' ? (
+              <div className="flex-1 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <span className="text-sm font-bold text-emerald-600 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" />Submitted</span>
+              </div>
+            ) : (
+              <button
+                onClick={() => { if (sessionLifecycle === 'ended') handleSubmitPress(); }}
+                className={`flex-1 h-12 text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                  sessionLifecycle === 'ended'
+                    ? 'bg-red-600 hover:bg-red-700 text-white active:scale-95'
+                    : sessionLifecycle === 'live'
+                      ? 'bg-blue-500/15 text-blue-500/50'
+                      : 'bg-muted/50 text-muted-foreground/50'
+                }`}
+              >
+                <Send className="w-3.5 h-3.5" />Submit
+              </button>
+            )}
+          </div>
         </div>
       )}
 

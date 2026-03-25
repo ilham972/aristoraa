@@ -2,8 +2,8 @@
 
 import { Show } from '@clerk/nextjs';
 import { useAuth } from '@clerk/nextjs';
-import { TopHeader } from '@/components/top-header';
 import { BottomNav } from '@/components/navigation';
+import { NavVisibilityProvider } from '@/contexts/nav-visibility';
 import { ReactNode, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
@@ -30,11 +30,12 @@ export function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <Show when="signed-in">
-        <TopHeader />
-        <main className="pb-20 min-h-[calc(100vh-3.5rem)]">
-          {children}
-        </main>
-        <BottomNav />
+        <NavVisibilityProvider>
+          <main className="pb-20 min-h-screen">
+            {children}
+          </main>
+          <BottomNav />
+        </NavVisibilityProvider>
       </Show>
       <Show when="signed-out">
         <SignedOutRedirect>{children}</SignedOutRedirect>

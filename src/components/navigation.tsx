@@ -2,11 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, ClipboardPen, Trophy, Users, Settings } from 'lucide-react';
+import { ClipboardPen, Trophy, Users, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useNavVisibility } from '@/contexts/nav-visibility';
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Home', icon: Home },
   { href: '/score-entry', label: 'Scores', icon: ClipboardPen },
   { href: '/leaderboard', label: 'Board', icon: Trophy },
   { href: '/students', label: 'Students', icon: Users },
@@ -15,6 +15,9 @@ const NAV_ITEMS = [
 
 export function BottomNav() {
   const pathname = usePathname();
+  const { hideBottomNav } = useNavVisibility();
+
+  if (hideBottomNav) return null;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">

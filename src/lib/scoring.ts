@@ -152,6 +152,16 @@ function shouldSkipUnit(
   return false;
 }
 
+// Check if an exercise entry is "done" — all questions addressed (correct, wrong, or skipped)
+function isEntryComplete(entry: { totalAttempted: number; questions?: Record<string, string> }, qCount: number): boolean {
+  if (entry.totalAttempted >= qCount) return true;
+  if (entry.questions) {
+    const addressed = Object.values(entry.questions).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+    if (addressed >= qCount) return true;
+  }
+  return false;
+}
+
 // Determine the starting grade/term for scanning
 function getStartPosition(
   hasEntries: boolean,
@@ -170,7 +180,7 @@ function getStartPosition(
 export function getStudentUpcomingExercises(
   studentId: string,
   moduleId: string,
-  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
+  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string> }>,
   allExercises: Array<{ _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string }>,
   orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
   count: number = 5,
@@ -188,9 +198,16 @@ export function getStudentUpcomingExercises(
       .sort((a, b) => a.order - b.order);
     for (const exercise of unitExercises) {
       const entry = studentModuleEntries.find(e => e.exerciseId === exercise._id);
-      if (!entry || entry.correctCount < exercise.questionCount) {
-        results.push({ exerciseId: exercise._id, unitId: unit.id, name: exercise.name });
-        if (results.length >= count) return results;
+      if (!entry || !isEntryComplete(entry, exercise.questionCount)) {
+        // Implicit completion: skip if student has entries for later exercises
+        const hasLater = !entry ? false : unitExercises.some(ex =>
+          ex.order > exercise.order &&
+          studentModuleEntries.some(e => e.exerciseId === ex._id && e.totalAttempted > 0)
+        );
+        if (!hasLater) {
+          results.push({ exerciseId: exercise._id, unitId: unit.id, name: exercise.name });
+          if (results.length >= count) return results;
+        }
       }
     }
   }
@@ -202,7 +219,7 @@ export function getStudentUpcomingExercises(
 export function getStudentUpcomingItems(
   studentId: string,
   moduleId: string,
-  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
+  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string> }>,
   allExercises: Array<{ _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string }>,
   orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
   count: number = 5,
@@ -226,9 +243,17 @@ export function getStudentUpcomingItems(
       const item = unitItems[i];
       if ((item.type || 'exercise') === 'concept') continue;
       const entry = studentModuleEntries.find(e => e.exerciseId === item._id);
-      if (!entry || entry.correctCount < item.questionCount) {
-        firstIncompleteIdx = i;
-        break;
+      if (!entry || !isEntryComplete(entry, item.questionCount)) {
+        // Implicit completion: skip if student has entries for later exercises
+        const exerciseItems = unitItems.filter(x => (x.type || 'exercise') === 'exercise');
+        const hasLater = !entry ? false : exerciseItems.some(ex =>
+          ex.order > item.order &&
+          studentModuleEntries.some(e => e.exerciseId === ex._id && e.totalAttempted > 0)
+        );
+        if (!hasLater) {
+          firstIncompleteIdx = i;
+          break;
+        }
       }
     }
 
@@ -247,7 +272,16 @@ export function getStudentUpcomingItems(
       const isExercise = (item.type || 'exercise') === 'exercise';
       if (isExercise) {
         const entry = studentModuleEntries.find(e => e.exerciseId === item._id);
-        if (entry && entry.correctCount >= item.questionCount) continue;
+        if (entry && isEntryComplete(entry, item.questionCount)) continue;
+        // Implicit completion: skip if student has entries for later exercises
+        if (entry) {
+          const exerciseItems = unitItems.filter(x => (x.type || 'exercise') === 'exercise');
+          const hasLater = exerciseItems.some(ex =>
+            ex.order > item.order &&
+            studentModuleEntries.some(e => e.exerciseId === ex._id && e.totalAttempted > 0)
+          );
+          if (hasLater) continue;
+        }
       }
       results.push({ id: item._id, unitId: unit.id, name: item.name, type: item.type || 'exercise' });
       if (results.length >= count) return results;
@@ -260,7 +294,7 @@ export function getStudentUpcomingItems(
 export function getStudentNextExercise(
   studentId: string,
   moduleId: string,
-  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number }>,
+  allEntries: Array<{ studentId: string; moduleId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string> }>,
   allExercises: Array<{ _id: string; unitId: string; questionCount: number; order: number; type?: string }>,
   orderedUnits: Array<{ id: string; name: string; grade: number; term: number }>,
   options?: PositionOptions,
@@ -281,8 +315,13 @@ export function getStudentNextExercise(
       if (!entry) {
         return { exerciseId: exercise._id, unitId: unit.id };
       }
-      if (entry.correctCount < exercise.questionCount) {
-        return { exerciseId: exercise._id, unitId: unit.id };
+      if (!isEntryComplete(entry, exercise.questionCount)) {
+        // Implicit completion: if student has entries for later exercises, skip this one
+        const hasLater = unitExercises.some(ex =>
+          ex.order > exercise.order &&
+          studentModuleEntries.some(e => e.exerciseId === ex._id && e.totalAttempted > 0)
+        );
+        if (!hasLater) return { exerciseId: exercise._id, unitId: unit.id };
       }
     }
   }
