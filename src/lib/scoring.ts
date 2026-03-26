@@ -328,3 +328,80 @@ export function getStudentNextExercise(
 
   return null;
 }
+
+// ─── Shared helpers for exercise progress (used by score-entry page & position dialog) ───
+
+type EntryLike = { studentId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string> | unknown };
+type ExerciseLike = { _id: string; unitId: string; questionCount: number; order: number; type?: string };
+
+export function hasProgressedPast(
+  sid: string, unitId: string, exOrder: number,
+  allEntries: EntryLike[], allExercises: ExerciseLike[],
+): boolean {
+  return allExercises.some(ex =>
+    ex.unitId === unitId && (ex.type || 'exercise') === 'exercise' && ex.order > exOrder &&
+    allEntries.some(e => e.studentId === sid && e.exerciseId === ex._id && e.totalAttempted > 0)
+  );
+}
+
+export function getExerciseStatus(
+  sid: string, exId: string, qCount: number, unitId: string, exOrder: number,
+  allEntries: EntryLike[], allExercises: ExerciseLike[],
+): 'perfect' | 'skipped' | 'wip' | 'none' {
+  const entry = allEntries.find(e => e.studentId === sid && e.exerciseId === exId);
+  if (!entry) return 'none';
+  if (entry.totalAttempted >= qCount) return 'perfect';
+  const qs = (entry.questions ?? {}) as Record<string, string>;
+  const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
+  if (addressed >= qCount) return 'skipped';
+  if (hasProgressedPast(sid, unitId, exOrder, allEntries, allExercises)) return 'skipped';
+  return 'wip';
+}
+
+export type ExerciseBreakdown = { exId: string; qCount: number; correct: number; wrong: number; skipped: number; unanswered: number };
+
+export function getUnitProgressData(
+  sid: string, unitId: string,
+  allEntries: EntryLike[], allExercises: ExerciseLike[],
+): { total: number; correctQ: number; wrongQ: number; skippedQ: number; totalQ: number; exercises: ExerciseBreakdown[] } {
+  const exs = allExercises.filter(e => e.unitId === unitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
+  let correctQ = 0, wrongQ = 0, skippedQ = 0, totalQ = 0;
+  const exercises: ExerciseBreakdown[] = [];
+  for (const ex of exs) {
+    totalQ += ex.questionCount;
+    const en = allEntries.find(e => e.studentId === sid && e.exerciseId === ex._id);
+    let c = 0, w = 0, sk = 0;
+    if (en) {
+      c = en.correctCount;
+      const qs = (en.questions ?? {}) as Record<string, string>;
+      sk = Object.values(qs).filter(v => v === 'skipped').length;
+      w = en.totalAttempted - en.correctCount - sk;
+      if (w < 0) w = 0;
+    }
+    correctQ += c; wrongQ += w; skippedQ += sk;
+    exercises.push({ exId: ex._id, qCount: ex.questionCount, correct: c, wrong: w, skipped: sk, unanswered: ex.questionCount - c - w - sk });
+  }
+  return { total: exs.length, correctQ, wrongQ, skippedQ, totalQ, exercises };
+}
+
+/** Get detailed exercise info for a unit: status, percentage, wrong count */
+export function getExerciseDetails(
+  sid: string, unitId: string,
+  allEntries: EntryLike[], allExercises: ExerciseLike[],
+): Array<{
+  exerciseId: string; order: number; questionCount: number;
+  status: 'perfect' | 'skipped' | 'wip' | 'none';
+  percentage: number; hasWrong: boolean;
+}> {
+  const exs = allExercises.filter(e => e.unitId === unitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
+  return exs.map(ex => {
+    const entry = allEntries.find(e => e.studentId === sid && e.exerciseId === ex._id);
+    const correct = entry?.correctCount ?? 0;
+    const percentage = ex.questionCount > 0 ? Math.round((correct / ex.questionCount) * 100) : 0;
+    const qs = ((entry?.questions ?? {}) as Record<string, string>);
+    const skippedQ = Object.values(qs).filter(v => v === 'skipped').length;
+    const wrong = entry ? entry.totalAttempted - entry.correctCount - skippedQ : 0;
+    const status = getExerciseStatus(sid, ex._id, ex.questionCount, unitId, ex.order, allEntries, allExercises);
+    return { exerciseId: ex._id, order: ex.order, questionCount: ex.questionCount, status, percentage, hasWrong: wrong > 0 };
+  });
+}
