@@ -69,7 +69,7 @@ export default function ScoreEntryPage() {
   const [selectedStudentId, setSelectedStudentId] = useState<Id<"students"> | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [scoringExercise, setScoringExercise] = useState<{
-    _id: Id<"exercises">; unitId: string; name: string; questionCount: number; order: number; moduleId: string; pageNumber?: number;
+    _id: Id<"exercises">; unitId: string; name: string; questionCount: number; order: number; moduleId: string; pageNumber?: number; pageNumberEnd?: number;
   } | null>(null);
   const [questionStates, setQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
   const [existingEntryId, setExistingEntryId] = useState<Id<"entries"> | null>(null);
@@ -112,6 +112,7 @@ export default function ScoreEntryPage() {
   const allExercises = useQuery(api.exercises.list);
   const modulePositions = useQuery(api.studentModulePositions.list);
   const submittedSessions = useQuery(api.sessionSubmissions.listByTeacher, teacher ? { teacherId: teacher._id } : 'skip');
+  const allTextbooks = useQuery(api.textbooks.list);
 
   const teacherSlots = useMemo(() => {
     if (!teacherSlotAssignments || !allSlots) return undefined;
@@ -398,6 +399,21 @@ export default function ScoreEntryPage() {
     const mod = CURRICULUM_MODULES.find(m => m.id === p.moduleId);
     return mod?.grades.find(g => g.grade === p.grade)?.terms.find(t => t.term === p.term)?.units || [];
   };
+  const getBookPart = (unitId: string, grade?: number): number | null => {
+    if (!allTextbooks) return null;
+    const unitInfo = findUnit(unitId);
+    if (!unitInfo) return null;
+    const g = grade ?? unitInfo.grade;
+    const unitNum = parseInt(unitInfo.unit.name.match(/^(\d+)\./)?.[1] ?? '');
+    if (isNaN(unitNum)) return null;
+    const books = allTextbooks.filter(t => t.grade === g).sort((a, b) => a.part - b.part);
+    for (const book of books) {
+      if (book.startUnit != null && book.endUnit != null && unitNum >= book.startUnit && unitNum <= book.endUnit) return book.part;
+    }
+    // Fallback: if only one book, use it
+    if (books.length === 1) return books[0].part;
+    return null;
+  };
   const getConceptForExercise = (exId: string, unitId: string): string | null => {
     if (!allExercises) return null;
     const items = allExercises.filter(e => e.unitId === unitId).sort((a, b) => a.order - b.order);
@@ -568,7 +584,7 @@ export default function ScoreEntryPage() {
   };
 
   const setupScoring = (ex: NonNullable<typeof allExercises>[0], unitId: string, moduleId: string) => {
-    setScoringExercise({ _id: ex._id, unitId, name: ex.name, questionCount: ex.questionCount, order: ex.order, moduleId, pageNumber: ex.pageNumber });
+    setScoringExercise({ _id: ex._id, unitId, name: ex.name, questionCount: ex.questionCount, order: ex.order, moduleId, pageNumber: ex.pageNumber, pageNumberEnd: ex.pageNumberEnd });
     const existing = todayEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id)
       ?? allEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
     const st: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
@@ -1110,9 +1126,11 @@ export default function ScoreEntryPage() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{markedCount}/{scoringExercise.questionCount} marked</span>
                           <div className="flex items-center gap-2">
-                            {scoringExercise.pageNumber !== undefined && (
-                              <span className="text-[10px] text-muted-foreground">p.{scoringExercise.pageNumber}</span>
-                            )}
+                            {scoringExercise.pageNumber !== undefined && (() => {
+                              const part = getBookPart(scoringExercise.unitId);
+                              const pg = scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : String(scoringExercise.pageNumber);
+                              return <span className="text-[10px] text-muted-foreground">{part ? `P${part} ` : ''}p.{pg}</span>;
+                            })()}
                             <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
                           </div>
                         </div>
@@ -1495,7 +1513,11 @@ export default function ScoreEntryPage() {
                               <div className="w-3 h-3 rounded-full border border-muted-foreground/30 shrink-0" />
                             )}
                             <span className={`${isConcept ? 'text-primary font-medium' : isDone ? 'text-emerald-600' : 'text-foreground'}`}>{item.name}</span>
-                            {!isConcept && item.pageNumber && <span className="text-muted-foreground ml-auto">p.{item.pageNumber}</span>}
+                            {!isConcept && item.pageNumber && (() => {
+                              const part = getBookPart(item.unitId);
+                              const pg = item.pageNumberEnd ? `${item.pageNumber}-${item.pageNumberEnd}` : String(item.pageNumber);
+                              return <span className="text-muted-foreground ml-auto">{part ? `P${part} ` : ''}p.{pg}</span>;
+                            })()}
                           </div>
                         );
                       })}

@@ -132,11 +132,12 @@ export const updatePageNumber = mutation({
   args: {
     id: v.id("exercises"),
     pageNumber: v.number(),
+    pageNumberEnd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    await ctx.db.patch(args.id, { pageNumber: args.pageNumber });
+    await ctx.db.patch(args.id, { pageNumber: args.pageNumber, pageNumberEnd: args.pageNumberEnd });
   },
 });
 

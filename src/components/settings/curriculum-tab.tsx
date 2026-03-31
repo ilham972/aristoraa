@@ -121,14 +121,14 @@ export function CurriculumTab() {
     await updateQuestionCountMutation({ id, questionCount: val });
   };
 
-  const handlePageBlur = async (id: Id<"exercises">, currentPage: number | undefined, inputValue: string) => {
-    const val = parseInt(inputValue);
-    if (inputValue.trim() === '' && currentPage !== undefined) {
-      // Clear not supported with number field, just ignore
-      return;
-    }
-    if (isNaN(val) || val < 0 || val === currentPage) return;
-    await updatePageNumberMutation({ id, pageNumber: val });
+  const handlePageBlur = async (id: Id<"exercises">, currentPage: number | undefined, currentPageEnd: number | undefined, startValue: string, endValue: string) => {
+    const startVal = parseInt(startValue);
+    const endVal = endValue.trim() ? parseInt(endValue) : undefined;
+    if (startValue.trim() === '' && currentPage !== undefined) return;
+    if (isNaN(startVal) || startVal < 0) return;
+    if (endVal !== undefined && (isNaN(endVal) || endVal < startVal)) return;
+    if (startVal === currentPage && endVal === currentPageEnd) return;
+    await updatePageNumberMutation({ id, pageNumber: startVal, pageNumberEnd: endVal });
   };
 
   const handleDelete = async (id: Id<"exercises">, type?: string) => {
@@ -330,9 +330,27 @@ export function CurriculumTab() {
                             type="number"
                             min={1}
                             defaultValue={item.pageNumber || ''}
-                            placeholder="pg"
-                            className="w-14 h-7 text-xs text-center font-mono"
-                            onBlur={e => handlePageBlur(item._id, item.pageNumber, e.target.value)}
+                            placeholder="from"
+                            className="w-11 h-7 text-xs text-center font-mono px-1"
+                            onBlur={e => {
+                              const endInput = e.target.parentElement?.querySelector<HTMLInputElement>(`[data-pgend="${item._id}"]`);
+                              handlePageBlur(item._id, item.pageNumber, item.pageNumberEnd, e.target.value, endInput?.value || '');
+                            }}
+                          />
+                          <span className="text-[10px] text-muted-foreground shrink-0">-</span>
+                          <Input
+                            key={`pge-${item._id}-${item.pageNumberEnd}`}
+                            data-pgend={item._id}
+                            type="number"
+                            min={1}
+                            defaultValue={item.pageNumberEnd || ''}
+                            placeholder="to"
+                            className="w-11 h-7 text-xs text-center font-mono px-1"
+                            onBlur={e => {
+                              const startInput = e.target.parentElement?.querySelector<HTMLInputElement>(`[key^="pg-${item._id}"]`);
+                              const startVal = startInput?.value || String(item.pageNumber || '');
+                              handlePageBlur(item._id, item.pageNumber, item.pageNumberEnd, startVal, e.target.value);
+                            }}
                           />
                           <span className="text-[10px] text-muted-foreground shrink-0">pg</span>
                           <button onClick={() => handleDelete(item._id, 'concept')} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
@@ -367,9 +385,26 @@ export function CurriculumTab() {
                               type="number"
                               min={1}
                               defaultValue={item.pageNumber || ''}
-                              placeholder="pg"
-                              className="w-14 h-8 text-sm text-center font-mono"
-                              onBlur={e => handlePageBlur(item._id, item.pageNumber, e.target.value)}
+                              placeholder="from"
+                              className="w-11 h-8 text-sm text-center font-mono px-1"
+                              onBlur={e => {
+                                const endInput = e.target.parentElement?.querySelector<HTMLInputElement>(`[data-pgend="${item._id}"]`);
+                                handlePageBlur(item._id, item.pageNumber, item.pageNumberEnd, e.target.value, endInput?.value || '');
+                              }}
+                            />
+                            <span className="text-[10px] text-muted-foreground shrink-0">-</span>
+                            <Input
+                              key={`pge-${item._id}-${item.pageNumberEnd}`}
+                              data-pgend={item._id}
+                              type="number"
+                              min={1}
+                              defaultValue={item.pageNumberEnd || ''}
+                              placeholder="to"
+                              className="w-11 h-8 text-sm text-center font-mono px-1"
+                              onBlur={e => {
+                                const pgStart = String(item.pageNumber || '');
+                                handlePageBlur(item._id, item.pageNumber, item.pageNumberEnd, pgStart, e.target.value);
+                              }}
                             />
                             <span className="text-[11px] text-muted-foreground shrink-0">pg</span>
                             <button onClick={() => handleDelete(item._id)} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
