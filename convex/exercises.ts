@@ -155,6 +155,39 @@ export const update = mutation({
   },
 });
 
+export const trimToCount = mutation({
+  args: {
+    unitId: v.string(),
+    unitNumber: v.number(),
+    keepUpTo: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const items = await ctx.db
+      .query("exercises")
+      .withIndex("by_unit", (q) => q.eq("unitId", args.unitId))
+      .collect();
+
+    for (const item of items) {
+      if ((item.type || "exercise") !== "exercise") continue;
+      if (item.name.endsWith(".0")) continue; // keep review
+      const sub = parseInt(item.name.split(".")[1]);
+      if (!isNaN(sub) && sub > args.keepUpTo) {
+        // Delete related entries first
+        const entries = await ctx.db.query("entries").collect();
+        for (const entry of entries) {
+          if (entry.exerciseId === item._id) {
+            await ctx.db.delete(entry._id);
+          }
+        }
+        await ctx.db.delete(item._id);
+      }
+    }
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("exercises") },
   handler: async (ctx, args) => {

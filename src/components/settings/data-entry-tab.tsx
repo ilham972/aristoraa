@@ -38,6 +38,7 @@ export function DataEntryTab() {
 
   // === MUTATIONS ===
   const bulkAddMutation = useMutation(api.exercises.bulkAdd);
+  const trimMutation = useMutation(api.exercises.trimToCount);
   const setUnitPagesMutation = useMutation(api.unitMetadata.setPages);
   const addConceptMutation = useMutation(api.exercises.addConcept);
   const updateQcMutation = useMutation(api.exercises.updateQuestionCount);
@@ -160,6 +161,9 @@ export function DataEntryTab() {
         startFrom: currentMax + 1,
       });
       toast.success(`Added exercises ${unitNumber}.${currentMax + 1} – ${unitNumber}.${count}`);
+    } else if (count < currentMax) {
+      await trimMutation({ unitId, unitNumber, keepUpTo: count });
+      toast.success(`Trimmed to ${unitNumber}.1 – ${unitNumber}.${count}`);
     }
     setExDialogUnit(null);
   };
@@ -743,7 +747,7 @@ function ExercisePickerBody({
       {/* Number grid */}
       <div>
         <p className="text-xs text-muted-foreground mb-2">
-          {isNew ? 'Select number of exercises:' : `Current: ${currentMax}. Tap higher to add more.`}
+          {isNew ? 'Select number of exercises:' : `Current: ${currentMax}. Tap to change.`}
         </p>
         <div className="grid grid-cols-6 gap-1.5">
           {Array.from({ length: 30 }, (_, i) => i + 1).map(n => {
@@ -752,14 +756,12 @@ function ExercisePickerBody({
             return (
               <button
                 key={n}
-                onClick={() => {
-                  if (!isLower) onSelect(n);
-                }}
+                onClick={() => onSelect(n)}
                 className={`h-10 rounded-lg text-sm font-medium transition-all ${
                   isCurrent
                     ? 'bg-emerald-500 text-white'
                     : isLower
-                      ? 'bg-muted/50 text-muted-foreground/40 cursor-default'
+                      ? 'bg-muted hover:bg-destructive/10 hover:text-destructive text-muted-foreground'
                       : 'bg-muted hover:bg-primary/10 hover:text-primary text-foreground'
                 }`}
               >
