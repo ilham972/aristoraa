@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, ChevronRight, Plus, Trash2, BookOpen, Camera, Image as ImageIcon, X, RotateCcw, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Trash2, BookOpen, Camera, Image as ImageIcon, X, RotateCcw, Pencil, FileUp } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,8 +47,11 @@ export function ContentTab() {
   const [previewPage, setPreviewPage] = useState<number | null>(null);
 
   const [capturingPage, setCapturingPage] = useState<number | null>(null);
+  const [pdfUploading, setPdfUploading] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState({ current: 0, total: 0 });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const allTextbooks = useQuery(api.textbooks.list);
   const capturedPageNumbers = useQuery(
@@ -235,6 +238,69 @@ export function ContentTab() {
     }, 50);
   };
 
+  const handlePdfUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedTextbook) return;
+    if (pdfInputRef.current) pdfInputRef.current.value = '';
+
+    setPdfUploading(true);
+    setPdfProgress({ current: 0, total: 0 });
+
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const totalPages = Math.min(pdf.numPages, selectedTextbook.totalPages);
+      setPdfProgress({ current: 0, total: totalPages });
+
+      toast.loading(`Processing PDF: 0/${totalPages} pages...`, { id: 'pdf-upload' });
+
+      for (let i = 1; i <= totalPages; i++) {
+        const page = await pdf.getPage(i);
+        const scale = 2; // 2x for good quality
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d')!;
+        await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+
+        const blob = await new Promise<Blob>((resolve) => {
+          canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.85);
+        });
+
+        const uploadUrl = await generateUploadUrl();
+        const result = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'image/jpeg' },
+          body: blob,
+        });
+        if (!result.ok) throw new Error(`Upload failed for page ${i}`);
+        const { storageId } = await result.json();
+
+        await savePage({
+          textbookId: selectedTextbook._id,
+          pageNumber: i,
+          storageId,
+        });
+
+        setPdfProgress({ current: i, total: totalPages });
+        toast.loading(`Processing PDF: ${i}/${totalPages} pages...`, { id: 'pdf-upload' });
+      }
+
+      toast.success(`All ${totalPages} pages uploaded!`, { id: 'pdf-upload' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'PDF processing failed';
+      toast.error(msg, { id: 'pdf-upload' });
+    } finally {
+      setPdfUploading(false);
+      setPdfProgress({ current: 0, total: 0 });
+    }
+  }, [selectedTextbook, generateUploadUrl, savePage]);
+
   if (!allTextbooks) {
     return (
       <div className="animate-pulse space-y-2">
@@ -258,7 +324,7 @@ export function ContentTab() {
 
   return (
     <>
-      {/* Hidden file input for camera */}
+      {/* Hidden file inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -266,6 +332,13 @@ export function ContentTab() {
         capture="environment"
         className="hidden"
         onChange={handleFileCapture}
+      />
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={handlePdfUpload}
       />
 
       {viewLevel !== 'grades' && (
@@ -400,12 +473,38 @@ export function ContentTab() {
           </div>
 
           {/* Progress bar */}
-          <div className="w-full h-2 bg-muted rounded-full mb-4 overflow-hidden">
+          <div className="w-full h-2 bg-muted rounded-full mb-3 overflow-hidden">
             <div
               className="h-full bg-primary rounded-full transition-all duration-300"
               style={{ width: `${(captured.size / selectedTextbook.totalPages) * 100}%` }}
             />
           </div>
+
+          {/* PDF upload button */}
+          {pdfUploading ? (
+            <div className="mb-4 rounded-xl bg-primary/10 border border-primary/20 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-primary">Uploading PDF...</span>
+                <span className="text-xs font-mono text-primary">{pdfProgress.current}/{pdfProgress.total}</span>
+              </div>
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-300"
+                  style={{ width: pdfProgress.total > 0 ? `${(pdfProgress.current / pdfProgress.total) * 100}%` : '0%' }}
+                />
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full rounded-xl mb-4 gap-1.5"
+              onClick={() => pdfInputRef.current?.click()}
+            >
+              <FileUp className="w-3.5 h-3.5" />
+              Upload PDF
+            </Button>
+          )}
 
           {/* Grid of page boxes */}
           <div className="grid grid-cols-8 gap-1.5 sm:grid-cols-10">
