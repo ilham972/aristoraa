@@ -118,4 +118,20 @@ export default defineSchema({
   })
     .index("by_slot_date", ["slotId", "date"])
     .index("by_teacher", ["teacherId"]),
+
+  textbooks: defineTable({
+    grade: v.number(),
+    part: v.number(),
+    totalPages: v.number(),
+    startUnit: v.optional(v.number()),
+    endUnit: v.optional(v.number()),
+  }).index("by_grade", ["grade"]),
+
+  textbookPages: defineTable({
+    textbookId: v.id("textbooks"),
+    pageNumber: v.number(),
+    storageId: v.id("_storage"),
+  })
+    .index("by_textbook", ["textbookId"])
+    .index("by_textbook_page", ["textbookId", "pageNumber"]),
 });

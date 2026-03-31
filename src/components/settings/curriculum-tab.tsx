@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, ChevronRight, Plus, Trash2, BookOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Trash2, BookOpen, Camera, Image as ImageIcon } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +48,10 @@ export function CurriculumTab() {
   const [conceptName, setConceptName] = useState('');
   const [conceptInsertAfterOrder, setConceptInsertAfterOrder] = useState(-1);
 
+  const [pagePreviewOpen, setPagePreviewOpen] = useState(false);
+  const [previewPageNum, setPreviewPageNum] = useState<number | null>(null);
+  const [previewGrade, setPreviewGrade] = useState<number | null>(null);
+
   const [addMoreOpen, setAddMoreOpen] = useState(false);
   const [addMoreNum, setAddMoreNum] = useState('');
 
@@ -57,6 +61,13 @@ export function CurriculumTab() {
   const updateQuestionCountMutation = useMutation(api.exercises.updateQuestionCount);
   const updatePageNumberMutation = useMutation(api.exercises.updatePageNumber);
   const removeExerciseMutation = useMutation(api.exercises.remove);
+
+  const pageImageResult = useQuery(
+    api.textbookPages.getPagesByGrade,
+    previewGrade !== null && previewPageNum !== null
+      ? { grade: previewGrade, pageNumber: previewPageNum }
+      : 'skip'
+  );
 
   if (!allExercises) {
     return (
@@ -134,6 +145,16 @@ export function CurriculumTab() {
     setConceptDialogOpen(false);
     setConceptName('');
     toast.success('Concept added');
+  };
+
+  const handlePagePreview = (pageNumber: number | undefined) => {
+    if (!pageNumber || !selectedGrade) {
+      toast.error('Set a page number first');
+      return;
+    }
+    setPreviewGrade(selectedGrade);
+    setPreviewPageNum(pageNumber);
+    setPagePreviewOpen(true);
   };
 
   const breadcrumb = () => {
@@ -297,6 +318,13 @@ export function CurriculumTab() {
                         <div className="flex items-center gap-2 py-2 px-3 bg-accent/50 rounded-lg my-0.5">
                           <BookOpen className="w-4 h-4 text-primary shrink-0" />
                           <span className="text-sm font-medium text-primary flex-1 min-w-0 truncate">{item.name}</span>
+                          <button
+                            onClick={() => handlePagePreview(item.pageNumber)}
+                            className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                            title="View page"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
                           <Input
                             key={`pg-${item._id}-${item.pageNumber}`}
                             type="number"
@@ -327,6 +355,13 @@ export function CurriculumTab() {
                               onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
                             />
                             <span className="text-[11px] text-muted-foreground shrink-0">qs</span>
+                            <button
+                              onClick={() => handlePagePreview(item.pageNumber)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                              title="View page"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
                             <Input
                               key={`pg-${item._id}-${item.pageNumber}`}
                               type="number"
@@ -396,6 +431,35 @@ export function CurriculumTab() {
               <Input value={conceptName} onChange={e => setConceptName(e.target.value)} placeholder="e.g., Pythagorean Theorem" className="mt-1" autoFocus />
             </div>
             <Button onClick={handleSaveConcept} className="w-full rounded-xl">Add Concept</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Page Preview Dialog */}
+      <Dialog open={pagePreviewOpen} onOpenChange={(open) => { if (!open) { setPagePreviewOpen(false); setPreviewPageNum(null); setPreviewGrade(null); } }}>
+        <DialogContent className="max-w-sm mx-auto p-0 overflow-hidden">
+          <DialogHeader className="p-4 pb-2">
+            <DialogTitle className="text-sm">Textbook Page {previewPageNum}</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 pb-4">
+            {pageImageResult?.url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={pageImageResult.url}
+                alt={`Textbook page ${previewPageNum}`}
+                className="w-full rounded-lg border border-border"
+              />
+            ) : pageImageResult === null ? (
+              <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
+                <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">Page not captured yet</p>
+                <p className="text-xs text-muted-foreground">Capture it in Settings → Content tab</p>
+              </div>
+            ) : (
+              <div className="w-full aspect-[3/4] bg-muted rounded-lg flex items-center justify-center">
+                <ImageIcon className="w-8 h-8 text-muted-foreground/40 animate-pulse" />
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

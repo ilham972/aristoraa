@@ -124,10 +124,10 @@ export function PositionDialog({
     if (!gradeData) return [];
 
     const columns: Array<{
-      unitId: string; unitName: string; unitIndex: number;
+      unitId: string; unitName: string; unitLabel: string;
       grade: number; term: number;
       exercises: Array<{
-        exerciseId: string; order: number; questionCount: number;
+        exerciseId: string; order: number; label: string; questionCount: number;
         status: 'perfect' | 'skipped' | 'wip' | 'none';
         percentage: number; hasWrong: boolean;
         isCurrentPosition: boolean;
@@ -138,15 +138,17 @@ export function PositionDialog({
     for (const term of gradeData.terms) {
       for (const unit of term.units) {
         unitIdx++;
+        const unitNum = unit.name.match(/^(\d+)\./)?.[1] || String(unitIdx);
         const details = getExerciseDetails(activeStudentId, unit.id, allEntries, allExercises);
         columns.push({
           unitId: unit.id,
           unitName: unit.name,
-          unitIndex: unitIdx,
+          unitLabel: unitNum,
           grade: gradeData.grade,
           term: term.term,
           exercises: details.map(d => ({
             ...d,
+            label: d.name.includes('.') ? (d.name.split('.').pop() ?? String(d.order)) : String(d.order),
             isCurrentPosition: d.exerciseId === currentPos.nextExerciseId,
           })),
         });
@@ -403,7 +405,7 @@ export function PositionDialog({
                         <div key={col.unitId} className="flex flex-col items-center" style={{ minWidth: '3rem' }}>
                           {/* Unit header */}
                           <div className="text-[9px] font-bold text-muted-foreground pb-1 text-center">
-                            U{col.unitIndex}
+                            {col.unitLabel}
                           </div>
                           {/* Exercise cells */}
                           <div className="flex flex-col gap-0.5">
@@ -415,7 +417,7 @@ export function PositionDialog({
                               return (
                                 <ExerciseCell
                                   key={ex.exerciseId}
-                                  order={ex.order}
+                                  label={ex.label}
                                   percentage={ex.percentage}
                                   status={ex.status}
                                   hasWrong={ex.hasWrong}
@@ -480,10 +482,10 @@ export function PositionDialog({
 // ─── Exercise Cell ───
 
 function ExerciseCell({
-  order, percentage, status, hasWrong, isCurrentPosition,
+  label, percentage, status, hasWrong, isCurrentPosition,
   isBelowGrade, isDraftSkipped, isDraftPosition, isPositionTab, onClick,
 }: {
-  order: number;
+  label: string;
   percentage: number;
   status: 'perfect' | 'skipped' | 'wip' | 'none';
   hasWrong: boolean;
@@ -535,7 +537,7 @@ function ExerciseCell({
       {isDraftPosition && (
         <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-primary border-2 border-background" />
       )}
-      <span className="text-[11px] font-bold leading-none">{order}</span>
+      <span className="text-[11px] font-bold leading-none">{label}</span>
       {percentage > 0 && (
         <span className={`text-[8px] font-semibold leading-none mt-0.5 ${
           status === 'perfect' && hasWrong ? 'text-red-500 dark:text-red-300' :

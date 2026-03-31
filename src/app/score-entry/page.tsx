@@ -529,7 +529,8 @@ export default function ScoreEntryPage() {
     // Smart preselect: next incomplete exercise, or last exercise if all done
     const targetEx = nextEx || (exs.length > 0 ? exs[exs.length - 1] : null);
     if (targetEx) {
-      setupScoring(targetEx, unitId, slotModule.id);
+      const moduleId = findUnit(unitId)?.module.id ?? slotModule.id;
+      setupScoring(targetEx, unitId, moduleId);
     } else {
       setScoringExercise(null); setQuestionStates({}); setInitialQuestionStates({}); setExistingEntryId(null);
     }
@@ -568,7 +569,8 @@ export default function ScoreEntryPage() {
 
   const setupScoring = (ex: NonNullable<typeof allExercises>[0], unitId: string, moduleId: string) => {
     setScoringExercise({ _id: ex._id, unitId, name: ex.name, questionCount: ex.questionCount, order: ex.order, moduleId, pageNumber: ex.pageNumber });
-    const existing = todayEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
+    const existing = todayEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id)
+      ?? allEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
     const st: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
     if (existing) {
       setExistingEntryId(existing._id);
@@ -1002,12 +1004,19 @@ export default function ScoreEntryPage() {
           {/* Selected student scoring UI */}
           {selectedStudentId && selectedStudent && (() => {
             const pos = studentPositions.get(selectedStudentId);
-            const termUnits = getStudentTermUnits(selectedStudentId);
+            // When viewing an override (from Position Dialog), show that module's units & badge
+            const overrideInfo = viewingOverride ? findUnit(viewingOverride.unitId) : null;
+            const displayPos = overrideInfo
+              ? { moduleId: viewingOverride!.moduleId, grade: overrideInfo.grade, term: overrideInfo.term, unitId: viewingOverride!.unitId, exerciseId: viewingOverride!.exerciseId }
+              : pos;
+            const termUnits = overrideInfo
+              ? (CURRICULUM_MODULES.find(m => m.id === viewingOverride!.moduleId)?.grades.find(g => g.grade === overrideInfo.grade)?.terms.find(t => t.term === overrideInfo.term)?.units || [])
+              : getStudentTermUnits(selectedStudentId);
             const up = selectedUnitId ? getUnitProgress(selectedStudentId, selectedUnitId) : null;
             const dayCorrect = (todayEntries || []).filter(e => e.studentId === selectedStudentId).reduce((s, e) => s + e.correctCount, 0);
             return (
               <div>
-                {pos && (
+                {displayPos && (
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex gap-1">
                       {termUnits.map(unit => {
@@ -1026,7 +1035,7 @@ export default function ScoreEntryPage() {
                       )}
                       <button onClick={() => { setPositionDialogStudentId(selectedStudentId); setPositionDialogModuleId(slotModule?.id ?? ''); setPositionDialogOpen(true); }}
                         className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-semibold text-foreground transition-all active:scale-95">
-                        {pos.moduleId} · G{pos.grade} · T{pos.term}
+                        {displayPos.moduleId} · G{displayPos.grade} · T{displayPos.term}
                       </button>
                     </div>
                   </div>

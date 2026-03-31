@@ -7,14 +7,16 @@ import { CentersTab } from '@/components/settings/centers-tab';
 import { ScheduleTab } from '@/components/settings/schedule-tab';
 import { TeachersTab } from '@/components/settings/teachers-tab';
 import { CurriculumTab } from '@/components/settings/curriculum-tab';
+import { ContentTab } from '@/components/settings/content-tab';
 
-type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'curriculum';
+type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'content' | 'curriculum';
 
 const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'general', label: 'General', adminOnly: false },
   { key: 'centers', label: 'Centers', adminOnly: true },
   { key: 'schedule', label: 'Schedule', adminOnly: true },
   { key: 'teachers', label: 'Teachers', adminOnly: true },
+  { key: 'content', label: 'Content', adminOnly: true },
   { key: 'curriculum', label: 'Curriculum', adminOnly: true },
 ];
 
@@ -63,6 +65,7 @@ export default function SettingsPage() {
       {activeTab === 'centers' && <CentersTab />}
       {activeTab === 'schedule' && <ScheduleTab />}
       {activeTab === 'teachers' && <TeachersTab />}
+      {activeTab === 'content' && <ContentTab />}
       {activeTab === 'curriculum' && <CurriculumTab />}
     </div>
   );

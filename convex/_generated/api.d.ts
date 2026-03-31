@@ -23,6 +23,8 @@ import type * as slotTeachers from "../slotTeachers.js";
 import type * as studentModulePositions from "../studentModulePositions.js";
 import type * as students from "../students.js";
 import type * as teachers from "../teachers.js";
+import type * as textbookPages from "../textbookPages.js";
+import type * as textbooks from "../textbooks.js";
 
 import type {
   ApiFromModules,
@@ -46,6 +48,8 @@ declare const fullApi: ApiFromModules<{
   studentModulePositions: typeof studentModulePositions;
   students: typeof students;
   teachers: typeof teachers;
+  textbookPages: typeof textbookPages;
+  textbooks: typeof textbooks;
 }>;
 
 /**

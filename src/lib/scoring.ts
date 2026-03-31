@@ -332,7 +332,7 @@ export function getStudentNextExercise(
 // ─── Shared helpers for exercise progress (used by score-entry page & position dialog) ───
 
 type EntryLike = { studentId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string> | unknown };
-type ExerciseLike = { _id: string; unitId: string; questionCount: number; order: number; type?: string };
+type ExerciseLike = { _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string };
 
 export function hasProgressedPast(
   sid: string, unitId: string, exOrder: number,
@@ -389,7 +389,7 @@ export function getExerciseDetails(
   sid: string, unitId: string,
   allEntries: EntryLike[], allExercises: ExerciseLike[],
 ): Array<{
-  exerciseId: string; order: number; questionCount: number;
+  exerciseId: string; order: number; name: string; questionCount: number;
   status: 'perfect' | 'skipped' | 'wip' | 'none';
   percentage: number; hasWrong: boolean;
 }> {
@@ -402,6 +402,6 @@ export function getExerciseDetails(
     const skippedQ = Object.values(qs).filter(v => v === 'skipped').length;
     const wrong = entry ? entry.totalAttempted - entry.correctCount - skippedQ : 0;
     const status = getExerciseStatus(sid, ex._id, ex.questionCount, unitId, ex.order, allEntries, allExercises);
-    return { exerciseId: ex._id, order: ex.order, questionCount: ex.questionCount, status, percentage, hasWrong: wrong > 0 };
+    return { exerciseId: ex._id, order: ex.order, name: ex.name, questionCount: ex.questionCount, status, percentage, hasWrong: wrong > 0 };
   });
 }
