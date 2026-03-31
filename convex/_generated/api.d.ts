@@ -25,6 +25,7 @@ import type * as students from "../students.js";
 import type * as teachers from "../teachers.js";
 import type * as textbookPages from "../textbookPages.js";
 import type * as textbooks from "../textbooks.js";
+import type * as unitMetadata from "../unitMetadata.js";
 
 import type {
   ApiFromModules,
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   teachers: typeof teachers;
   textbookPages: typeof textbookPages;
   textbooks: typeof textbooks;
+  unitMetadata: typeof unitMetadata;
 }>;
 
 /**

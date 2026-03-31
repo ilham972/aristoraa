@@ -8,8 +8,9 @@ import { ScheduleTab } from '@/components/settings/schedule-tab';
 import { TeachersTab } from '@/components/settings/teachers-tab';
 import { CurriculumTab } from '@/components/settings/curriculum-tab';
 import { ContentTab } from '@/components/settings/content-tab';
+import { DataEntryTab } from '@/components/settings/data-entry-tab';
 
-type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'content' | 'curriculum';
+type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'content' | 'curriculum' | 'data-entry';
 
 const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'general', label: 'General', adminOnly: false },
@@ -18,6 +19,7 @@ const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'teachers', label: 'Teachers', adminOnly: true },
   { key: 'content', label: 'Content', adminOnly: true },
   { key: 'curriculum', label: 'Curriculum', adminOnly: true },
+  { key: 'data-entry', label: 'Data Entry', adminOnly: true },
 ];
 
 export default function SettingsPage() {
@@ -67,6 +69,7 @@ export default function SettingsPage() {
       {activeTab === 'teachers' && <TeachersTab />}
       {activeTab === 'content' && <ContentTab />}
       {activeTab === 'curriculum' && <CurriculumTab />}
+      {activeTab === 'data-entry' && <DataEntryTab />}
     </div>
   );
 }

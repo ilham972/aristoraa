@@ -105,7 +105,7 @@ export const CURRICULUM_MODULES: CurriculumModule[] = [
         terms: [
           { term: 1, units: buildUnits('M2', 10, 1, ['4. ஈருறுப்புக் கோவைகள்', '7. இருபடிக் கோவைகளின் காரணிகள்', '12. அட்சரகணிதக் கோவைகளின் பொது மடங்குகளுட் சிறியது']) },
           { term: 2, units: buildUnits('M2', 10, 2, ['13. அட்சரகணிதப் பின்னங்கள்', '15. சமன்பாடுகள்', '21. வரைபுகள்', '23. சூத்திரங்கள்']) },
-          { term: 3, units: buildUnits('M2', 10, 3, ['24. அட்சரகணிதச் சமனிலிகள்', '25. கூட்டல் விருத்தி']) },
+          { term: 3, units: buildUnits('M2', 10, 3, ['24. கூட்டல் விருத்தி', '25. அட்சரகணிதச் சமனிலிகள்']) },
         ],
       },
       {
@@ -343,6 +343,28 @@ export function getAllUnitIds(): string[] {
     }
   }
   return ids;
+}
+
+export function extractUnitNumber(name: string): number {
+  const match = name.match(/^(\d+)\./);
+  return match ? parseInt(match[1]) : 0;
+}
+
+export function getUnitsForBook(grade: number, startUnit: number, endUnit: number) {
+  const units: { id: string; name: string; number: number; moduleId: string; term: number }[] = [];
+  for (const mod of CURRICULUM_MODULES) {
+    const gradeData = mod.grades.find(g => g.grade === grade);
+    if (!gradeData) continue;
+    for (const term of gradeData.terms) {
+      for (const unit of term.units) {
+        const num = extractUnitNumber(unit.name);
+        if (num >= startUnit && num <= endUnit) {
+          units.push({ id: unit.id, name: unit.name, number: num, moduleId: mod.id, term: term.term });
+        }
+      }
+    }
+  }
+  return units.sort((a, b) => a.number - b.number);
 }
 
 export function findUnit(unitId: string): { module: CurriculumModule; grade: number; term: number; unit: { id: string; name: string } } | null {

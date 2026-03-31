@@ -128,6 +128,12 @@ export default defineSchema({
     endUnit: v.optional(v.number()),
   }).index("by_grade", ["grade"]),
 
+  unitMetadata: defineTable({
+    unitId: v.string(),
+    startPage: v.optional(v.number()),
+    endPage: v.optional(v.number()),
+  }).index("by_unit", ["unitId"]),
+
   textbookPages: defineTable({
     textbookId: v.id("textbooks"),
     pageNumber: v.number(),
