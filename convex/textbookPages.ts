@@ -83,6 +83,42 @@ export const getPageImage = query({
   },
 });
 
+export const getPagesInRange = query({
+  args: {
+    textbookId: v.id("textbooks"),
+    startPage: v.number(),
+    endPage: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const allPages = await ctx.db
+      .query("textbookPages")
+      .withIndex("by_textbook", (q) => q.eq("textbookId", args.textbookId))
+      .collect();
+
+    const pageMap = new Map(
+      allPages
+        .filter((p) => p.pageNumber >= args.startPage && p.pageNumber <= args.endPage)
+        .map((p) => [p.pageNumber, p])
+    );
+
+    const results: { pageNumber: number; url: string | null }[] = [];
+    for (let p = args.startPage; p <= args.endPage; p++) {
+      const page = pageMap.get(p);
+      if (page) {
+        const url = await ctx.storage.getUrl(page.storageId);
+        results.push({ pageNumber: p, url });
+      } else {
+        results.push({ pageNumber: p, url: null });
+      }
+    }
+
+    return results;
+  },
+});
+
 export const getPagesByGrade = query({
   args: { grade: v.number(), pageNumber: v.number() },
   handler: async (ctx, args) => {

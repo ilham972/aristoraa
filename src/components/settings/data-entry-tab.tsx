@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, ChevronRight, Plus, Trash2, BookOpen, Image as ImageIcon } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, BookOpen, Image as ImageIcon } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,7 +61,6 @@ export function DataEntryTab() {
   // === LAYER 3 — Detail view ===
   const [detailUnit, setDetailUnit] = useState<BookUnit | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerPage, setDrawerPage] = useState(1);
   const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
@@ -74,10 +73,21 @@ export function DataEntryTab() {
     return getUnitsForBook(selectedBook.grade, selectedBook.startUnit, selectedBook.endUnit);
   }, [selectedBook]);
 
-  const drawerPageUrl = useQuery(
-    api.textbookPages.getPageImage,
-    drawerOpen && selectedBook
-      ? { textbookId: selectedBook._id as Id<'textbooks'>, pageNumber: drawerPage }
+  const detailMeta = detailUnit
+    ? allUnitMeta?.find(m => m.unitId === detailUnit.id)
+    : undefined;
+  const unitPageRange =
+    detailMeta?.startPage != null && detailMeta?.endPage != null
+      ? { start: detailMeta.startPage, end: detailMeta.endPage }
+      : null;
+  const unitPages = useQuery(
+    api.textbookPages.getPagesInRange,
+    drawerOpen && selectedBook && unitPageRange
+      ? {
+          textbookId: selectedBook._id as Id<'textbooks'>,
+          startPage: unitPageRange.start,
+          endPage: unitPageRange.end,
+        }
       : 'skip',
   );
 
@@ -137,8 +147,6 @@ export function DataEntryTab() {
       setPgEnd(meta?.endPage?.toString() || '');
       setPgDialogUnit(unit);
     } else {
-      const meta = getUnitMeta(unit.id);
-      if (meta?.startPage) setDrawerPage(meta.startPage);
       setDetailUnit(unit);
     }
   };
@@ -260,10 +268,7 @@ export function DataEntryTab() {
             variant="outline"
             size="sm"
             className="gap-1.5 shrink-0"
-            onClick={() => {
-              if (meta?.startPage) setDrawerPage(meta.startPage);
-              setDrawerOpen(true);
-            }}
+            onClick={() => setDrawerOpen(true)}
           >
             <BookOpen className="w-3.5 h-3.5" />
             Pages
@@ -449,58 +454,57 @@ export function DataEntryTab() {
         <Drawer direction="right" open={drawerOpen} onOpenChange={setDrawerOpen}>
           <DrawerContent>
             <DrawerHeader>
-              <DrawerTitle className="text-sm">
-                Page {drawerPage}
+              <DrawerTitle className="text-sm truncate">
+                {detailUnit.name}
                 {meta?.startPage != null && meta?.endPage != null && (
                   <span className="text-muted-foreground font-normal">
                     {' '}
-                    ({meta.startPage}–{meta.endPage})
+                    (pp. {meta.startPage}–{meta.endPage})
                   </span>
                 )}
               </DrawerTitle>
             </DrawerHeader>
 
-            <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar">
-              {drawerPageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={drawerPageUrl}
-                  alt={`Page ${drawerPage}`}
-                  className="w-full rounded-lg border border-border"
-                />
-              ) : drawerPageUrl === null ? (
-                <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
-                  <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">Page not captured</p>
+            {meta?.startPage == null || meta?.endPage == null ? (
+              <div className="flex-1 flex items-center justify-center px-4">
+                <p className="text-sm text-muted-foreground text-center">
+                  Set page range in &quot;Page Nos&quot; layer first.
+                </p>
+              </div>
+            ) : !unitPages ? (
+              <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar space-y-3">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="w-full aspect-[3/4] bg-muted rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <PinchZoomArea className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar">
+                <div className="space-y-3">
+                  {unitPages.map(pg => (
+                    <div key={pg.pageNumber} className="relative">
+                      <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
+                        p.{pg.pageNumber}
+                      </div>
+                      {pg.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={pg.url}
+                          alt={`Page ${pg.pageNumber}`}
+                          className="w-full rounded-lg border border-border"
+                        />
+                      ) : (
+                        <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
+                          <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
+                          <p className="text-sm text-muted-foreground">
+                            Page {pg.pageNumber} not captured
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ) : (
-                <div className="w-full aspect-[3/4] bg-muted rounded-lg flex items-center justify-center">
-                  <ImageIcon className="w-8 h-8 text-muted-foreground/40 animate-pulse" />
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between px-4 py-3 border-t">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setDrawerPage(p => Math.max(1, p - 1))}
-                disabled={drawerPage <= 1}
-                className="gap-1"
-              >
-                <ChevronLeft className="w-4 h-4" /> Prev
-              </Button>
-              <span className="text-sm font-mono text-muted-foreground">{drawerPage}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setDrawerPage(p => Math.min(selectedBook?.totalPages || 999, p + 1))}
-                disabled={drawerPage >= (selectedBook?.totalPages || 999)}
-                className="gap-1"
-              >
-                Next <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
+              </PinchZoomArea>
+            )}
           </DrawerContent>
         </Drawer>
       </>
@@ -689,6 +693,89 @@ export function DataEntryTab() {
 }
 
 // ─── Sub-components ────────────────────────────
+
+function PinchZoomArea({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  const lastDistRef = useRef(0);
+  const wasPinching = useRef(false);
+  const lastTapRef = useRef(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const getDist = (t: TouchList) =>
+      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        wasPinching.current = true;
+        lastDistRef.current = getDist(e.touches);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dist = getDist(e.touches);
+        if (lastDistRef.current > 0) {
+          zoomRef.current = Math.min(3, Math.max(1, zoomRef.current * (dist / lastDistRef.current)));
+          setZoom(zoomRef.current);
+        }
+        lastDistRef.current = dist;
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      lastDistRef.current = 0;
+
+      if (e.touches.length === 0) {
+        if (wasPinching.current) {
+          wasPinching.current = false;
+          if (zoomRef.current < 1.1) {
+            zoomRef.current = 1;
+            setZoom(1);
+          }
+          return;
+        }
+
+        // Double-tap to reset zoom
+        if (zoomRef.current > 1) {
+          const now = Date.now();
+          if (now - lastTapRef.current < 300) {
+            zoomRef.current = 1;
+            setZoom(1);
+          }
+          lastTapRef.current = now;
+        }
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+    };
+  }, []);
+
+  return (
+    <div ref={containerRef} className={className}>
+      <div style={{ zoom }}>{children}</div>
+    </div>
+  );
+}
 
 function AddTheoryButton({ onClick }: { onClick: () => void }) {
   return (
