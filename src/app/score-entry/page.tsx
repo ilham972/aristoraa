@@ -1142,15 +1142,19 @@ export default function ScoreEntryPage() {
                         );
                       })}
                     </div>
-                    {scoringExercise?.pageNumber !== undefined && (
-                      <button
-                        onClick={() => setPageDrawerOpen(true)}
-                        className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
-                      >
-                        <BookOpen className="w-3.5 h-3.5" />
-                        p.{scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : scoringExercise.pageNumber}
-                      </button>
-                    )}
+                    {scoringExercise?.pageNumber !== undefined && (() => {
+                      const part = getBookPart(scoringExercise.unitId);
+                      const pg = scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : String(scoringExercise.pageNumber);
+                      return (
+                        <button
+                          onClick={() => setPageDrawerOpen(true)}
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          {part ? `P${part} ` : ''}p.{pg}
+                        </button>
+                      );
+                    })()}
                   </div>
                 )}
 
