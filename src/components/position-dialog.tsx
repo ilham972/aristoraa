@@ -5,7 +5,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { CURRICULUM_MODULES, getOrderedUnits, getModuleById } from '@/lib/curriculum-data';
 import { getStudentNextExercise, getExerciseDetails, type PositionOptions } from '@/lib/scoring';
-import { X, RotateCcw } from 'lucide-react';
+import { X, RotateCcw, Layers, ArrowDownNarrowWide } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
 
@@ -36,6 +36,9 @@ const TERM_TINTS = [
   'bg-amber-500/5 dark:bg-amber-400/5',
 ];
 
+const MODULE_VIEW_KEY = 'mt-position-module-view';
+const UNIT_ORDER_KEY = 'mt-position-unit-order';
+
 export function PositionDialog({
   open, onOpenChange, students, allEntries, allExercises, modulePositions,
   initialStudentId, initialModuleId, onSelectExercise, onSavePosition,
@@ -47,6 +50,22 @@ export function PositionDialog({
   const [subTab, setSubTab] = useState<'progress' | 'position'>('progress');
   const [draftPositionExId, setDraftPositionExId] = useState<string | null>(null);
   const [positionDirty, setPositionDirty] = useState(false);
+  const [moduleViewOn, setModuleViewOn] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try { const v = localStorage.getItem(MODULE_VIEW_KEY); return v === null ? true : JSON.parse(v); } catch { return true; }
+  });
+  const [unitOrderOn, setUnitOrderOn] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { const v = localStorage.getItem(UNIT_ORDER_KEY); return v === null ? false : JSON.parse(v); } catch { return false; }
+  });
+
+  // Persist toggles
+  useEffect(() => {
+    localStorage.setItem(MODULE_VIEW_KEY, JSON.stringify(moduleViewOn));
+  }, [moduleViewOn]);
+  useEffect(() => {
+    localStorage.setItem(UNIT_ORDER_KEY, JSON.stringify(unitOrderOn));
+  }, [unitOrderOn]);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -117,59 +136,129 @@ export function PositionDialog({
     return { total: t, completed: c, pct: t > 0 ? Math.round((c / t) * 100) : 0 };
   }, [moduleProgress]);
 
+  // ─── All module positions (for cross-module current position indicators) ───
+  const allModuleCurrentPositions = useMemo(() => {
+    if (moduleViewOn) return new Map<string, string>(); // not needed in module mode
+    const map = new Map<string, string>();
+    for (const mod of CURRICULUM_MODULES) {
+      const pos = getStudentPosition(activeStudentId, mod.id);
+      if (pos.nextExerciseId) map.set(mod.id, pos.nextExerciseId);
+    }
+    return map;
+  }, [moduleViewOn, activeStudentId, getStudentPosition]);
+
   // ─── Exercise grid data for current module+grade ───
   const gridData = useMemo(() => {
-    if (!activeMod) return [];
-    const gradeData = activeMod.grades.find(g => g.grade === activeGrade);
-    if (!gradeData) return [];
-
-    const columns: Array<{
+    type RowType = {
       unitId: string; unitName: string; unitLabel: string;
-      grade: number; term: number;
+      grade: number; term: number; moduleId: string; moduleColor: string;
       exercises: Array<{
         exerciseId: string; order: number; label: string; questionCount: number;
         status: 'perfect' | 'skipped' | 'wip' | 'none';
         percentage: number; hasWrong: boolean;
         isCurrentPosition: boolean;
       }>;
-    }> = [];
+    };
 
-    let unitIdx = 0;
-    for (const term of gradeData.terms) {
-      for (const unit of term.units) {
-        unitIdx++;
-        const unitNum = unit.name.match(/^(\d+)\./)?.[1] || String(unitIdx);
-        const details = getExerciseDetails(activeStudentId, unit.id, allEntries, allExercises);
-        columns.push({
-          unitId: unit.id,
-          unitName: unit.name,
-          unitLabel: unitNum,
-          grade: gradeData.grade,
-          term: term.term,
-          exercises: details.map(d => ({
-            ...d,
-            label: d.name.includes('.') ? (d.name.split('.').pop() ?? String(d.order)) : String(d.order),
-            isCurrentPosition: d.exerciseId === currentPos.nextExerciseId,
-          })),
-        });
+    const rows: RowType[] = [];
+
+    if (moduleViewOn) {
+      // Single module mode
+      if (!activeMod) return [];
+      const gradeData = activeMod.grades.find(g => g.grade === activeGrade);
+      if (!gradeData) return [];
+
+      let unitIdx = 0;
+      for (const term of gradeData.terms) {
+        for (const unit of term.units) {
+          unitIdx++;
+          const unitNum = unit.name.match(/^(\d+)\./)?.[1] || String(unitIdx);
+          const details = getExerciseDetails(activeStudentId, unit.id, allEntries, allExercises);
+          rows.push({
+            unitId: unit.id, unitName: unit.name, unitLabel: unitNum,
+            grade: gradeData.grade, term: term.term,
+            moduleId: activeMod.id, moduleColor: activeMod.color,
+            exercises: details.map(d => ({
+              ...d,
+              label: d.name.includes('.') ? (d.name.split('.').pop() ?? String(d.order)) : String(d.order),
+              isCurrentPosition: d.exerciseId === currentPos.nextExerciseId,
+            })),
+          });
+        }
+      }
+    } else {
+      // All modules — group by term across modules
+      // Collect all terms, then within each term gather units from all modules
+      const termNums = new Set<number>();
+      for (const mod of CURRICULUM_MODULES) {
+        const gd = mod.grades.find(g => g.grade === activeGrade);
+        if (gd) for (const t of gd.terms) termNums.add(t.term);
+      }
+
+      for (const termNum of Array.from(termNums).sort((a, b) => a - b)) {
+        for (const mod of CURRICULUM_MODULES) {
+          const gradeData = mod.grades.find(g => g.grade === activeGrade);
+          if (!gradeData) continue;
+          const termData = gradeData.terms.find(t => t.term === termNum);
+          if (!termData) continue;
+
+          const nextExId = allModuleCurrentPositions.get(mod.id) ?? null;
+          let unitIdx = 0;
+          for (const unit of termData.units) {
+            unitIdx++;
+            const unitNum = unit.name.match(/^(\d+)\./)?.[1] || String(unitIdx);
+            const details = getExerciseDetails(activeStudentId, unit.id, allEntries, allExercises);
+            rows.push({
+              unitId: unit.id, unitName: unit.name, unitLabel: unitNum,
+              grade: gradeData.grade, term: termNum,
+              moduleId: mod.id, moduleColor: mod.color,
+              exercises: details.map(d => ({
+                ...d,
+                label: d.name.includes('.') ? (d.name.split('.').pop() ?? String(d.order)) : String(d.order),
+                isCurrentPosition: d.exerciseId === nextExId,
+              })),
+            });
+          }
+        }
       }
     }
-    return columns;
-  }, [activeMod, activeGrade, activeStudentId, allEntries, allExercises, currentPos.nextExerciseId]);
+    return rows;
+  }, [activeMod, activeGrade, activeStudentId, allEntries, allExercises, currentPos.nextExerciseId, moduleViewOn, allModuleCurrentPositions]);
 
-  // Group columns by term for tinting
+  // Group rows for tinting
   const termGroups = useMemo(() => {
-    const groups: Array<{ term: number; columns: typeof gridData }> = [];
-    for (const col of gridData) {
-      const last = groups[groups.length - 1];
-      if (last && last.term === col.term) {
-        last.columns.push(col);
-      } else {
-        groups.push({ term: col.term, columns: [col] });
+    const groups: Array<{ term: number; moduleId: string; moduleColor: string; rows: typeof gridData }> = [];
+
+    if (!moduleViewOn && unitOrderOn) {
+      // Sort all rows by unit number, then group by term
+      const sorted = [...gridData].sort((a, b) => {
+        const na = parseInt(a.unitLabel) || 0;
+        const nb = parseInt(b.unitLabel) || 0;
+        return na - nb;
+      });
+      for (const row of sorted) {
+        const last = groups[groups.length - 1];
+        if (last && last.term === row.term) {
+          last.rows.push(row);
+        } else {
+          groups.push({ term: row.term, moduleId: row.moduleId, moduleColor: row.moduleColor, rows: [row] });
+        }
+      }
+    } else {
+      for (const row of gridData) {
+        const last = groups[groups.length - 1];
+        const sameGroup = moduleViewOn
+          ? (last && last.term === row.term && last.moduleId === row.moduleId)
+          : (last && last.term === row.term);
+        if (sameGroup && last) {
+          last.rows.push(row);
+        } else {
+          groups.push({ term: row.term, moduleId: row.moduleId, moduleColor: row.moduleColor, rows: [row] });
+        }
       }
     }
     return groups;
-  }, [gridData]);
+  }, [gridData, moduleViewOn, unitOrderOn]);
 
   // ─── Position tab: determine which exercises are "before" the draft position ───
   const orderedExerciseIds = useMemo(() => {
@@ -242,10 +331,10 @@ export function PositionDialog({
     }
   }, [activeStudentId, getStudentPosition, students]);
 
-  const handleProgressCellTap = useCallback((exerciseId: string, unitId: string) => {
-    onSelectExercise(activeStudentId, exerciseId, unitId, activeModuleId);
+  const handleProgressCellTap = useCallback((exerciseId: string, unitId: string, moduleId: string) => {
+    onSelectExercise(activeStudentId, exerciseId, unitId, moduleId);
     onOpenChange(false);
-  }, [activeStudentId, activeModuleId, onSelectExercise, onOpenChange]);
+  }, [activeStudentId, onSelectExercise, onOpenChange]);
 
   const handlePositionCellTap = useCallback((exerciseId: string) => {
     setDraftPositionExId(exerciseId);
@@ -266,10 +355,11 @@ export function PositionDialog({
   }, []);
 
   // ─── Check if grade is below student's school grade ───
-  const isBelowGrade = useCallback((grade: number) => {
+  const isBelowGrade = useCallback((grade: number, modId?: string) => {
     const student = students.find(s => s._id === activeStudentId);
     if (!student) return false;
-    const override = modulePositions.find(p => p.studentId === activeStudentId && p.moduleId === activeModuleId);
+    const mid = modId ?? activeModuleId;
+    const override = modulePositions.find(p => p.studentId === activeStudentId && p.moduleId === mid);
     const startGrade = override?.grade ?? student.schoolGrade;
     return grade < startGrade;
   }, [activeStudentId, activeModuleId, modulePositions, students]);
@@ -282,12 +372,42 @@ export function PositionDialog({
         showCloseButton={false}
         className="fixed inset-0 max-w-none w-full h-full rounded-none p-0 translate-x-0 translate-y-0 top-0 left-0 overflow-hidden flex flex-col sm:max-w-none"
       >
-        {/* ═══ HEADER ═══ */}
-        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
-          <div>
-            <p className="text-sm font-bold text-foreground">{activeStudent?.name ?? 'Student'}</p>
-            <p className="text-[10px] text-muted-foreground">Grade {activeStudent?.schoolGrade} &middot; Syllabus Progress</p>
+        {/* ═══ TOP BAR: Progress/Position tabs + Module toggle + Close ═══ */}
+        <div className="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
+          <div className="flex gap-1 flex-1 min-w-0">
+            <button
+              onClick={() => setSubTab('progress')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all
+                ${subTab === 'progress' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
+            >
+              Progress
+            </button>
+            <button
+              onClick={() => setSubTab('position')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all
+                ${subTab === 'position' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
+            >
+              Position
+            </button>
           </div>
+          {!moduleViewOn && (
+            <button
+              onClick={() => setUnitOrderOn(v => !v)}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center active:scale-90 transition-all
+                ${unitOrderOn ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}
+              title={unitOrderOn ? 'Group by term' : 'Sort by unit number'}
+            >
+              <ArrowDownNarrowWide className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            onClick={() => setModuleViewOn(v => !v)}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center active:scale-90 transition-all
+              ${moduleViewOn ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}
+            title={moduleViewOn ? 'Hide modules' : 'Show modules'}
+          >
+            <Layers className="w-4 h-4" />
+          </button>
           <button onClick={() => onOpenChange(false)} className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center active:scale-90 transition-transform">
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
@@ -312,52 +432,64 @@ export function PositionDialog({
             </div>
           </div>
 
-          {/* ═══ PROGRESS BARS ═══ */}
-          <div className="px-4 pb-3">
-            {/* Overall */}
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider w-10 shrink-0">All</span>
-              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${overallProgress.pct}%` }} />
-              </div>
-              <span className="text-[10px] font-bold text-muted-foreground w-8 text-right">{overallProgress.pct}%</span>
-            </div>
-            {/* Per-module */}
-            <div className="grid grid-cols-6 gap-1">
-              {moduleProgress.map(mp => (
-                <div key={mp.moduleId} className="flex flex-col items-center">
-                  <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all" style={{ width: `${mp.pct}%`, backgroundColor: mp.color }} />
+          {/* ═══ MODULE SECTION (conditional) ═══ */}
+          {moduleViewOn && (
+            <>
+              {/* Progress bars */}
+              <div className="px-4 pb-3">
+                {/* Overall */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider w-10 shrink-0">All</span>
+                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${overallProgress.pct}%` }} />
                   </div>
-                  <span className="text-[8px] font-bold mt-0.5" style={{ color: mp.color }}>{mp.pct}%</span>
+                  <span className="text-[10px] font-bold text-muted-foreground w-8 text-right">{overallProgress.pct}%</span>
                 </div>
-              ))}
-            </div>
-          </div>
+                {/* Per-module */}
+                <div className="grid grid-cols-6 gap-1">
+                  {moduleProgress.map(mp => (
+                    <div key={mp.moduleId} className="flex flex-col items-center">
+                      <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width: `${mp.pct}%`, backgroundColor: mp.color }} />
+                      </div>
+                      <span className="text-[8px] font-bold mt-0.5" style={{ color: mp.color }}>{mp.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-          {/* ═══ MODULE BUTTONS ═══ */}
-          <div className="grid grid-cols-6 gap-1 px-4 mb-3">
-            {CURRICULUM_MODULES.map(mod => {
-              const isActive = mod.id === activeModuleId;
-              return (
-                <button
-                  key={mod.id}
-                  onClick={() => handleModuleSwitch(mod.id)}
-                  className={`py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95 ${isActive ? 'text-white shadow-sm' : 'text-foreground/70'}`}
-                  style={{
-                    backgroundColor: isActive ? mod.color : mod.color + '15',
-                    color: isActive ? '#fff' : mod.color,
-                  }}
-                >
-                  {mod.id}
-                </button>
-              );
-            })}
-          </div>
+              {/* Module buttons */}
+              <div className="grid grid-cols-6 gap-1 px-4 mb-3">
+                {CURRICULUM_MODULES.map(mod => {
+                  const isActive = mod.id === activeModuleId;
+                  return (
+                    <button
+                      key={mod.id}
+                      onClick={() => handleModuleSwitch(mod.id)}
+                      className={`py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95 ${isActive ? 'text-white shadow-sm' : 'text-foreground/70'}`}
+                      style={{
+                        backgroundColor: isActive ? mod.color : mod.color + '15',
+                        color: isActive ? '#fff' : mod.color,
+                      }}
+                    >
+                      {mod.id}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
 
           {/* ═══ GRADE TABS ═══ */}
           <div className="flex gap-1 px-4 mb-3 overflow-x-auto py-1">
-            {moduleGrades.map(g => {
+            {(moduleViewOn ? moduleGrades : (() => {
+              // When module view is off, collect all unique grades across all modules
+              const gradeSet = new Set<number>();
+              for (const mod of CURRICULUM_MODULES) {
+                for (const g of mod.grades) gradeSet.add(g.grade);
+              }
+              return Array.from(gradeSet).sort((a, b) => a - b).map(g => ({ grade: g }));
+            })()).map(g => {
               const below = isBelowGrade(g.grade);
               const isActive = g.grade === activeGrade;
               return (
@@ -374,43 +506,34 @@ export function PositionDialog({
             })}
           </div>
 
-          {/* ═══ SUB-TABS: Progress | Position ═══ */}
-          <div className="flex gap-1 px-4 mb-3">
-            <button
-              onClick={() => setSubTab('progress')}
-              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all
-                ${subTab === 'progress' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
-            >
-              Progress
-            </button>
-            <button
-              onClick={() => setSubTab('position')}
-              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all
-                ${subTab === 'position' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
-            >
-              Position
-            </button>
-          </div>
-
-          {/* ═══ EXERCISE GRID ═══ */}
+          {/* ═══ EXERCISE GRID (transposed: units = rows, exercises = columns) ═══ */}
           <div className="px-4 pb-4">
             {gridData.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">No units for this grade in {activeModuleId}</p>
+              <p className="text-xs text-muted-foreground text-center py-8">No units for G{activeGrade}</p>
             ) : (
-              <div className="overflow-x-auto p-1 -m-1">
-                <div className="flex gap-0.5" style={{ minWidth: 'max-content' }}>
+              <div className="overflow-x-auto -mx-4 px-4">
+                <div className="flex flex-col gap-0.5">
                   {termGroups.map((group, gi) => (
-                    <div key={group.term} className={`flex gap-0.5 rounded-xl p-1 ${TERM_TINTS[gi % TERM_TINTS.length]}`}>
-                      {group.columns.map(col => (
-                        <div key={col.unitId} className="flex flex-col items-center" style={{ minWidth: '3rem' }}>
-                          {/* Unit header */}
-                          <div className="text-[9px] font-bold text-muted-foreground pb-1 text-center">
-                            {col.unitLabel}
+                    <div key={`${group.moduleId}-${group.term}`} className={`flex flex-col gap-0.5 rounded-xl p-1 ${TERM_TINTS[group.term - 1] ?? TERM_TINTS[gi % TERM_TINTS.length]}`}>
+                      {/* Term label */}
+                      <div className="flex items-center gap-1.5 pl-1 mb-0.5">
+                        <span className="text-[8px] font-semibold text-muted-foreground/50">T{group.term}</span>
+                      </div>
+                      {group.rows.map(row => (
+                        <div key={row.unitId} className="flex items-center gap-0.5">
+                          {/* Sticky unit label + module color dot when module view is off */}
+                          <div
+                            className="sticky left-0 z-10 shrink-0 text-[9px] font-bold text-muted-foreground text-center bg-inherit rounded-l-lg py-2 flex items-center justify-center gap-0.5"
+                            style={{ width: moduleViewOn ? '2rem' : '2.75rem' }}
+                          >
+                            {!moduleViewOn && (
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: row.moduleColor }} />
+                            )}
+                            {row.unitLabel}
                           </div>
-                          {/* Exercise cells */}
-                          <div className="flex flex-col gap-0.5">
-                            {col.exercises.map(ex => {
-                              // In position tab, check if this exercise is before the draft position
+                          {/* Exercise cells - horizontal */}
+                          <div className="flex gap-0.5">
+                            {row.exercises.map(ex => {
                               const isDraftSkipped = subTab === 'position' && draftSkippedSet.has(ex.exerciseId);
                               const isDraftPosition = subTab === 'position' && draftPositionExId === ex.exerciseId;
 
@@ -422,13 +545,13 @@ export function PositionDialog({
                                   status={ex.status}
                                   hasWrong={ex.hasWrong}
                                   isCurrentPosition={ex.isCurrentPosition}
-                                  isBelowGrade={isBelowGrade(col.grade)}
+                                  isBelowGrade={isBelowGrade(row.grade, row.moduleId)}
                                   isDraftSkipped={isDraftSkipped}
                                   isDraftPosition={isDraftPosition}
                                   isPositionTab={subTab === 'position'}
                                   onClick={() => {
                                     if (subTab === 'progress') {
-                                      handleProgressCellTap(ex.exerciseId, col.unitId);
+                                      handleProgressCellTap(ex.exerciseId, row.unitId, row.moduleId);
                                     } else {
                                       handlePositionCellTap(ex.exerciseId);
                                     }
@@ -437,10 +560,6 @@ export function PositionDialog({
                               );
                             })}
                           </div>
-                          {/* Term label at bottom */}
-                          {col === group.columns[0] && (
-                            <div className="text-[8px] font-semibold text-muted-foreground/50 mt-1">T{col.term}</div>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -524,7 +643,7 @@ function ExerciseCell({
   return (
     <button
       onClick={onClick}
-      className={`relative w-12 h-10 rounded-lg flex flex-col items-center justify-center transition-all active:scale-90
+      className={`relative w-12 h-10 rounded-lg flex flex-col items-center justify-center transition-all active:scale-90 shrink-0
         ${bgClass} ${textClass}
         ${isBelowGrade ? 'opacity-30' : ''}
         ${isDraftPosition ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''}
