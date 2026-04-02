@@ -702,11 +702,12 @@ function PinchZoomArea({
   className?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(1);
+  const [scale, setScale] = useState(1);
+  const scaleRef = useRef(1);
   const lastDistRef = useRef(0);
   const wasPinching = useRef(false);
   const lastTapRef = useRef(0);
+  const originRef = useRef({ x: 50, y: 50 });
 
   useEffect(() => {
     const el = containerRef.current;
@@ -715,10 +716,22 @@ function PinchZoomArea({
     const getDist = (t: TouchList) =>
       Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
 
+    const getMidpoint = (t: TouchList) => {
+      const rect = el.getBoundingClientRect();
+      const midX = (t[0].clientX + t[1].clientX) / 2;
+      const midY = (t[0].clientY + t[1].clientY) / 2;
+      const contentW = el.scrollWidth;
+      const contentH = el.scrollHeight;
+      const x = ((midX - rect.left + el.scrollLeft) / contentW) * 100;
+      const y = ((midY - rect.top + el.scrollTop) / contentH) * 100;
+      return { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
+    };
+
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
         wasPinching.current = true;
         lastDistRef.current = getDist(e.touches);
+        originRef.current = getMidpoint(e.touches);
       }
     };
 
@@ -727,8 +740,18 @@ function PinchZoomArea({
         e.preventDefault();
         const dist = getDist(e.touches);
         if (lastDistRef.current > 0) {
-          zoomRef.current = Math.min(3, Math.max(1, zoomRef.current * (dist / lastDistRef.current)));
-          setZoom(zoomRef.current);
+          const prevScale = scaleRef.current;
+          scaleRef.current = Math.min(3, Math.max(1, scaleRef.current * (dist / lastDistRef.current)));
+          setScale(scaleRef.current);
+
+          if (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight) {
+            const ratio = scaleRef.current / prevScale;
+            const rect = el.getBoundingClientRect();
+            const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+            const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+            el.scrollLeft = (el.scrollLeft + midX) * ratio - midX;
+            el.scrollTop = (el.scrollTop + midY) * ratio - midY;
+          }
         }
         lastDistRef.current = dist;
       }
@@ -740,19 +763,20 @@ function PinchZoomArea({
       if (e.touches.length === 0) {
         if (wasPinching.current) {
           wasPinching.current = false;
-          if (zoomRef.current < 1.1) {
-            zoomRef.current = 1;
-            setZoom(1);
+          if (scaleRef.current < 1.1) {
+            scaleRef.current = 1;
+            setScale(1);
+            originRef.current = { x: 50, y: 50 };
           }
           return;
         }
 
-        // Double-tap to reset zoom
-        if (zoomRef.current > 1) {
+        if (scaleRef.current > 1) {
           const now = Date.now();
           if (now - lastTapRef.current < 300) {
-            zoomRef.current = 1;
-            setZoom(1);
+            scaleRef.current = 1;
+            setScale(1);
+            originRef.current = { x: 50, y: 50 };
           }
           lastTapRef.current = now;
         }
@@ -774,9 +798,17 @@ function PinchZoomArea({
     <div
       ref={containerRef}
       className={className}
-      style={zoom > 1 ? { overflow: 'auto' } : undefined}
+      style={scale > 1 ? { overflow: 'auto' } : undefined}
     >
-      <div style={{ width: `${zoom * 100}%` }}>{children}</div>
+      <div
+        style={{
+          transformOrigin: `${originRef.current.x}% ${originRef.current.y}%`,
+          transform: scale > 1 ? `scale(${scale})` : undefined,
+          width: scale > 1 ? `${scale * 100}%` : undefined,
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
