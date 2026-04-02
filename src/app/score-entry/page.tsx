@@ -2,7 +2,9 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw } from 'lucide-react';
+import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon } from 'lucide-react';
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { PinchZoomArea } from '@/components/pinch-zoom-area';
 import { PositionDialog } from '@/components/position-dialog';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -88,6 +90,7 @@ export default function ScoreEntryPage() {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [conceptDrawerOpen, setConceptDrawerOpen] = useState(false);
+  const [pageDrawerOpen, setPageDrawerOpen] = useState(false);
 
   // New dialogs
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
@@ -113,6 +116,31 @@ export default function ScoreEntryPage() {
   const modulePositions = useQuery(api.studentModulePositions.list);
   const submittedSessions = useQuery(api.sessionSubmissions.listByTeacher, teacher ? { teacherId: teacher._id } : 'skip');
   const allTextbooks = useQuery(api.textbooks.list);
+
+  // Page drawer: find the textbook for current exercise's pages
+  const pageDrawerTextbook = useMemo(() => {
+    if (!pageDrawerOpen || !scoringExercise?.pageNumber || !allTextbooks) return null;
+    const unitInfo = findUnit(scoringExercise.unitId);
+    if (!unitInfo) return null;
+    const unitNum = parseInt(unitInfo.unit.name.match(/^(\d+)\./)?.[1] ?? '');
+    if (isNaN(unitNum)) return null;
+    const books = allTextbooks.filter(t => t.grade === unitInfo.grade).sort((a, b) => a.part - b.part);
+    for (const book of books) {
+      if (book.startUnit != null && book.endUnit != null && unitNum >= book.startUnit && unitNum <= book.endUnit) return book;
+    }
+    return books.length === 1 ? books[0] : null;
+  }, [pageDrawerOpen, scoringExercise, allTextbooks]);
+
+  const pageDrawerPages = useQuery(
+    api.textbookPages.getPagesInRange,
+    pageDrawerOpen && pageDrawerTextbook && scoringExercise?.pageNumber
+      ? {
+          textbookId: pageDrawerTextbook._id as Id<'textbooks'>,
+          startPage: scoringExercise.pageNumber,
+          endPage: scoringExercise.pageNumberEnd ?? scoringExercise.pageNumber,
+        }
+      : 'skip',
+  );
 
   const teacherSlots = useMemo(() => {
     if (!teacherSlotAssignments || !allSlots) return undefined;
@@ -1092,26 +1120,37 @@ export default function ScoreEntryPage() {
                   </button>
                 )}
 
-                {/* Exercise selector boxes - always visible */}
+                {/* Exercise selector boxes + page button */}
                 {selectedUnitExercises.length > 0 && (
-                  <div className="flex gap-1 overflow-x-auto pb-1 mb-3 p-1 -m-1">
-                    {selectedUnitExercises.map(ex => {
-                      const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount, selectedUnitId, ex.order);
-                      const isCurrent = scoringExercise && ex._id === scoringExercise._id;
-                      const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : String(ex.order);
-                      return (
-                        <button key={ex._id}
-                          onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
-                          className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
-                            ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
-                            ${st === 'perfect' ? 'bg-emerald-500 text-white'
-                              : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
-                              : st === 'wip' ? 'bg-amber-400 text-white'
-                              : 'bg-muted text-muted-foreground'}`}>
-                          {lbl}
-                        </button>
-                      );
-                    })}
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex gap-1 overflow-x-auto pb-1 p-1 -m-1 flex-1 min-w-0">
+                      {selectedUnitExercises.map(ex => {
+                        const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount, selectedUnitId, ex.order);
+                        const isCurrent = scoringExercise && ex._id === scoringExercise._id;
+                        const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : String(ex.order);
+                        return (
+                          <button key={ex._id}
+                            onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
+                            className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
+                              ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
+                              ${st === 'perfect' ? 'bg-emerald-500 text-white'
+                                : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
+                                : st === 'wip' ? 'bg-amber-400 text-white'
+                                : 'bg-muted text-muted-foreground'}`}>
+                            {lbl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {scoringExercise?.pageNumber !== undefined && (
+                      <button
+                        onClick={() => setPageDrawerOpen(true)}
+                        className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        p.{scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : scoringExercise.pageNumber}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -1125,14 +1164,7 @@ export default function ScoreEntryPage() {
                       <div className="rounded-2xl bg-card border border-border/50 p-3">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{markedCount}/{scoringExercise.questionCount} marked</span>
-                          <div className="flex items-center gap-2">
-                            {scoringExercise.pageNumber !== undefined && (() => {
-                              const part = getBookPart(scoringExercise.unitId);
-                              const pg = scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : String(scoringExercise.pageNumber);
-                              return <span className="text-[10px] text-muted-foreground">{part ? `P${part} ` : ''}p.{pg}</span>;
-                            })()}
-                            <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
-                          </div>
+                          <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
                         </div>
                         <div className="h-1.5 bg-muted rounded-full overflow-hidden flex">
                           {correctCount > 0 && <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${(correctCount / scoringExercise.questionCount) * 100}%` }} />}
@@ -1475,6 +1507,59 @@ export default function ScoreEntryPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Page Viewer Drawer */}
+      <Drawer direction="right" open={pageDrawerOpen} onOpenChange={setPageDrawerOpen}>
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle className="text-sm truncate">
+              {scoringExercise?.name}
+              {scoringExercise?.pageNumber !== undefined && (
+                <span className="text-muted-foreground font-normal">
+                  {' '}(p.{scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}–${scoringExercise.pageNumberEnd}` : scoringExercise.pageNumber})
+                </span>
+              )}
+            </DrawerTitle>
+          </DrawerHeader>
+
+          {!scoringExercise?.pageNumber ? (
+            <div className="flex-1 flex items-center justify-center px-4">
+              <p className="text-sm text-muted-foreground text-center">No page number set for this exercise.</p>
+            </div>
+          ) : !pageDrawerPages ? (
+            <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="w-full aspect-[3/4] bg-muted rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <PinchZoomArea className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar">
+              <div className="space-y-3">
+                {pageDrawerPages.map(pg => (
+                  <div key={pg.pageNumber} className="relative">
+                    <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
+                      p.{pg.pageNumber}
+                    </div>
+                    {pg.url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={pg.url}
+                        alt={`Page ${pg.pageNumber}`}
+                        className="w-full rounded-lg border border-border"
+                      />
+                    ) : (
+                      <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
+                        <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
+                        <p className="text-sm text-muted-foreground">Page {pg.pageNumber} not captured</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </PinchZoomArea>
+          )}
+        </DrawerContent>
+      </Drawer>
 
       {/* Concept Drawer */}
       <Sheet open={conceptDrawerOpen} onOpenChange={setConceptDrawerOpen}>
