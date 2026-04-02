@@ -90,7 +90,7 @@ export default function ScoreEntryPage() {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [conceptDrawerOpen, setConceptDrawerOpen] = useState(false);
-  const [pageDrawerOpen, setPageDrawerOpen] = useState(false);
+  const [pageDrawerRange, setPageDrawerRange] = useState<{ unitId: string; startPage: number; endPage: number; label: string } | null>(null);
 
   // New dialogs
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
@@ -117,10 +117,11 @@ export default function ScoreEntryPage() {
   const submittedSessions = useQuery(api.sessionSubmissions.listByTeacher, teacher ? { teacherId: teacher._id } : 'skip');
   const allTextbooks = useQuery(api.textbooks.list);
 
-  // Page drawer: find the textbook for current exercise's pages
+  // Page drawer: find the textbook for the page range being viewed
+  const allUnitMeta = useQuery(api.unitMetadata.list);
   const pageDrawerTextbook = useMemo(() => {
-    if (!pageDrawerOpen || !scoringExercise?.pageNumber || !allTextbooks) return null;
-    const unitInfo = findUnit(scoringExercise.unitId);
+    if (!pageDrawerRange || !allTextbooks) return null;
+    const unitInfo = findUnit(pageDrawerRange.unitId);
     if (!unitInfo) return null;
     const unitNum = parseInt(unitInfo.unit.name.match(/^(\d+)\./)?.[1] ?? '');
     if (isNaN(unitNum)) return null;
@@ -129,15 +130,15 @@ export default function ScoreEntryPage() {
       if (book.startUnit != null && book.endUnit != null && unitNum >= book.startUnit && unitNum <= book.endUnit) return book;
     }
     return books.length === 1 ? books[0] : null;
-  }, [pageDrawerOpen, scoringExercise, allTextbooks]);
+  }, [pageDrawerRange, allTextbooks]);
 
   const pageDrawerPages = useQuery(
     api.textbookPages.getPagesInRange,
-    pageDrawerOpen && pageDrawerTextbook && scoringExercise?.pageNumber
+    pageDrawerRange && pageDrawerTextbook
       ? {
           textbookId: pageDrawerTextbook._id as Id<'textbooks'>,
-          startPage: scoringExercise.pageNumber,
-          endPage: scoringExercise.pageNumberEnd ?? scoringExercise.pageNumber,
+          startPage: pageDrawerRange.startPage,
+          endPage: pageDrawerRange.endPage,
         }
       : 'skip',
   );
@@ -1061,15 +1062,15 @@ export default function ScoreEntryPage() {
             return (
               <div>
                 {displayPos && (
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex gap-1">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex gap-1 min-w-0">
                       {termUnits.map(unit => {
                         const num = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 2);
                         return <button key={unit.id} onClick={() => { setSelectedUnitId(unit.id); autoSelectExerciseForUnit(unit.id, selectedStudentId!); }}
                           className={`w-8 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 ${unit.id === selectedUnitId ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{num}</button>;
                       })}
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 ml-auto">
                       {viewingOverride && (
                         <button onClick={() => { setViewingOverride(null); if (selectedStudentId) selectStudent(selectedStudentId); }}
                           className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center active:scale-90 transition-transform"
@@ -1082,6 +1083,25 @@ export default function ScoreEntryPage() {
                         {displayPos.moduleId} · G{displayPos.grade} · T{displayPos.term}
                       </button>
                     </div>
+                    {selectedUnitId && (() => {
+                      const unitMeta = allUnitMeta?.find(m => m.unitId === selectedUnitId);
+                      if (!unitMeta?.startPage || !unitMeta?.endPage) return null;
+                      const part = getBookPart(selectedUnitId);
+                      return (
+                        <button
+                          onClick={() => setPageDrawerRange({
+                            unitId: selectedUnitId,
+                            startPage: unitMeta.startPage!,
+                            endPage: unitMeta.endPage!,
+                            label: selectedUnitName || 'Unit',
+                          })}
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          {part ? `P${part} ` : ''}p.{unitMeta.startPage}-{unitMeta.endPage}
+                        </button>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -1147,7 +1167,12 @@ export default function ScoreEntryPage() {
                       const pg = scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : String(scoringExercise.pageNumber);
                       return (
                         <button
-                          onClick={() => setPageDrawerOpen(true)}
+                          onClick={() => setPageDrawerRange({
+                            unitId: scoringExercise.unitId,
+                            startPage: scoringExercise.pageNumber!,
+                            endPage: scoringExercise.pageNumberEnd ?? scoringExercise.pageNumber!,
+                            label: scoringExercise.name,
+                          })}
                           className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
                         >
                           <BookOpen className="w-3.5 h-3.5" />
@@ -1513,24 +1538,18 @@ export default function ScoreEntryPage() {
       </Dialog>
 
       {/* Page Viewer Drawer */}
-      <Drawer direction="right" open={pageDrawerOpen} onOpenChange={setPageDrawerOpen}>
+      <Drawer direction="right" open={!!pageDrawerRange} onOpenChange={open => !open && setPageDrawerRange(null)}>
         <DrawerContent>
           <DrawerHeader>
             <DrawerTitle className="text-sm truncate">
-              {scoringExercise?.name}
-              {scoringExercise?.pageNumber !== undefined && (
-                <span className="text-muted-foreground font-normal">
-                  {' '}(p.{scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}–${scoringExercise.pageNumberEnd}` : scoringExercise.pageNumber})
-                </span>
-              )}
+              {pageDrawerRange?.label}
+              <span className="text-muted-foreground font-normal">
+                {' '}(pp. {pageDrawerRange?.startPage}–{pageDrawerRange?.endPage})
+              </span>
             </DrawerTitle>
           </DrawerHeader>
 
-          {!scoringExercise?.pageNumber ? (
-            <div className="flex-1 flex items-center justify-center px-4">
-              <p className="text-sm text-muted-foreground text-center">No page number set for this exercise.</p>
-            </div>
-          ) : !pageDrawerPages ? (
+          {!pageDrawerPages ? (
             <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar space-y-3">
               {[1, 2, 3].map(i => (
                 <div key={i} className="w-full aspect-[3/4] bg-muted rounded-lg animate-pulse" />

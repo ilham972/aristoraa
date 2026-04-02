@@ -771,8 +771,12 @@ function PinchZoomArea({
   }, []);
 
   return (
-    <div ref={containerRef} className={className}>
-      <div style={{ zoom }}>{children}</div>
+    <div
+      ref={containerRef}
+      className={className}
+      style={zoom > 1 ? { overflow: 'auto' } : undefined}
+    >
+      <div style={{ width: `${zoom * 100}%` }}>{children}</div>
     </div>
   );
 }

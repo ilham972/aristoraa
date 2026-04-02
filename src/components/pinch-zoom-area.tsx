@@ -10,8 +10,8 @@ export function PinchZoomArea({
   className?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(1);
+  const [scale, setScale] = useState(1);
+  const scaleRef = useRef(1);
   const lastDistRef = useRef(0);
   const wasPinching = useRef(false);
   const lastTapRef = useRef(0);
@@ -35,8 +35,8 @@ export function PinchZoomArea({
         e.preventDefault();
         const dist = getDist(e.touches);
         if (lastDistRef.current > 0) {
-          zoomRef.current = Math.min(3, Math.max(1, zoomRef.current * (dist / lastDistRef.current)));
-          setZoom(zoomRef.current);
+          scaleRef.current = Math.min(3, Math.max(1, scaleRef.current * (dist / lastDistRef.current)));
+          setScale(scaleRef.current);
         }
         lastDistRef.current = dist;
       }
@@ -48,19 +48,19 @@ export function PinchZoomArea({
       if (e.touches.length === 0) {
         if (wasPinching.current) {
           wasPinching.current = false;
-          if (zoomRef.current < 1.1) {
-            zoomRef.current = 1;
-            setZoom(1);
+          if (scaleRef.current < 1.1) {
+            scaleRef.current = 1;
+            setScale(1);
           }
           return;
         }
 
         // Double-tap to reset zoom
-        if (zoomRef.current > 1) {
+        if (scaleRef.current > 1) {
           const now = Date.now();
           if (now - lastTapRef.current < 300) {
-            zoomRef.current = 1;
-            setZoom(1);
+            scaleRef.current = 1;
+            setScale(1);
           }
           lastTapRef.current = now;
         }
@@ -79,8 +79,12 @@ export function PinchZoomArea({
   }, []);
 
   return (
-    <div ref={containerRef} className={className}>
-      <div style={{ zoom }}>{children}</div>
+    <div
+      ref={containerRef}
+      className={className}
+      style={scale > 1 ? { overflow: 'auto' } : undefined}
+    >
+      <div style={{ width: `${scale * 100}%` }}>{children}</div>
     </div>
   );
 }
