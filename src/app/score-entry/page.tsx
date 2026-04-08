@@ -448,13 +448,6 @@ export default function ScoreEntryPage() {
     if (books.length === 1) return books[0].part;
     return null;
   };
-  const getConceptForExercise = (exId: string, unitId: string): string | null => {
-    if (!allExercises) return null;
-    const items = allExercises.filter(e => e.unitId === unitId).sort((a, b) => a.order - b.order);
-    let last: string | null = null;
-    for (const it of items) { if (it.type === 'concept') last = it.name; if (it._id === exId) return last; }
-    return last;
-  };
   // Check if student has entries for any later exercise in the same unit (implicit completion)
   const hasProgressedPast = (sid: string, unitId: string, exOrder: number): boolean => {
     if (!allExercises || !allEntries) return false;
@@ -502,24 +495,24 @@ export default function ScoreEntryPage() {
     return allExercises.filter(e => e.unitId === selectedUnitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
   }, [selectedUnitId, allExercises]);
   const selectedUnitName = useMemo(() => selectedUnitId ? (findUnit(selectedUnitId)?.unit.name || '') : '', [selectedUnitId]);
-  const currentConcept = useMemo(() => {
-    if (!selectedStudentId || !selectedUnitId || !allExercises || !allEntries) return null;
-    if (scoringExercise) return getConceptForExercise(scoringExercise._id, scoringExercise.unitId);
-    const exs = allExercises.filter(e => e.unitId === selectedUnitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
-    for (const ex of exs) {
-      const en = allEntries.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
-      if (!en) return getConceptForExercise(ex._id, selectedUnitId);
-      if (en.totalAttempted < ex.questionCount) {
-        const qs = en.questions as Record<string, string>;
-        const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
-        if (addressed < ex.questionCount && !hasProgressedPast(selectedStudentId, selectedUnitId, ex.order)) {
-          return getConceptForExercise(ex._id, selectedUnitId);
-        }
-      }
+  // Concepts surrounding the currently-selected scoring exercise (before = nearest concept above
+  // it in the unit's ordered item list; next = nearest concept below it). Both update whenever
+  // the selected exercise changes.
+  const exerciseConcepts = useMemo<{ before: string | null; next: string | null }>(() => {
+    if (!scoringExercise || !allExercises) return { before: null, next: null };
+    const items = allExercises.filter(e => e.unitId === scoringExercise.unitId).sort((a, b) => a.order - b.order);
+    const idx = items.findIndex(it => it._id === scoringExercise._id);
+    if (idx === -1) return { before: null, next: null };
+    let before: string | null = null;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (items[i].type === 'concept') { before = items[i].name; break; }
     }
-    return null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStudentId, selectedUnitId, scoringExercise, allExercises, allEntries]);
+    let next: string | null = null;
+    for (let i = idx + 1; i < items.length; i++) {
+      if (items[i].type === 'concept') { next = items[i].name; break; }
+    }
+    return { before, next };
+  }, [scoringExercise, allExercises]);
 
   const correctCount = Object.values(questionStates).filter(v => v === 'correct').length;
   const wrongCount = Object.values(questionStates).filter(v => v === 'wrong').length;
@@ -710,12 +703,12 @@ export default function ScoreEntryPage() {
       }
       return;
     }
-    // Cycle: unmarked → correct → wrong → skipped → correct → wrong → ...
+    // Cycle: unmarked → correct → wrong → skipped → unmarked → ...
     const cur = questionStates[key];
     const newVal = cur === 'unmarked' ? 'correct' as const
       : cur === 'correct' ? 'wrong' as const
       : cur === 'wrong' ? 'skipped' as const
-      : 'correct' as const;
+      : 'unmarked' as const;
     const newStates = { ...questionStates, [key]: newVal };
     setQuestionStates(newStates);
     liveSave(newStates);
@@ -1103,11 +1096,29 @@ export default function ScoreEntryPage() {
               <div>
                 {displayPos && (
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="flex gap-1 min-w-0">
+                    <div className="flex gap-1 min-w-0 flex-1 items-center">
                       {termUnits.map(unit => {
                         const num = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 2);
-                        return <button key={unit.id} onClick={() => { setSelectedUnitId(unit.id); autoSelectExerciseForUnit(unit.id, selectedStudentId!); }}
-                          className={`w-8 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 ${unit.id === selectedUnitId ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{num}</button>;
+                        const isSelected = unit.id === selectedUnitId;
+                        const displayName = unit.name.replace(/^\d+\.\s*/, '');
+                        return (
+                          <button
+                            key={unit.id}
+                            onClick={() => { setSelectedUnitId(unit.id); autoSelectExerciseForUnit(unit.id, selectedStudentId!); }}
+                            className={`shrink-0 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 flex items-center justify-center ${
+                              isSelected
+                                ? 'px-2.5 gap-1 bg-primary text-primary-foreground shadow-sm max-w-[160px]'
+                                : 'w-8 bg-muted text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {isSelected ? (
+                              <>
+                                <span className="shrink-0">{num}.</span>
+                                <span className="truncate">{displayName}</span>
+                              </>
+                            ) : num}
+                          </button>
+                        );
                       })}
                     </div>
                     <div className="flex items-center gap-1 ml-auto">
@@ -1145,38 +1156,72 @@ export default function ScoreEntryPage() {
                   </div>
                 )}
 
-                {selectedUnitId && up && up.total > 0 && (
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs font-medium text-foreground truncate flex-1 mr-2">{selectedUnitName}</p>
-                      <span className="text-[10px] text-muted-foreground shrink-0">{up.correctQ + up.wrongQ + up.skippedQ}/{up.totalQ}Q</span>
-                    </div>
-                    <div className="h-2.5 bg-muted rounded-full overflow-hidden flex">
-                      {up.exercises.map((exb, ei) => {
-                        const segW = up.totalQ > 0 ? (exb.qCount / up.totalQ) * 100 : 0;
-                        return (
-                          <div key={ei} className="h-full flex" style={{ width: `${segW}%` }}>
-                            {exb.correct > 0 && <div className="h-full bg-emerald-500" style={{ width: `${(exb.correct / exb.qCount) * 100}%` }} />}
-                            {exb.wrong > 0 && <div className="h-full bg-red-400" style={{ width: `${(exb.wrong / exb.qCount) * 100}%` }} />}
-                            {exb.skipped > 0 && <div className="h-full bg-emerald-300" style={{ width: `${(exb.skipped / exb.qCount) * 100}%` }} />}
+                {selectedUnitId && up && up.total > 0 && (() => {
+                  const totalScoreable = scoringExercise ? getTotalScoreable(scoringExercise.questionCount, scoringExercise.subQuestions) : 0;
+                  const markedCount = correctCount + wrongCount + skippedCount;
+                  const progressPct = totalScoreable > 0 ? Math.round((markedCount / totalScoreable) * 100) : 0;
+                  return (
+                    <div className="rounded-2xl bg-card border border-border/50 p-3 mb-3">
+                      {/* Top row: unit Q count + live scoring % + session points */}
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider tabular-nums">
+                          {up.correctQ + up.wrongQ + up.skippedQ}/{up.totalQ}Q
+                        </span>
+                        {scoringExercise && (
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-bold text-primary tabular-nums">{progressPct}%</span>
+                            <div className="flex items-center gap-1">
+                              <Zap className="w-3 h-3 text-primary" />
+                              <span className="text-[11px] font-bold text-primary tabular-nums">+{pointsThisEntry}</span>
+                            </div>
                           </div>
-                        );
-                      })}
+                        )}
+                      </div>
+                      {/* Unit progress bar (segmented by exercise) */}
+                      <div className="h-2.5 bg-muted rounded-full overflow-hidden flex">
+                        {up.exercises.map((exb, ei) => {
+                          const segW = up.totalQ > 0 ? (exb.qCount / up.totalQ) * 100 : 0;
+                          return (
+                            <div key={ei} className="h-full flex" style={{ width: `${segW}%` }}>
+                              {exb.correct > 0 && <div className="h-full bg-emerald-500" style={{ width: `${(exb.correct / exb.qCount) * 100}%` }} />}
+                              {exb.wrong > 0 && <div className="h-full bg-red-400" style={{ width: `${(exb.wrong / exb.qCount) * 100}%` }} />}
+                              {exb.skipped > 0 && <div className="h-full bg-emerald-300" style={{ width: `${(exb.skipped / exb.qCount) * 100}%` }} />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Color-dot legend — live counts for current exercise (falls back to unit counts when idle) */}
+                      <div className="flex items-center gap-3 mt-2">
+                        {scoringExercise ? (
+                          <>
+                            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{correctCount}</span>
+                            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-red-500 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{wrongCount}</span>
+                            {skippedCount > 0 && <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{skippedCount} skip</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-[10px] text-emerald-600 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{up.correctQ}</span>
+                            <span className="text-[10px] text-red-500 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{up.wrongQ}</span>
+                            {up.skippedQ > 0 && <span className="text-[10px] text-emerald-400 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{up.skippedQ} skip</span>}
+                          </>
+                        )}
+                        {dayCorrect > 0 && <span className="text-[10px] text-emerald-600 font-semibold ml-auto">{dayCorrect}✓ · {calculateDailyPoints(dayCorrect)} pts</span>}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px] text-emerald-600 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{up.correctQ}</span>
-                      <span className="text-[10px] text-red-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{up.wrongQ}</span>
-                      {up.skippedQ > 0 && <span className="text-[10px] text-emerald-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{up.skippedQ} skip</span>}
-                      {dayCorrect > 0 && <span className="text-[10px] text-emerald-600 font-semibold ml-auto">{dayCorrect}✓ · {calculateDailyPoints(dayCorrect)} pts</span>}
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
-                {currentConcept && (
-                  <button onClick={() => setConceptDrawerOpen(true)} className="flex items-center gap-2 bg-primary/10 rounded-xl px-3 py-2 mb-3 w-full text-left active:scale-[0.98] transition-transform">
-                    <BookOpen className="w-3.5 h-3.5 text-primary shrink-0" />
-                    <span className="text-xs font-medium text-primary truncate">Next: {currentConcept}</span>
-                    <ChevronRight className="w-3.5 h-3.5 text-primary/50 ml-auto shrink-0" />
+                {/* Before concept card — sits above the exercise grid row */}
+                {exerciseConcepts.before && (
+                  <button
+                    onClick={() => setConceptDrawerOpen(true)}
+                    className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2 mb-3 w-full text-left active:scale-[0.98] transition-transform"
+                    aria-label="View before concept"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider shrink-0">Before</span>
+                    <span className="text-xs font-medium text-foreground/80 truncate">{exerciseConcepts.before}</span>
+                    <BookOpen className="w-3.5 h-3.5 text-muted-foreground/60 ml-auto shrink-0" />
                   </button>
                 )}
 
@@ -1224,36 +1269,23 @@ export default function ScoreEntryPage() {
                 )}
 
                 {scoringExercise ? (() => {
-                  const totalScoreable = getTotalScoreable(scoringExercise.questionCount, scoringExercise.subQuestions);
-                  const unmarkedCount = Object.values(questionStates).filter(v => v === 'unmarked').length;
-                  const markedCount = correctCount + wrongCount + skippedCount;
-                  const progressPct = totalScoreable > 0 ? ((markedCount / totalScoreable) * 100) : 0;
                   const qGroups = groupByMainQuestion(scoringExercise.questionCount, scoringExercise.subQuestions);
                   const allKeys = generateQuestionKeys(scoringExercise.questionCount, scoringExercise.subQuestions);
                   return (
                     <div className="space-y-3">
-                      {/* Scoring progress strip */}
-                      <div className="rounded-2xl bg-card border border-border/50 p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{markedCount}/{totalScoreable} marked</span>
-                          <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
-                        </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden flex">
-                          {correctCount > 0 && <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${(correctCount / totalScoreable) * 100}%` }} />}
-                          {wrongCount > 0 && <div className="h-full bg-red-400 transition-all duration-300" style={{ width: `${(wrongCount / totalScoreable) * 100}%` }} />}
-                          {skippedCount > 0 && <div className="h-full bg-emerald-300 transition-all duration-300" style={{ width: `${(skippedCount / totalScoreable) * 100}%` }} />}
-                        </div>
-                        <div className="flex items-center gap-4 mt-2">
-                          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600"><span className="w-2 h-2 rounded-full bg-emerald-500" />{correctCount}</span>
-                          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-red-500"><span className="w-2 h-2 rounded-full bg-red-400" />{wrongCount}</span>
-                          {skippedCount > 0 && <span className="flex items-center gap-1.5 text-[11px] text-emerald-400"><span className="w-2 h-2 rounded-full bg-emerald-300" />{skippedCount}</span>}
-                          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><span className="w-2 h-2 rounded-full bg-muted-foreground/30" />{unmarkedCount}</span>
-                          <div className="ml-auto flex items-center gap-1">
-                            <Zap className="w-3 h-3 text-primary" />
-                            <span className="text-[11px] font-bold text-primary">+{pointsThisEntry}</span>
-                          </div>
-                        </div>
-                      </div>
+                      {/* Next concept card — relative to the selected exercise (sits below exercise grid) */}
+                      {exerciseConcepts.next && (
+                        <button
+                          onClick={() => setConceptDrawerOpen(true)}
+                          className="flex items-center gap-2 bg-primary/10 rounded-xl px-3 py-2 w-full text-left active:scale-[0.98] transition-transform"
+                          aria-label="View next concept"
+                        >
+                          <span className="text-[10px] font-bold text-primary uppercase tracking-wider shrink-0">Next</span>
+                          <span className="text-xs font-medium text-primary truncate">{exerciseConcepts.next}</span>
+                          <ChevronRight className="w-3.5 h-3.5 text-primary/60 ml-auto shrink-0" />
+                          <BookOpen className="w-3.5 h-3.5 text-primary/60 shrink-0" />
+                        </button>
+                      )}
 
                       {/* Question grid — chunked so expanded sub-groups break out into full-width panels */}
                       {(() => {
