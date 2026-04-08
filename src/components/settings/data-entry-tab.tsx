@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Plus, Trash2, BookOpen, Image as ImageIcon } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, BookOpen, Image as ImageIcon, List } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,6 +19,8 @@ import { getUnitsForBook } from '@/lib/curriculum-data';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
+import { SubQuestionDialog } from '@/components/sub-question-dialog';
+import type { SubQuestionsMap } from '@/lib/sub-questions';
 
 type Layer = 'exercises' | 'pages' | 'details';
 
@@ -44,6 +46,7 @@ export function DataEntryTab() {
   const updateQcMutation = useMutation(api.exercises.updateQuestionCount);
   const updatePageMutation = useMutation(api.exercises.updatePageNumber);
   const removeExMutation = useMutation(api.exercises.remove);
+  const setSubQuestionsMutation = useMutation(api.exercises.setSubQuestions);
 
   // === SELECTION STATE ===
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
@@ -64,6 +67,10 @@ export function DataEntryTab() {
   const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
+
+  // === Sub-question config dialog ===
+  const [subQDialogOpen, setSubQDialogOpen] = useState(false);
+  const [subQExercise, setSubQExercise] = useState<{ id: Id<"exercises">; questionCount: number; subQuestions: SubQuestionsMap | null } | null>(null);
 
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
@@ -368,6 +375,28 @@ export function DataEntryTab() {
                           className="w-12 h-7 text-xs text-center font-mono"
                           onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
                         />
+                        {item.questionCount > 0 && (
+                          <button
+                            onClick={() => {
+                              setSubQExercise({
+                                id: item._id,
+                                questionCount: item.questionCount,
+                                subQuestions: (item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null,
+                              });
+                              setSubQDialogOpen(true);
+                            }}
+                            className={`relative w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all shrink-0
+                              ${(item as { subQuestions?: SubQuestionsMap }).subQuestions ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}
+                            title="Sub-questions"
+                          >
+                            <List className="w-3.5 h-3.5" />
+                            {(item as { subQuestions?: SubQuestionsMap }).subQuestions && (
+                              <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[7px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
+                                {Object.keys((item as { subQuestions?: SubQuestionsMap }).subQuestions!).length}
+                              </span>
+                            )}
+                          </button>
+                        )}
                         <Input
                           key={`pg-${item._id}-${item.pageNumber}`}
                           type="number"
@@ -688,6 +717,20 @@ export function DataEntryTab() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Sub-question config dialog */}
+      {subQExercise && (
+        <SubQuestionDialog
+          open={subQDialogOpen}
+          onOpenChange={setSubQDialogOpen}
+          questionCount={subQExercise.questionCount}
+          subQuestions={subQExercise.subQuestions}
+          onSave={async (subQ) => {
+            await setSubQuestionsMutation({ id: subQExercise.id, subQuestions: subQ });
+            toast.success('Sub-questions saved');
+          }}
+        />
+      )}
     </>
   );
 }
