@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon } from 'lucide-react';
+import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon, X } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { PinchZoomArea } from '@/components/pinch-zoom-area';
 import { PositionDialog } from '@/components/position-dialog';
@@ -1255,87 +1255,125 @@ export default function ScoreEntryPage() {
                         </div>
                       </div>
 
-                      {/* Question grid — inline row flow */}
-                      <div className="grid grid-cols-5 gap-1.5">
-                        {qGroups.flatMap(group => {
-                          // Regular question (no sub-questions) — single cell
-                          if (!group.hasSubQuestions) {
-                            const item = group.items[0];
-                            const s = questionStates[item.key] || 'unmarked';
-                            return [(
-                              <button key={item.key} onClick={() => handleQuestionTap(item.key)}
-                                className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
-                                  ${s === 'correct'
-                                    ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
-                                    : s === 'wrong'
-                                      ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
-                                      : s === 'skipped'
-                                        ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
-                                        : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                                {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : group.mainQ}
-                              </button>
-                            )];
+                      {/* Question grid — chunked so expanded sub-groups break out into full-width panels */}
+                      {(() => {
+                        type Chunk =
+                          | { type: 'grid'; groups: typeof qGroups }
+                          | { type: 'expanded'; group: typeof qGroups[number] };
+                        const chunks: Chunk[] = [];
+                        let run: typeof qGroups = [];
+                        for (const g of qGroups) {
+                          const isExp = g.hasSubQuestions && expandedMainQ === g.mainQ;
+                          if (isExp) {
+                            if (run.length) { chunks.push({ type: 'grid', groups: run }); run = []; }
+                            chunks.push({ type: 'expanded', group: g });
+                          } else {
+                            run.push(g);
                           }
+                        }
+                        if (run.length) chunks.push({ type: 'grid', groups: run });
 
-                          const isExpanded = expandedMainQ === group.mainQ;
-
-                          // Expanded sub-question group: render sub-cells inline with ring-grouping
-                          if (isExpanded) {
-                            return group.items.map((item, idx) => {
-                              const s = questionStates[item.key] || 'unmarked';
-                              const isFirst = idx === 0;
+                        return (
+                          <div className="space-y-2">
+                            {chunks.map((chunk, ci) => {
+                              if (chunk.type === 'grid') {
+                                return (
+                                  <div key={`grid-${ci}`} className="grid grid-cols-5 gap-1.5">
+                                    {chunk.groups.map(group => {
+                                      // Regular single-question cell
+                                      if (!group.hasSubQuestions) {
+                                        const item = group.items[0];
+                                        const s = questionStates[item.key] || 'unmarked';
+                                        return (
+                                          <button key={item.key} onClick={() => handleQuestionTap(item.key)}
+                                            className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
+                                              ${s === 'correct'
+                                                ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                                : s === 'wrong'
+                                                  ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
+                                                  : s === 'skipped'
+                                                    ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
+                                                    : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                                            {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : group.mainQ}
+                                          </button>
+                                        );
+                                      }
+                                      // Collapsed sub-group expander — dashed pill, clearly NOT a scoring cell
+                                      const gs = getGroupStatus(group, questionStates);
+                                      const pillTone =
+                                        gs.status === 'perfect'
+                                          ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
+                                          : gs.status === 'has-errors'
+                                            ? 'bg-red-500/10 border-red-500/50 text-red-600 dark:text-red-400'
+                                            : gs.status === 'wip'
+                                              ? 'bg-amber-500/10 border-amber-500/50 text-amber-600 dark:text-amber-400'
+                                              : 'bg-primary/10 border-primary/50 text-primary';
+                                      return (
+                                        <button
+                                          key={`pill-${group.mainQ}`}
+                                          onClick={() => setExpandedMainQ(group.mainQ)}
+                                          className={`relative h-11 rounded-full border-2 border-dashed flex items-center justify-center gap-1 text-[11px] font-semibold active:scale-90 transition-all ${pillTone}`}
+                                          aria-label={`Expand question ${group.mainQ} with ${group.items.length} sub-questions`}
+                                        >
+                                          <span className="font-bold text-sm">Q{group.mainQ}</span>
+                                          <span className="opacity-40">·</span>
+                                          <span className="tabular-nums">{gs.done}/{gs.total}</span>
+                                          <ChevronDown className="w-3 h-3 opacity-70" />
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              }
+                              // Expanded sub-group panel (full-width breakout)
+                              const group = chunk.group;
+                              const gs = getGroupStatus(group, questionStates);
                               return (
-                                <button
-                                  key={item.key}
-                                  onClick={() => handleQuestionTap(item.key)}
-                                  onDoubleClick={() => setExpandedMainQ(null)}
-                                  className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90 ring-1 ring-primary/40
-                                    ${s === 'correct'
-                                      ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
-                                      : s === 'wrong'
-                                        ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
-                                        : s === 'skipped'
-                                          ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
-                                          : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                                  {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : (
-                                    <span className="inline-flex items-baseline gap-0.5">
-                                      <span className="text-[11px] opacity-70">{group.mainQ}</span>
-                                      <span>{item.label}</span>
-                                    </span>
-                                  )}
-                                  {isFirst && (
-                                    <span className="absolute -top-1 -left-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
-                                      {group.items.length}
-                                    </span>
-                                  )}
-                                </button>
+                                <div
+                                  key={`exp-${group.mainQ}`}
+                                  className="rounded-2xl bg-primary/5 border border-dashed border-primary/30 p-2.5"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-xs font-bold text-primary">Q{group.mainQ}</span>
+                                      <span className="text-[10px] text-muted-foreground">
+                                        · <span className="tabular-nums">{gs.done}/{gs.total}</span> subs
+                                      </span>
+                                    </div>
+                                    <button
+                                      onClick={() => setExpandedMainQ(null)}
+                                      className="w-6 h-6 rounded-lg bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center active:scale-90 transition-all"
+                                      aria-label="Collapse sub-questions"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {group.items.map(item => {
+                                      const s = questionStates[item.key] || 'unmarked';
+                                      return (
+                                        <button
+                                          key={item.key}
+                                          onClick={() => handleQuestionTap(item.key)}
+                                          className={`relative w-11 h-11 rounded-xl font-bold text-xs transition-all duration-150 active:scale-90
+                                            ${s === 'correct'
+                                              ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                              : s === 'wrong'
+                                                ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
+                                                : s === 'skipped'
+                                                  ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
+                                                  : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                                          {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : item.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               );
-                            });
-                          }
-
-                          // Collapsed sub-question group: one status cell
-                          const gs = getGroupStatus(group, questionStates);
-                          return [(
-                            <button
-                              key={group.mainQ}
-                              onClick={() => setExpandedMainQ(group.mainQ)}
-                              className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
-                                ${gs.status === 'perfect'
-                                  ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
-                                  : gs.status === 'has-errors'
-                                    ? 'bg-red-500/15 text-red-600 dark:bg-red-500/20 dark:text-red-300'
-                                    : gs.status === 'wip'
-                                      ? 'bg-amber-500/20 text-amber-700 dark:bg-amber-500/25 dark:text-amber-300'
-                                      : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
-                            >
-                              <span>{group.mainQ}</span>
-                              <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-foreground/80 text-[8px] font-bold text-background flex items-center justify-center px-0.5">
-                                {group.items.length}
-                              </span>
-                            </button>
-                          )];
-                        })}
-                      </div>
+                            })}
+                          </div>
+                        );
+                      })()}
 
                       {/* Quick actions */}
                       <div className="flex gap-1.5">
