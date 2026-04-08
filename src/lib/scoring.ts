@@ -153,11 +153,12 @@ function shouldSkipUnit(
 }
 
 // Check if an exercise entry is "done" — all questions addressed (correct, wrong, or skipped)
-function isEntryComplete(entry: { totalAttempted: number; questions?: Record<string, string> }, qCount: number): boolean {
-  if (entry.totalAttempted >= qCount) return true;
+function isEntryComplete(entry: { totalAttempted: number; questions?: Record<string, string> }, qCount: number, subQuestions?: SubQuestionsMap | null): boolean {
+  const effQ = getTotalScoreable(qCount, subQuestions);
+  if (entry.totalAttempted >= effQ) return true;
   if (entry.questions) {
     const addressed = Object.values(entry.questions).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
-    if (addressed >= qCount) return true;
+    if (addressed >= effQ) return true;
   }
   return false;
 }
@@ -198,7 +199,7 @@ export function getStudentUpcomingExercises(
       .sort((a, b) => a.order - b.order);
     for (const exercise of unitExercises) {
       const entry = studentModuleEntries.find(e => e.exerciseId === exercise._id);
-      if (!entry || !isEntryComplete(entry, exercise.questionCount)) {
+      if (!entry || !isEntryComplete(entry, exercise.questionCount, (exercise as ExerciseLike).subQuestions)) {
         // Implicit completion: skip if student has entries for later exercises
         const hasLater = !entry ? false : unitExercises.some(ex =>
           ex.order > exercise.order &&
@@ -243,7 +244,7 @@ export function getStudentUpcomingItems(
       const item = unitItems[i];
       if ((item.type || 'exercise') === 'concept') continue;
       const entry = studentModuleEntries.find(e => e.exerciseId === item._id);
-      if (!entry || !isEntryComplete(entry, item.questionCount)) {
+      if (!entry || !isEntryComplete(entry, item.questionCount, (item as ExerciseLike).subQuestions)) {
         // Implicit completion: skip if student has entries for later exercises
         const exerciseItems = unitItems.filter(x => (x.type || 'exercise') === 'exercise');
         const hasLater = !entry ? false : exerciseItems.some(ex =>
@@ -272,7 +273,7 @@ export function getStudentUpcomingItems(
       const isExercise = (item.type || 'exercise') === 'exercise';
       if (isExercise) {
         const entry = studentModuleEntries.find(e => e.exerciseId === item._id);
-        if (entry && isEntryComplete(entry, item.questionCount)) continue;
+        if (entry && isEntryComplete(entry, item.questionCount, (item as ExerciseLike).subQuestions)) continue;
         // Implicit completion: skip if student has entries for later exercises
         if (entry) {
           const exerciseItems = unitItems.filter(x => (x.type || 'exercise') === 'exercise');
@@ -315,7 +316,7 @@ export function getStudentNextExercise(
       if (!entry) {
         return { exerciseId: exercise._id, unitId: unit.id };
       }
-      if (!isEntryComplete(entry, exercise.questionCount)) {
+      if (!isEntryComplete(entry, exercise.questionCount, (exercise as ExerciseLike).subQuestions)) {
         // Implicit completion: if student has entries for later exercises, skip this one
         const hasLater = unitExercises.some(ex =>
           ex.order > exercise.order &&
@@ -331,8 +332,14 @@ export function getStudentNextExercise(
 
 // ─── Shared helpers for exercise progress (used by score-entry page & position dialog) ───
 
+import { getTotalScoreable, type SubQuestionsMap } from '@/lib/sub-questions';
+
 type EntryLike = { studentId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string> | unknown };
-type ExerciseLike = { _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string };
+type ExerciseLike = { _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string; subQuestions?: SubQuestionsMap | null };
+
+function getEffectiveQCount(ex: ExerciseLike): number {
+  return getTotalScoreable(ex.questionCount, ex.subQuestions);
+}
 
 export function hasProgressedPast(
   sid: string, unitId: string, exOrder: number,
@@ -347,13 +354,15 @@ export function hasProgressedPast(
 export function getExerciseStatus(
   sid: string, exId: string, qCount: number, unitId: string, exOrder: number,
   allEntries: EntryLike[], allExercises: ExerciseLike[],
+  subQuestions?: SubQuestionsMap | null,
 ): 'perfect' | 'skipped' | 'wip' | 'none' {
+  const effectiveCount = getTotalScoreable(qCount, subQuestions);
   const entry = allEntries.find(e => e.studentId === sid && e.exerciseId === exId);
   if (!entry) return 'none';
-  if (entry.totalAttempted >= qCount) return 'perfect';
+  if (entry.totalAttempted >= effectiveCount) return 'perfect';
   const qs = (entry.questions ?? {}) as Record<string, string>;
   const addressed = Object.values(qs).filter(v => v === 'correct' || v === 'wrong' || v === 'skipped').length;
-  if (addressed >= qCount) return 'skipped';
+  if (addressed >= effectiveCount) return 'skipped';
   if (hasProgressedPast(sid, unitId, exOrder, allEntries, allExercises)) return 'skipped';
   return 'wip';
 }
@@ -368,7 +377,8 @@ export function getUnitProgressData(
   let correctQ = 0, wrongQ = 0, skippedQ = 0, totalQ = 0;
   const exercises: ExerciseBreakdown[] = [];
   for (const ex of exs) {
-    totalQ += ex.questionCount;
+    const effQ = getEffectiveQCount(ex);
+    totalQ += effQ;
     const en = allEntries.find(e => e.studentId === sid && e.exerciseId === ex._id);
     let c = 0, w = 0, sk = 0;
     if (en) {
@@ -379,7 +389,7 @@ export function getUnitProgressData(
       if (w < 0) w = 0;
     }
     correctQ += c; wrongQ += w; skippedQ += sk;
-    exercises.push({ exId: ex._id, qCount: ex.questionCount, correct: c, wrong: w, skipped: sk, unanswered: ex.questionCount - c - w - sk });
+    exercises.push({ exId: ex._id, qCount: effQ, correct: c, wrong: w, skipped: sk, unanswered: effQ - c - w - sk });
   }
   return { total: exs.length, correctQ, wrongQ, skippedQ, totalQ, exercises };
 }
@@ -395,13 +405,14 @@ export function getExerciseDetails(
 }> {
   const exs = allExercises.filter(e => e.unitId === unitId && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
   return exs.map(ex => {
+    const effQ = getEffectiveQCount(ex);
     const entry = allEntries.find(e => e.studentId === sid && e.exerciseId === ex._id);
     const correct = entry?.correctCount ?? 0;
-    const percentage = ex.questionCount > 0 ? Math.round((correct / ex.questionCount) * 100) : 0;
+    const percentage = effQ > 0 ? Math.round((correct / effQ) * 100) : 0;
     const qs = ((entry?.questions ?? {}) as Record<string, string>);
     const skippedQ = Object.values(qs).filter(v => v === 'skipped').length;
     const wrong = entry ? entry.totalAttempted - entry.correctCount - skippedQ : 0;
-    const status = getExerciseStatus(sid, ex._id, ex.questionCount, unitId, ex.order, allEntries, allExercises);
-    return { exerciseId: ex._id, order: ex.order, name: ex.name, questionCount: ex.questionCount, status, percentage, hasWrong: wrong > 0 };
+    const status = getExerciseStatus(sid, ex._id, ex.questionCount, unitId, ex.order, allEntries, allExercises, ex.subQuestions);
+    return { exerciseId: ex._id, order: ex.order, name: ex.name, questionCount: effQ, status, percentage, hasWrong: wrong > 0 };
   });
 }

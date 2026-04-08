@@ -18,6 +18,7 @@ export default defineSchema({
     type: v.optional(v.string()), // "exercise" | "concept"
     pageNumber: v.optional(v.number()),
     pageNumberEnd: v.optional(v.number()),
+    subQuestions: v.optional(v.any()), // Record<string, { count: number, type: 'letter' | 'roman' }>
   }).index("by_unit", ["unitId"]),
 
   entries: defineTable({

@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { useActiveSlot } from '@/hooks/useActiveSlot';
 import type { Id } from '@/lib/convex';
+import { generateQuestionKeys, groupByMainQuestion, getGroupStatus, getTotalScoreable, type SubQuestionsMap } from '@/lib/sub-questions';
 
 // ─── Helpers ───
 const DAY_SHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -72,15 +73,19 @@ export default function ScoreEntryPage() {
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [scoringExercise, setScoringExercise] = useState<{
     _id: Id<"exercises">; unitId: string; name: string; questionCount: number; order: number; moduleId: string; pageNumber?: number; pageNumberEnd?: number;
+    subQuestions?: SubQuestionsMap | null;
   } | null>(null);
-  const [questionStates, setQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
+  const [questionStates, setQuestionStates] = useState<Record<string, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
   const [existingEntryId, setExistingEntryId] = useState<Id<"entries"> | null>(null);
-  const [initialQuestionStates, setInitialQuestionStates] = useState<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
+  const [initialQuestionStates, setInitialQuestionStates] = useState<Record<string, 'correct' | 'wrong' | 'skipped' | 'unmarked'>>({});
 
   // Live-save refs
   const liveEntryIdRef = useRef<Id<"entries"> | null>(null);
   const saveLockRef = useRef(false);
-  const pendingSaveRef = useRef<Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> | null>(null);
+  const pendingSaveRef = useRef<Record<string, 'correct' | 'wrong' | 'skipped' | 'unmarked'> | null>(null);
+
+  // Sub-question expand state (which main question is expanded, null = none)
+  const [expandedMainQ, setExpandedMainQ] = useState<number | null>(null);
 
   // Dialogs
   const [positionDialogOpen, setPositionDialogOpen] = useState(false);
@@ -390,7 +395,7 @@ export default function ScoreEntryPage() {
 
   const hasUnsavedChanges = useMemo(() => {
     if (!scoringExercise) return false;
-    for (const k of Object.keys(questionStates)) if (questionStates[Number(k)] !== initialQuestionStates[Number(k)]) return true;
+    for (const k of Object.keys(questionStates)) if (questionStates[k] !== initialQuestionStates[k]) return true;
     return false;
   }, [scoringExercise, questionStates, initialQuestionStates]);
 
@@ -613,23 +618,53 @@ export default function ScoreEntryPage() {
   };
 
   const setupScoring = (ex: NonNullable<typeof allExercises>[0], unitId: string, moduleId: string) => {
-    setScoringExercise({ _id: ex._id, unitId, name: ex.name, questionCount: ex.questionCount, order: ex.order, moduleId, pageNumber: ex.pageNumber, pageNumberEnd: ex.pageNumberEnd });
+    const subQ = (ex as { subQuestions?: SubQuestionsMap }).subQuestions ?? null;
+    setScoringExercise({ _id: ex._id, unitId, name: ex.name, questionCount: ex.questionCount, order: ex.order, moduleId, pageNumber: ex.pageNumber, pageNumberEnd: ex.pageNumberEnd, subQuestions: subQ });
+    const keys = generateQuestionKeys(ex.questionCount, subQ);
     const existing = todayEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id)
       ?? allEntries?.find(e => e.studentId === selectedStudentId && e.exerciseId === ex._id);
-    const st: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
+    const st: Record<string, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
     if (existing) {
       setExistingEntryId(existing._id);
       liveEntryIdRef.current = existing._id;
-      for (let i = 1; i <= ex.questionCount; i++) {
-        const v = existing.questions[String(i)];
-        st[i] = (v === 'correct' || v === 'wrong' || v === 'skipped') ? v : 'unmarked';
+      for (const key of keys) {
+        const v = existing.questions[key];
+        st[key] = (v === 'correct' || v === 'wrong' || v === 'skipped') ? v : 'unmarked';
       }
-    } else { setExistingEntryId(null); liveEntryIdRef.current = null; for (let i = 1; i <= ex.questionCount; i++) st[i] = 'unmarked'; }
+    } else { setExistingEntryId(null); liveEntryIdRef.current = null; for (const key of keys) st[key] = 'unmarked'; }
     setQuestionStates(st); setInitialQuestionStates({ ...st });
+    setExpandedMainQ(null);
     saveLockRef.current = false; pendingSaveRef.current = null;
   };
+
+  // Auto-expand next unscored sub-question group.
+  // Rules:
+  //   - On new exercise: expand the first incomplete sub-group (if any).
+  //   - When currently expanded group is fully scored: auto-advance to the next incomplete sub-group.
+  //   - While current expanded group is still in progress, don't override the user's manual choice.
+  useEffect(() => {
+    if (!scoringExercise) return;
+    const groups = groupByMainQuestion(scoringExercise.questionCount, scoringExercise.subQuestions);
+    const subGroups = groups.filter(g => g.hasSubQuestions);
+    if (subGroups.length === 0) return;
+
+    const isComplete = (g: typeof subGroups[0]) => g.items.every(it => {
+      const s = questionStates[it.key];
+      return s === 'correct' || s === 'wrong' || s === 'skipped';
+    });
+
+    setExpandedMainQ(prev => {
+      const cur = prev !== null ? subGroups.find(g => g.mainQ === prev) ?? null : null;
+      // If a current group exists and is not yet complete, keep user's choice.
+      if (cur && !isComplete(cur)) return prev;
+      // Otherwise find the next incomplete group (or null if all done).
+      const next = subGroups.find(g => !isComplete(g));
+      return next ? next.mainQ : null;
+    });
+  }, [scoringExercise, questionStates]);
+
   // Live-save: persists question states to DB immediately
-  const liveSave = async (states: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'>) => {
+  const liveSave = async (states: Record<string, 'correct' | 'wrong' | 'skipped' | 'unmarked'>) => {
     if (!selectedStudentId || !scoringExercise) return;
     if (saveLockRef.current) { pendingSaveRef.current = states; return; }
     saveLockRef.current = true;
@@ -665,7 +700,7 @@ export default function ScoreEntryPage() {
   };
 
   // Guarded question tap: checks blocking + absent, then toggles + live-saves
-  const handleQuestionTap = (q: number) => {
+  const handleQuestionTap = (key: string) => {
     if (oldestUnsubmitted) { setBlockingDialogOpen(true); return; }
     if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
       if (sessionLifecycle === 'live') {
@@ -675,9 +710,13 @@ export default function ScoreEntryPage() {
       }
       return;
     }
-    if (questionStates[q] === 'skipped') return;
-    const newVal = questionStates[q] === 'unmarked' ? 'correct' as const : questionStates[q] === 'correct' ? 'wrong' as const : 'unmarked' as const;
-    const newStates = { ...questionStates, [q]: newVal };
+    // Cycle: unmarked → correct → wrong → skipped → correct → wrong → ...
+    const cur = questionStates[key];
+    const newVal = cur === 'unmarked' ? 'correct' as const
+      : cur === 'correct' ? 'wrong' as const
+      : cur === 'wrong' ? 'skipped' as const
+      : 'correct' as const;
+    const newStates = { ...questionStates, [key]: newVal };
     setQuestionStates(newStates);
     liveSave(newStates);
   };
@@ -793,8 +832,9 @@ export default function ScoreEntryPage() {
     const finishExercise = scoringExercise;
 
     const finalStates = { ...questionStates };
-    for (let i = 1; i <= finishExercise.questionCount; i++) {
-      if (finalStates[i] === 'unmarked') finalStates[i] = 'skipped';
+    const finishKeys = generateQuestionKeys(finishExercise.questionCount, finishExercise.subQuestions);
+    for (const key of finishKeys) {
+      if (finalStates[key] === 'unmarked') finalStates[key] = 'skipped';
     }
     setQuestionStates(finalStates);
 
@@ -1184,21 +1224,24 @@ export default function ScoreEntryPage() {
                 )}
 
                 {scoringExercise ? (() => {
+                  const totalScoreable = getTotalScoreable(scoringExercise.questionCount, scoringExercise.subQuestions);
                   const unmarkedCount = Object.values(questionStates).filter(v => v === 'unmarked').length;
                   const markedCount = correctCount + wrongCount + skippedCount;
-                  const progressPct = scoringExercise.questionCount > 0 ? ((markedCount / scoringExercise.questionCount) * 100) : 0;
+                  const progressPct = totalScoreable > 0 ? ((markedCount / totalScoreable) * 100) : 0;
+                  const qGroups = groupByMainQuestion(scoringExercise.questionCount, scoringExercise.subQuestions);
+                  const allKeys = generateQuestionKeys(scoringExercise.questionCount, scoringExercise.subQuestions);
                   return (
                     <div className="space-y-3">
                       {/* Scoring progress strip */}
                       <div className="rounded-2xl bg-card border border-border/50 p-3">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{markedCount}/{scoringExercise.questionCount} marked</span>
+                          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{markedCount}/{totalScoreable} marked</span>
                           <span className="text-[10px] font-bold text-primary">{Math.round(progressPct)}%</span>
                         </div>
                         <div className="h-1.5 bg-muted rounded-full overflow-hidden flex">
-                          {correctCount > 0 && <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${(correctCount / scoringExercise.questionCount) * 100}%` }} />}
-                          {wrongCount > 0 && <div className="h-full bg-red-400 transition-all duration-300" style={{ width: `${(wrongCount / scoringExercise.questionCount) * 100}%` }} />}
-                          {skippedCount > 0 && <div className="h-full bg-emerald-300 transition-all duration-300" style={{ width: `${(skippedCount / scoringExercise.questionCount) * 100}%` }} />}
+                          {correctCount > 0 && <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${(correctCount / totalScoreable) * 100}%` }} />}
+                          {wrongCount > 0 && <div className="h-full bg-red-400 transition-all duration-300" style={{ width: `${(wrongCount / totalScoreable) * 100}%` }} />}
+                          {skippedCount > 0 && <div className="h-full bg-emerald-300 transition-all duration-300" style={{ width: `${(skippedCount / totalScoreable) * 100}%` }} />}
                         </div>
                         <div className="flex items-center gap-4 mt-2">
                           <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600"><span className="w-2 h-2 rounded-full bg-emerald-500" />{correctCount}</span>
@@ -1212,23 +1255,85 @@ export default function ScoreEntryPage() {
                         </div>
                       </div>
 
-                      {/* Question grid */}
+                      {/* Question grid — inline row flow */}
                       <div className="grid grid-cols-5 gap-1.5">
-                        {Array.from({ length: scoringExercise.questionCount }, (_, i) => {
-                          const q = i + 1, s = questionStates[q] || 'unmarked';
-                          return (
-                            <button key={q} onClick={() => handleQuestionTap(q)}
+                        {qGroups.flatMap(group => {
+                          // Regular question (no sub-questions) — single cell
+                          if (!group.hasSubQuestions) {
+                            const item = group.items[0];
+                            const s = questionStates[item.key] || 'unmarked';
+                            return [(
+                              <button key={item.key} onClick={() => handleQuestionTap(item.key)}
+                                className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
+                                  ${s === 'correct'
+                                    ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                    : s === 'wrong'
+                                      ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
+                                      : s === 'skipped'
+                                        ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
+                                        : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                                {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : group.mainQ}
+                              </button>
+                            )];
+                          }
+
+                          const isExpanded = expandedMainQ === group.mainQ;
+
+                          // Expanded sub-question group: render sub-cells inline with ring-grouping
+                          if (isExpanded) {
+                            return group.items.map((item, idx) => {
+                              const s = questionStates[item.key] || 'unmarked';
+                              const isFirst = idx === 0;
+                              return (
+                                <button
+                                  key={item.key}
+                                  onClick={() => handleQuestionTap(item.key)}
+                                  onDoubleClick={() => setExpandedMainQ(null)}
+                                  className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90 ring-1 ring-primary/40
+                                    ${s === 'correct'
+                                      ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                      : s === 'wrong'
+                                        ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
+                                        : s === 'skipped'
+                                          ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
+                                          : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
+                                  {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : (
+                                    <span className="inline-flex items-baseline gap-0.5">
+                                      <span className="text-[11px] opacity-70">{group.mainQ}</span>
+                                      <span>{item.label}</span>
+                                    </span>
+                                  )}
+                                  {isFirst && (
+                                    <span className="absolute -top-1 -left-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
+                                      {group.items.length}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            });
+                          }
+
+                          // Collapsed sub-question group: one status cell
+                          const gs = getGroupStatus(group, questionStates);
+                          return [(
+                            <button
+                              key={group.mainQ}
+                              onClick={() => setExpandedMainQ(group.mainQ)}
                               className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
-                                ${s === 'correct'
+                                ${gs.status === 'perfect'
                                   ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
-                                  : s === 'wrong'
-                                    ? 'bg-red-500/90 text-white shadow-sm shadow-red-500/20'
-                                    : s === 'skipped'
-                                      ? 'bg-emerald-200 text-emerald-600 dark:bg-emerald-400/20 dark:text-emerald-300'
-                                      : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
-                              {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : q}
+                                  : gs.status === 'has-errors'
+                                    ? 'bg-red-500/15 text-red-600 dark:bg-red-500/20 dark:text-red-300'
+                                    : gs.status === 'wip'
+                                      ? 'bg-amber-500/20 text-amber-700 dark:bg-amber-500/25 dark:text-amber-300'
+                                      : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+                            >
+                              <span>{group.mainQ}</span>
+                              <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-foreground/80 text-[8px] font-bold text-background flex items-center justify-center px-0.5">
+                                {group.items.length}
+                              </span>
                             </button>
-                          );
+                          )];
                         })}
                       </div>
 
@@ -1239,8 +1344,8 @@ export default function ScoreEntryPage() {
                           if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
                             setAbsentStudentDialog({ studentId: selectedStudentId, type: sessionLifecycle === 'live' ? 'live' : 'future' }); return;
                           }
-                          const s: Record<number, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
-                          for (let i = 1; i <= scoringExercise.questionCount; i++) s[i] = questionStates[i] === 'skipped' ? 'skipped' : 'correct';
+                          const s: Record<string, 'correct' | 'wrong' | 'skipped' | 'unmarked'> = {};
+                          for (const key of allKeys) s[key] = questionStates[key] === 'skipped' ? 'skipped' : 'correct';
                           setQuestionStates(s); liveSave(s);
                         }}
                           className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 active:scale-95 transition-all">
@@ -1251,7 +1356,7 @@ export default function ScoreEntryPage() {
                           if (selectedStudentId && !presentStudentIds.has(selectedStudentId)) {
                             setAbsentStudentDialog({ studentId: selectedStudentId, type: sessionLifecycle === 'live' ? 'live' : 'future' }); return;
                           }
-                          const n = { ...questionStates }; for (let i = 1; i <= scoringExercise.questionCount; i++) { if (n[i] === 'unmarked') n[i] = 'correct'; }
+                          const n = { ...questionStates }; for (const key of allKeys) { if (n[key] === 'unmarked') n[key] = 'correct'; }
                           setQuestionStates(n); liveSave(n);
                         }}
                           className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-xl text-[11px] font-semibold bg-muted text-muted-foreground hover:text-foreground active:scale-95 transition-all">

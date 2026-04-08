@@ -5,6 +5,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { CURRICULUM_MODULES, getOrderedUnits, getModuleById } from '@/lib/curriculum-data';
 import { getStudentNextExercise, getExerciseDetails, type PositionOptions } from '@/lib/scoring';
+import { getTotalScoreable } from '@/lib/sub-questions';
 import { X, RotateCcw, Layers, ArrowDownNarrowWide } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
@@ -12,7 +13,7 @@ import type { Id } from '@/lib/convex';
 // ─── Types ───
 
 type EntryLike = { studentId: string; moduleId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string>; _id?: string };
-type ExerciseLike = { _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string; pageNumber?: number; moduleId?: string };
+type ExerciseLike = { _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string; pageNumber?: number; moduleId?: string; subQuestions?: Record<string, { count: number; type: 'letter' | 'roman' }> | null };
 type PositionLike = { studentId: string; moduleId: string; grade: number; term: number };
 type StudentLike = { _id: Id<"students">; name: string; schoolGrade: number; badgeColor?: string };
 
@@ -123,7 +124,8 @@ export function PositionDialog({
         for (const ex of exs) {
           total++;
           const entry = allEntries.find(e => e.studentId === activeStudentId && e.exerciseId === ex._id);
-          if (entry && entry.totalAttempted >= ex.questionCount) completed++;
+          const effQ = getTotalScoreable(ex.questionCount, ex.subQuestions);
+            if (entry && entry.totalAttempted >= effQ) completed++;
         }
       }
       return { moduleId: mod.id, color: mod.color, name: mod.name, total, completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 };

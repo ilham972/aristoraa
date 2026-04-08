@@ -188,6 +188,18 @@ export const trimToCount = mutation({
   },
 });
 
+export const setSubQuestions = mutation({
+  args: {
+    id: v.id("exercises"),
+    subQuestions: v.any(), // Record<string, { count: number, type: 'letter' | 'roman' }> or null to clear
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await ctx.db.patch(args.id, { subQuestions: args.subQuestions || undefined });
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("exercises") },
   handler: async (ctx, args) => {
