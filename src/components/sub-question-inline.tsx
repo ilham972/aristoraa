@@ -34,20 +34,24 @@ export function SubQuestionInline({ questionCount, subQuestions, onSave }: Props
     return Object.keys(m).length > 0 ? m : null;
   };
 
-  const handleTypeToggle = (q: number) => {
+  const handleTypeToggle = async (q: number) => {
     const k = String(q);
     const next: 'letter' | 'roman' = getType(q) === 'roman' ? 'letter' : 'roman';
     if (subQuestions?.[k]) {
       const m = buildMap(map => {
         map[k] = { ...map[k], type: next };
       });
-      onSave(m);
+      try {
+        await onSave(m);
+      } catch (err) {
+        console.error('[sub-question] type toggle save failed', err);
+      }
     } else {
       setPendingTypes(p => ({ ...p, [k]: next }));
     }
   };
 
-  const handleCountSelect = (q: number, count: number) => {
+  const handleCountSelect = async (q: number, count: number) => {
     const k = String(q);
     const type = getType(q);
     const m = buildMap(map => {
@@ -64,8 +68,14 @@ export function SubQuestionInline({ questionCount, subQuestions, onSave }: Props
         return n;
       });
     }
-    onSave(m);
     setPickerForQ(null);
+    try {
+      console.log('[sub-question] saving', { q, count, type, payload: m });
+      await onSave(m);
+      console.log('[sub-question] save complete', m);
+    } catch (err) {
+      console.error('[sub-question] count save failed', err);
+    }
   };
 
   return (

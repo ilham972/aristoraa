@@ -430,7 +430,15 @@ export default function CurriculumPage() {
                                 questionCount={item.questionCount}
                                 subQuestions={(item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null}
                                 onSave={async (subQ) => {
-                                  await setSubQuestionsMutation({ id: item._id, subQuestions: subQ });
+                                  try {
+                                    await setSubQuestionsMutation({ id: item._id, subQuestions: subQ });
+                                  } catch (err) {
+                                    console.error('[setSubQuestions] failed', err);
+                                    toast.error(
+                                      err instanceof Error ? err.message : 'Failed to save sub-questions',
+                                    );
+                                    throw err;
+                                  }
                                 }}
                               />
                             )}
