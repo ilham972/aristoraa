@@ -536,6 +536,20 @@ export function DataEntryTab() {
             )}
           </DrawerContent>
         </Drawer>
+
+        {/* Sub-question config dialog */}
+        {subQExercise && (
+          <SubQuestionDialog
+            open={subQDialogOpen}
+            onOpenChange={setSubQDialogOpen}
+            questionCount={subQExercise.questionCount}
+            subQuestions={subQExercise.subQuestions}
+            onSave={async (subQ) => {
+              await setSubQuestionsMutation({ id: subQExercise.id, subQuestions: subQ });
+              toast.success('Sub-questions saved');
+            }}
+          />
+        )}
       </>
     );
   }
@@ -717,20 +731,6 @@ export function DataEntryTab() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Sub-question config dialog */}
-      {subQExercise && (
-        <SubQuestionDialog
-          open={subQDialogOpen}
-          onOpenChange={setSubQDialogOpen}
-          questionCount={subQExercise.questionCount}
-          subQuestions={subQExercise.subQuestions}
-          onSave={async (subQ) => {
-            await setSubQuestionsMutation({ id: subQExercise.id, subQuestions: subQ });
-            toast.success('Sub-questions saved');
-          }}
-        />
-      )}
     </>
   );
 }
