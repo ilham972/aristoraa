@@ -14,7 +14,7 @@ import { CurriculumModule } from '@/lib/types';
 import { api } from '@/lib/convex';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
-import { SubQuestionDialog } from '@/components/sub-question-dialog';
+import { SubQuestionInline } from '@/components/sub-question-inline';
 import type { SubQuestionsMap } from '@/lib/sub-questions';
 
 type ViewLevel = 'modules' | 'grades' | 'terms' | 'units' | 'exercises';
@@ -56,9 +56,8 @@ export default function CurriculumPage() {
   const [addMoreOpen, setAddMoreOpen] = useState(false);
   const [addMoreNum, setAddMoreNum] = useState('');
 
-  // Sub-question dialog state
-  const [subQDialogOpen, setSubQDialogOpen] = useState(false);
-  const [subQExercise, setSubQExercise] = useState<{ id: Id<"exercises">; questionCount: number; subQuestions: SubQuestionsMap | null } | null>(null);
+  // Sub-question inline expansion
+  const [expandedSubQId, setExpandedSubQId] = useState<Id<"exercises"> | null>(null);
 
   const allExercises = useQuery(api.exercises.list);
   const bulkAddMutation = useMutation(api.exercises.bulkAdd);
@@ -379,48 +378,62 @@ export default function CurriculumPage() {
                       ) : (
                         /* Exercise row */
                         <Card className="border-border/50 my-0.5">
-                          <CardContent className="p-2.5 flex items-center gap-2">
-                            <span className="text-sm font-mono font-medium text-foreground w-12 shrink-0">
-                              {item.name}
-                            </span>
-                            {item.name.endsWith('.0') && (
-                              <Badge variant="secondary" className="text-[10px] shrink-0">Review</Badge>
-                            )}
-                            <div className="flex-1" />
-                            <Input
-                              key={`${item._id}-${item.questionCount}`}
-                              type="number"
-                              min={1}
-                              defaultValue={item.questionCount || ''}
-                              placeholder="Qs"
-                              className="w-16 h-8 text-sm text-center font-mono"
-                              onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
-                            />
-                            <span className="text-[11px] text-muted-foreground shrink-0">qs</span>
-                            {item.questionCount > 0 && (
+                          <CardContent className="p-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-mono font-medium text-foreground w-12 shrink-0">
+                                {item.name}
+                              </span>
+                              {item.name.endsWith('.0') && (
+                                <Badge variant="secondary" className="text-[10px] shrink-0">Review</Badge>
+                              )}
+                              <div className="flex-1" />
+                              <Input
+                                key={`${item._id}-${item.questionCount}`}
+                                type="number"
+                                min={1}
+                                defaultValue={item.questionCount || ''}
+                                placeholder="Qs"
+                                className="w-16 h-8 text-sm text-center font-mono"
+                                onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
+                              />
+                              <span className="text-[11px] text-muted-foreground shrink-0">qs</span>
+                              {item.questionCount > 0 && (
+                                <button
+                                  onClick={() =>
+                                    setExpandedSubQId(prev => (prev === item._id ? null : item._id))
+                                  }
+                                  className={`relative w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all
+                                    ${expandedSubQId === item._id
+                                      ? 'bg-primary text-primary-foreground'
+                                      : (item as { subQuestions?: SubQuestionsMap }).subQuestions
+                                        ? 'bg-primary/15 text-primary'
+                                        : 'bg-muted text-muted-foreground'}`}
+                                  title="Sub-questions"
+                                >
+                                  <List className="w-3.5 h-3.5" />
+                                  {(item as { subQuestions?: SubQuestionsMap }).subQuestions && expandedSubQId !== item._id && (
+                                    <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[7px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
+                                      {Object.keys((item as { subQuestions?: SubQuestionsMap }).subQuestions!).length}
+                                    </span>
+                                  )}
+                                </button>
+                              )}
                               <button
-                                onClick={() => {
-                                  setSubQExercise({ id: item._id, questionCount: item.questionCount, subQuestions: (item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null });
-                                  setSubQDialogOpen(true);
-                                }}
-                                className={`relative w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all
-                                  ${(item as { subQuestions?: SubQuestionsMap }).subQuestions ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}
-                                title="Sub-questions"
+                                onClick={() => handleDelete(item._id)}
+                                className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                               >
-                                <List className="w-3.5 h-3.5" />
-                                {(item as { subQuestions?: SubQuestionsMap }).subQuestions && (
-                                  <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[7px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
-                                    {Object.keys((item as { subQuestions?: SubQuestionsMap }).subQuestions!).length}
-                                  </span>
-                                )}
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
+                            </div>
+                            {expandedSubQId === item._id && item.questionCount > 0 && (
+                              <SubQuestionInline
+                                questionCount={item.questionCount}
+                                subQuestions={(item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null}
+                                onSave={async (subQ) => {
+                                  await setSubQuestionsMutation({ id: item._id, subQuestions: subQ });
+                                }}
+                              />
                             )}
-                            <button
-                              onClick={() => handleDelete(item._id)}
-                              className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
                           </CardContent>
                         </Card>
                       )}
@@ -498,19 +511,6 @@ export default function CurriculumPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Sub-question config dialog */}
-      {subQExercise && (
-        <SubQuestionDialog
-          open={subQDialogOpen}
-          onOpenChange={setSubQDialogOpen}
-          questionCount={subQExercise.questionCount}
-          subQuestions={subQExercise.subQuestions}
-          onSave={async (subQ) => {
-            await setSubQuestionsMutation({ id: subQExercise.id, subQuestions: subQ });
-            toast.success('Sub-questions saved');
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -19,7 +19,7 @@ import { getUnitsForBook } from '@/lib/curriculum-data';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
-import { SubQuestionDialog } from '@/components/sub-question-dialog';
+import { SubQuestionInline } from '@/components/sub-question-inline';
 import type { SubQuestionsMap } from '@/lib/sub-questions';
 
 type Layer = 'exercises' | 'pages' | 'details';
@@ -68,9 +68,8 @@ export function DataEntryTab() {
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
 
-  // === Sub-question config dialog ===
-  const [subQDialogOpen, setSubQDialogOpen] = useState(false);
-  const [subQExercise, setSubQExercise] = useState<{ id: Id<"exercises">; questionCount: number; subQuestions: SubQuestionsMap | null } | null>(null);
+  // === Sub-question inline expansion ===
+  const [expandedSubQId, setExpandedSubQId] = useState<Id<'exercises'> | null>(null);
 
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
@@ -356,92 +355,102 @@ export function DataEntryTab() {
                     </div>
                   ) : (
                     <Card className="border-border/50 my-0.5">
-                      <CardContent className="p-2.5 flex items-center gap-2">
-                        <span className="text-sm font-mono font-medium text-foreground w-10 shrink-0">
-                          {item.name}
-                        </span>
-                        {item.name.endsWith('.0') && (
-                          <Badge variant="secondary" className="text-[10px] shrink-0">
-                            Rev
-                          </Badge>
-                        )}
-                        <div className="flex-1" />
-                        <Input
-                          key={`qc-${item._id}-${item.questionCount}`}
-                          type="number"
-                          min={0}
-                          defaultValue={item.questionCount || ''}
-                          placeholder="Qs"
-                          className="w-12 h-7 text-xs text-center font-mono"
-                          onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
-                        />
-                        {item.questionCount > 0 && (
-                          <button
-                            onClick={() => {
-                              setSubQExercise({
-                                id: item._id,
-                                questionCount: item.questionCount,
-                                subQuestions: (item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null,
-                              });
-                              setSubQDialogOpen(true);
+                      <CardContent className="p-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-mono font-medium text-foreground w-10 shrink-0">
+                            {item.name}
+                          </span>
+                          {item.name.endsWith('.0') && (
+                            <Badge variant="secondary" className="text-[10px] shrink-0">
+                              Rev
+                            </Badge>
+                          )}
+                          <div className="flex-1" />
+                          <Input
+                            key={`qc-${item._id}-${item.questionCount}`}
+                            type="number"
+                            min={0}
+                            defaultValue={item.questionCount || ''}
+                            placeholder="Qs"
+                            className="w-12 h-7 text-xs text-center font-mono"
+                            onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
+                          />
+                          {item.questionCount > 0 && (
+                            <button
+                              onClick={() =>
+                                setExpandedSubQId(prev => (prev === item._id ? null : item._id))
+                              }
+                              className={`relative w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all shrink-0
+                                ${expandedSubQId === item._id
+                                  ? 'bg-primary text-primary-foreground'
+                                  : (item as { subQuestions?: SubQuestionsMap }).subQuestions
+                                    ? 'bg-primary/15 text-primary'
+                                    : 'bg-muted text-muted-foreground'}`}
+                              title="Sub-questions"
+                            >
+                              <List className="w-3.5 h-3.5" />
+                              {(item as { subQuestions?: SubQuestionsMap }).subQuestions && expandedSubQId !== item._id && (
+                                <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[7px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
+                                  {Object.keys((item as { subQuestions?: SubQuestionsMap }).subQuestions!).length}
+                                </span>
+                              )}
+                            </button>
+                          )}
+                          <Input
+                            key={`pg-${item._id}-${item.pageNumber}`}
+                            type="number"
+                            min={1}
+                            defaultValue={item.pageNumber || ''}
+                            placeholder="fr"
+                            className="w-11 h-7 text-xs text-center font-mono px-1"
+                            onBlur={e => {
+                              const endEl = e.target
+                                .closest('div')
+                                ?.querySelector<HTMLInputElement>(`[data-pgend="${item._id}"]`);
+                              handleItemPageBlur(
+                                item._id,
+                                item.pageNumber,
+                                item.pageNumberEnd,
+                                e.target.value,
+                                endEl?.value || '',
+                              );
                             }}
-                            className={`relative w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all shrink-0
-                              ${(item as { subQuestions?: SubQuestionsMap }).subQuestions ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}
-                            title="Sub-questions"
+                          />
+                          <span className="text-[10px] text-muted-foreground">-</span>
+                          <Input
+                            key={`pge-${item._id}-${item.pageNumberEnd}`}
+                            data-pgend={item._id}
+                            type="number"
+                            min={1}
+                            defaultValue={item.pageNumberEnd || ''}
+                            placeholder="to"
+                            className="w-11 h-7 text-xs text-center font-mono px-1"
+                            onBlur={e => {
+                              handleItemPageBlur(
+                                item._id,
+                                item.pageNumber,
+                                item.pageNumberEnd,
+                                String(item.pageNumber || ''),
+                                e.target.value,
+                              );
+                            }}
+                          />
+                          <button
+                            onClick={() => handleDeleteItem(item._id)}
+                            className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                           >
-                            <List className="w-3.5 h-3.5" />
-                            {(item as { subQuestions?: SubQuestionsMap }).subQuestions && (
-                              <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[7px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
-                                {Object.keys((item as { subQuestions?: SubQuestionsMap }).subQuestions!).length}
-                              </span>
-                            )}
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                        </div>
+                        {expandedSubQId === item._id && item.questionCount > 0 && (
+                          <SubQuestionInline
+                            questionCount={item.questionCount}
+                            subQuestions={(item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null}
+                            onSave={async (subQ) => {
+                              await setSubQuestionsMutation({ id: item._id, subQuestions: subQ });
+                            }}
+                          />
                         )}
-                        <Input
-                          key={`pg-${item._id}-${item.pageNumber}`}
-                          type="number"
-                          min={1}
-                          defaultValue={item.pageNumber || ''}
-                          placeholder="fr"
-                          className="w-11 h-7 text-xs text-center font-mono px-1"
-                          onBlur={e => {
-                            const endEl = e.target
-                              .closest('div')
-                              ?.querySelector<HTMLInputElement>(`[data-pgend="${item._id}"]`);
-                            handleItemPageBlur(
-                              item._id,
-                              item.pageNumber,
-                              item.pageNumberEnd,
-                              e.target.value,
-                              endEl?.value || '',
-                            );
-                          }}
-                        />
-                        <span className="text-[10px] text-muted-foreground">-</span>
-                        <Input
-                          key={`pge-${item._id}-${item.pageNumberEnd}`}
-                          data-pgend={item._id}
-                          type="number"
-                          min={1}
-                          defaultValue={item.pageNumberEnd || ''}
-                          placeholder="to"
-                          className="w-11 h-7 text-xs text-center font-mono px-1"
-                          onBlur={e => {
-                            handleItemPageBlur(
-                              item._id,
-                              item.pageNumber,
-                              item.pageNumberEnd,
-                              String(item.pageNumber || ''),
-                              e.target.value,
-                            );
-                          }}
-                        />
-                        <button
-                          onClick={() => handleDeleteItem(item._id)}
-                          className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </CardContent>
                     </Card>
                   )}
@@ -537,19 +546,6 @@ export function DataEntryTab() {
           </DrawerContent>
         </Drawer>
 
-        {/* Sub-question config dialog */}
-        {subQExercise && (
-          <SubQuestionDialog
-            open={subQDialogOpen}
-            onOpenChange={setSubQDialogOpen}
-            questionCount={subQExercise.questionCount}
-            subQuestions={subQExercise.subQuestions}
-            onSave={async (subQ) => {
-              await setSubQuestionsMutation({ id: subQExercise.id, subQuestions: subQ });
-              toast.success('Sub-questions saved');
-            }}
-          />
-        )}
       </>
     );
   }
