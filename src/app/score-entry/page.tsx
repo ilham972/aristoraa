@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon, X } from 'lucide-react';
+import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon, X, Lightbulb, SlidersHorizontal } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { PinchZoomArea } from '@/components/pinch-zoom-area';
 import { PositionDialog } from '@/components/position-dialog';
@@ -498,18 +498,25 @@ export default function ScoreEntryPage() {
   // Concepts surrounding the currently-selected scoring exercise (before = nearest concept above
   // it in the unit's ordered item list; next = nearest concept below it). Both update whenever
   // the selected exercise changes.
-  const exerciseConcepts = useMemo<{ before: string | null; next: string | null }>(() => {
+  type ConceptInfo = { name: string; pageNumber?: number; pageNumberEnd?: number; unitId: string };
+  const exerciseConcepts = useMemo<{ before: ConceptInfo | null; next: ConceptInfo | null }>(() => {
     if (!scoringExercise || !allExercises) return { before: null, next: null };
     const items = allExercises.filter(e => e.unitId === scoringExercise.unitId).sort((a, b) => a.order - b.order);
     const idx = items.findIndex(it => it._id === scoringExercise._id);
     if (idx === -1) return { before: null, next: null };
-    let before: string | null = null;
+    let before: ConceptInfo | null = null;
     for (let i = idx - 1; i >= 0; i--) {
-      if (items[i].type === 'concept') { before = items[i].name; break; }
+      if (items[i].type === 'concept') {
+        before = { name: items[i].name, pageNumber: items[i].pageNumber, pageNumberEnd: items[i].pageNumberEnd, unitId: scoringExercise.unitId };
+        break;
+      }
     }
-    let next: string | null = null;
+    let next: ConceptInfo | null = null;
     for (let i = idx + 1; i < items.length; i++) {
-      if (items[i].type === 'concept') { next = items[i].name; break; }
+      if (items[i].type === 'concept') {
+        next = { name: items[i].name, pageNumber: items[i].pageNumber, pageNumberEnd: items[i].pageNumberEnd, unitId: scoringExercise.unitId };
+        break;
+      }
     }
     return { before, next };
   }, [scoringExercise, allExercises]);
@@ -1095,33 +1102,59 @@ export default function ScoreEntryPage() {
             return (
               <div>
                 {displayPos && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="flex gap-1 min-w-0 flex-1 items-center">
-                      {termUnits.map(unit => {
-                        const num = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 2);
-                        const isSelected = unit.id === selectedUnitId;
-                        const displayName = unit.name.replace(/^\d+\.\s*/, '');
-                        return (
-                          <button
-                            key={unit.id}
-                            onClick={() => { setSelectedUnitId(unit.id); autoSelectExerciseForUnit(unit.id, selectedStudentId!); }}
-                            className={`shrink-0 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 flex items-center justify-center ${
-                              isSelected
-                                ? 'px-2.5 gap-1 bg-primary text-primary-foreground shadow-sm max-w-[160px]'
-                                : 'w-8 bg-muted text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            {isSelected ? (
-                              <>
-                                <span className="shrink-0">{num}.</span>
-                                <span className="truncate">{displayName}</span>
-                              </>
-                            ) : num}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center gap-1 ml-auto">
+                  <div className="mb-3">
+                    {/* Row 1: Position component — 3 cycling pills + refresh + dialog button */}
+                    <div className="flex items-center gap-1.5 mb-2">
+                      {/* Module cycling pill */}
+                      <button
+                        onClick={() => {
+                          const mods = CURRICULUM_MODULES;
+                          const nextMod = mods[(mods.findIndex(m => m.id === displayPos.moduleId) + 1) % mods.length];
+                          const firstUnit = nextMod.grades[0]?.terms[0]?.units[0];
+                          if (!firstUnit) return;
+                          setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: nextMod.id });
+                          setSelectedUnitId(firstUnit.id);
+                          autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95"
+                      >
+                        {displayPos.moduleId}
+                      </button>
+                      {/* Grade cycling pill */}
+                      <button
+                        onClick={() => {
+                          const mod = CURRICULUM_MODULES.find(m => m.id === displayPos.moduleId);
+                          if (!mod) return;
+                          const nextGrade = mod.grades[(mod.grades.findIndex(g => g.grade === displayPos.grade) + 1) % mod.grades.length];
+                          const firstUnit = nextGrade.terms[0]?.units[0];
+                          if (!firstUnit) return;
+                          setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: displayPos.moduleId });
+                          setSelectedUnitId(firstUnit.id);
+                          autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95"
+                      >
+                        G{displayPos.grade}
+                      </button>
+                      {/* Term cycling pill */}
+                      <button
+                        onClick={() => {
+                          const mod = CURRICULUM_MODULES.find(m => m.id === displayPos.moduleId);
+                          const gradeData = mod?.grades.find(g => g.grade === displayPos.grade);
+                          if (!gradeData) return;
+                          const nextTerm = gradeData.terms[(gradeData.terms.findIndex(t => t.term === displayPos.term) + 1) % gradeData.terms.length];
+                          const firstUnit = nextTerm.units[0];
+                          if (!firstUnit) return;
+                          setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: displayPos.moduleId });
+                          setSelectedUnitId(firstUnit.id);
+                          autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95"
+                      >
+                        T{displayPos.term}
+                      </button>
+                      <div className="flex-1" />
+                      {/* Refresh — reset to student's actual position */}
                       {viewingOverride && (
                         <button onClick={() => { setViewingOverride(null); if (selectedStudentId) selectStudent(selectedStudentId); }}
                           className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center active:scale-90 transition-transform"
@@ -1129,98 +1162,132 @@ export default function ScoreEntryPage() {
                           <RotateCcw className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                         </button>
                       )}
+                      {/* Full position dialog */}
                       <button onClick={() => { setPositionDialogStudentId(selectedStudentId); setPositionDialogModuleId(slotModule?.id ?? ''); setPositionDialogOpen(true); }}
-                        className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-semibold text-foreground transition-all active:scale-95">
-                        {displayPos.moduleId} · G{displayPos.grade} · T{displayPos.term}
+                        className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center active:scale-90 transition-transform"
+                        title="Position settings">
+                        <SlidersHorizontal className="w-3 h-3 text-muted-foreground" />
                       </button>
                     </div>
-                    {selectedUnitId && (() => {
-                      const unitMeta = allUnitMeta?.find(m => m.unitId === selectedUnitId);
-                      if (!unitMeta?.startPage || !unitMeta?.endPage) return null;
-                      const part = getBookPart(selectedUnitId);
+                    {/* Row 2: Progress bar */}
+                    {selectedUnitId && up && up.total > 0 && (() => {
+                      const totalScoreable = scoringExercise ? getTotalScoreable(scoringExercise.questionCount, scoringExercise.subQuestions) : 0;
+                      const markedCount = correctCount + wrongCount + skippedCount;
+                      const progressPct = totalScoreable > 0 ? Math.round((markedCount / totalScoreable) * 100) : 0;
                       return (
-                        <button
-                          onClick={() => setPageDrawerRange({
-                            unitId: selectedUnitId,
-                            startPage: unitMeta.startPage!,
-                            endPage: unitMeta.endPage!,
-                            label: selectedUnitName || 'Unit',
-                          })}
-                          className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
-                        >
-                          <BookOpen className="w-3.5 h-3.5" />
-                          {part ? `P${part} ` : ''}p.{unitMeta.startPage}-{unitMeta.endPage}
-                        </button>
+                        <div className="rounded-2xl bg-card border border-border/50 p-3 mb-2">
+                          {/* Top row: unit Q count + live scoring % + session points */}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider tabular-nums">
+                              {up.correctQ + up.wrongQ + up.skippedQ}/{up.totalQ}Q
+                            </span>
+                            {scoringExercise && (
+                              <div className="flex items-center gap-3">
+                                <span className="text-[10px] font-bold text-primary tabular-nums">{progressPct}%</span>
+                                <div className="flex items-center gap-1">
+                                  <Zap className="w-3 h-3 text-primary" />
+                                  <span className="text-[11px] font-bold text-primary tabular-nums">+{pointsThisEntry}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          {/* Unit progress bar (segmented by exercise) */}
+                          <div className="h-2.5 bg-muted rounded-full overflow-hidden flex">
+                            {up.exercises.map((exb, ei) => {
+                              const segW = up.totalQ > 0 ? (exb.qCount / up.totalQ) * 100 : 0;
+                              return (
+                                <div key={ei} className="h-full flex" style={{ width: `${segW}%` }}>
+                                  {exb.correct > 0 && <div className="h-full bg-emerald-500" style={{ width: `${(exb.correct / exb.qCount) * 100}%` }} />}
+                                  {exb.wrong > 0 && <div className="h-full bg-red-400" style={{ width: `${(exb.wrong / exb.qCount) * 100}%` }} />}
+                                  {exb.skipped > 0 && <div className="h-full bg-emerald-300" style={{ width: `${(exb.skipped / exb.qCount) * 100}%` }} />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* Color-dot legend */}
+                          <div className="flex items-center gap-3 mt-2">
+                            {scoringExercise ? (
+                              <>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{correctCount}</span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-red-500 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{wrongCount}</span>
+                                {skippedCount > 0 && <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{skippedCount} skip</span>}
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-[10px] text-emerald-600 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{up.correctQ}</span>
+                                <span className="text-[10px] text-red-500 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{up.wrongQ}</span>
+                                {up.skippedQ > 0 && <span className="text-[10px] text-emerald-400 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{up.skippedQ} skip</span>}
+                              </>
+                            )}
+                            {dayCorrect > 0 && <span className="text-[10px] text-emerald-600 font-semibold ml-auto">{dayCorrect}✓ · {calculateDailyPoints(dayCorrect)} pts</span>}
+                          </div>
+                        </div>
                       );
                     })()}
-                  </div>
-                )}
-
-                {selectedUnitId && up && up.total > 0 && (() => {
-                  const totalScoreable = scoringExercise ? getTotalScoreable(scoringExercise.questionCount, scoringExercise.subQuestions) : 0;
-                  const markedCount = correctCount + wrongCount + skippedCount;
-                  const progressPct = totalScoreable > 0 ? Math.round((markedCount / totalScoreable) * 100) : 0;
-                  return (
-                    <div className="rounded-2xl bg-card border border-border/50 p-3 mb-3">
-                      {/* Top row: unit Q count + live scoring % + session points */}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider tabular-nums">
-                          {up.correctQ + up.wrongQ + up.skippedQ}/{up.totalQ}Q
-                        </span>
-                        {scoringExercise && (
-                          <div className="flex items-center gap-3">
-                            <span className="text-[10px] font-bold text-primary tabular-nums">{progressPct}%</span>
-                            <div className="flex items-center gap-1">
-                              <Zap className="w-3 h-3 text-primary" />
-                              <span className="text-[11px] font-bold text-primary tabular-nums">+{pointsThisEntry}</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      {/* Unit progress bar (segmented by exercise) */}
-                      <div className="h-2.5 bg-muted rounded-full overflow-hidden flex">
-                        {up.exercises.map((exb, ei) => {
-                          const segW = up.totalQ > 0 ? (exb.qCount / up.totalQ) * 100 : 0;
+                    {/* Row 3: Unit grid + pages button */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex gap-1 min-w-0 flex-1 items-center">
+                        {termUnits.map(unit => {
+                          const num = unit.name.match(/^(\d+)\./)?.[1] || unit.name.slice(0, 2);
+                          const isSelected = unit.id === selectedUnitId;
+                          const displayName = unit.name.replace(/^\d+\.\s*/, '');
                           return (
-                            <div key={ei} className="h-full flex" style={{ width: `${segW}%` }}>
-                              {exb.correct > 0 && <div className="h-full bg-emerald-500" style={{ width: `${(exb.correct / exb.qCount) * 100}%` }} />}
-                              {exb.wrong > 0 && <div className="h-full bg-red-400" style={{ width: `${(exb.wrong / exb.qCount) * 100}%` }} />}
-                              {exb.skipped > 0 && <div className="h-full bg-emerald-300" style={{ width: `${(exb.skipped / exb.qCount) * 100}%` }} />}
-                            </div>
+                            <button
+                              key={unit.id}
+                              onClick={() => { setSelectedUnitId(unit.id); autoSelectExerciseForUnit(unit.id, selectedStudentId!); }}
+                              className={`shrink-0 h-8 rounded-lg text-xs font-bold transition-all active:scale-95 flex items-center justify-center ${
+                                isSelected
+                                  ? 'px-2.5 gap-1 bg-primary text-primary-foreground shadow-sm max-w-[160px]'
+                                  : 'w-8 bg-muted text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {isSelected ? (
+                                <>
+                                  <span className="shrink-0">{num}.</span>
+                                  <span className="truncate">{displayName}</span>
+                                </>
+                              ) : num}
+                            </button>
                           );
                         })}
                       </div>
-                      {/* Color-dot legend — live counts for current exercise (falls back to unit counts when idle) */}
-                      <div className="flex items-center gap-3 mt-2">
-                        {scoringExercise ? (
-                          <>
-                            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{correctCount}</span>
-                            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-red-500 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{wrongCount}</span>
-                            {skippedCount > 0 && <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{skippedCount} skip</span>}
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-[10px] text-emerald-600 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{up.correctQ}</span>
-                            <span className="text-[10px] text-red-500 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />{up.wrongQ}</span>
-                            {up.skippedQ > 0 && <span className="text-[10px] text-emerald-400 flex items-center gap-1 tabular-nums"><span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />{up.skippedQ} skip</span>}
-                          </>
-                        )}
-                        {dayCorrect > 0 && <span className="text-[10px] text-emerald-600 font-semibold ml-auto">{dayCorrect}✓ · {calculateDailyPoints(dayCorrect)} pts</span>}
-                      </div>
+                      {selectedUnitId && (() => {
+                        const unitMeta = allUnitMeta?.find(m => m.unitId === selectedUnitId);
+                        if (!unitMeta?.startPage || !unitMeta?.endPage) return null;
+                        const part = getBookPart(selectedUnitId);
+                        return (
+                          <button
+                            onClick={() => setPageDrawerRange({
+                              unitId: selectedUnitId,
+                              startPage: unitMeta.startPage!,
+                              endPage: unitMeta.endPage!,
+                              label: selectedUnitName || 'Unit',
+                            })}
+                            className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold active:scale-95 transition-all"
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                            {part ? `P${part} ` : ''}p.{unitMeta.startPage}-{unitMeta.endPage}
+                          </button>
+                        );
+                      })()}
                     </div>
-                  );
-                })()}
+                  </div>
+                )}
 
                 {/* Before concept card — sits above the exercise grid row */}
                 {exerciseConcepts.before && (
                   <button
-                    onClick={() => setConceptDrawerOpen(true)}
+                    onClick={() => exerciseConcepts.before?.pageNumber !== undefined ? setPageDrawerRange({
+                      unitId: exerciseConcepts.before.unitId,
+                      startPage: exerciseConcepts.before.pageNumber,
+                      endPage: exerciseConcepts.before.pageNumberEnd ?? exerciseConcepts.before.pageNumber,
+                      label: exerciseConcepts.before.name,
+                    }) : undefined}
                     className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2 mb-3 w-full text-left active:scale-[0.98] transition-transform"
-                    aria-label="View before concept"
+                    aria-label="View before concept pages"
                   >
                     <ChevronLeft className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider shrink-0">Before</span>
-                    <span className="text-xs font-medium text-foreground/80 truncate">{exerciseConcepts.before}</span>
+                    <span className="text-xs font-medium text-foreground/80 truncate">{exerciseConcepts.before.name}</span>
                     <BookOpen className="w-3.5 h-3.5 text-muted-foreground/60 ml-auto shrink-0" />
                   </button>
                 )}
@@ -1247,6 +1314,16 @@ export default function ScoreEntryPage() {
                         );
                       })}
                     </div>
+                    {/* Concept overview button */}
+                    {(exerciseConcepts.before || exerciseConcepts.next) && (
+                      <button
+                        onClick={() => setConceptDrawerOpen(true)}
+                        className="shrink-0 w-8 h-8 rounded-lg bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center active:scale-95 transition-all"
+                        title="Unit overview"
+                      >
+                        <Lightbulb className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     {scoringExercise?.pageNumber !== undefined && (() => {
                       const part = getBookPart(scoringExercise.unitId);
                       const pg = scoringExercise.pageNumberEnd ? `${scoringExercise.pageNumber}-${scoringExercise.pageNumberEnd}` : String(scoringExercise.pageNumber);
@@ -1276,14 +1353,18 @@ export default function ScoreEntryPage() {
                       {/* Next concept card — relative to the selected exercise (sits below exercise grid) */}
                       {exerciseConcepts.next && (
                         <button
-                          onClick={() => setConceptDrawerOpen(true)}
+                          onClick={() => exerciseConcepts.next?.pageNumber !== undefined ? setPageDrawerRange({
+                            unitId: exerciseConcepts.next.unitId,
+                            startPage: exerciseConcepts.next.pageNumber,
+                            endPage: exerciseConcepts.next.pageNumberEnd ?? exerciseConcepts.next.pageNumber,
+                            label: exerciseConcepts.next.name,
+                          }) : undefined}
                           className="flex items-center gap-2 bg-primary/10 rounded-xl px-3 py-2 w-full text-left active:scale-[0.98] transition-transform"
-                          aria-label="View next concept"
+                          aria-label="View next concept pages"
                         >
-                          <span className="text-[10px] font-bold text-primary uppercase tracking-wider shrink-0">Next</span>
-                          <span className="text-xs font-medium text-primary truncate">{exerciseConcepts.next}</span>
-                          <ChevronRight className="w-3.5 h-3.5 text-primary/60 ml-auto shrink-0" />
-                          <BookOpen className="w-3.5 h-3.5 text-primary/60 shrink-0" />
+                          <ChevronRight className="w-3.5 h-3.5 text-primary/60 shrink-0" />
+                          <span className="text-xs font-medium text-primary truncate">{exerciseConcepts.next.name}</span>
+                          <BookOpen className="w-3.5 h-3.5 text-primary/60 ml-auto shrink-0" />
                         </button>
                       )}
 
