@@ -91,6 +91,7 @@ export default function ScoreEntryPage() {
   const [positionDialogOpen, setPositionDialogOpen] = useState(false);
   const [positionDialogStudentId, setPositionDialogStudentId] = useState<Id<"students"> | null>(null);
   const [positionDialogModuleId, setPositionDialogModuleId] = useState('');
+  const [positionDialogInitialGrade, setPositionDialogInitialGrade] = useState<number | undefined>(undefined);
   const [viewingOverride, setViewingOverride] = useState<{ exerciseId: string; unitId: string; moduleId: string } | null>(null);
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
@@ -408,15 +409,18 @@ export default function ScoreEntryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveStudents, selectedStudentId]);
 
-  // Re-attempt exercise auto-selection when data loads (covers timing issues)
+  // Re-attempt exercise auto-selection when data loads (covers timing issues).
+  // Prefer selectedUnitId (which may reflect a cycling/viewingOverride pick) over
+  // the student's saved position — otherwise an empty cycled unit would snap the
+  // scoringExercise back to the student's real position and desync the concepts.
   useEffect(() => {
     if (!selectedStudentId || scoringExercise) return;
     if (!allExercises || !slotModule || !studentPositions) return;
     const p = studentPositions.get(selectedStudentId);
-    const unitId = p?.unitId || selectedUnitId;
+    const unitId = selectedUnitId || p?.unitId;
     if (unitId) autoSelectExerciseForUnit(unitId, selectedStudentId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStudentId, scoringExercise, allExercises, slotModule, studentPositions]);
+  }, [selectedStudentId, scoringExercise, allExercises, slotModule, studentPositions, selectedUnitId]);
 
   // ─── Helpers ───
   const slotRoom = effectiveSlot ? rooms?.find((r: { _id: string }) => r._id === effectiveSlot.roomId) : null;
@@ -1105,49 +1109,71 @@ export default function ScoreEntryPage() {
                   <div className="mb-3">
                     {/* Row 1: Position component — 3 cycling pills + refresh + dialog button */}
                     <div className="flex items-center gap-1.5 mb-2">
-                      {/* Module cycling pill */}
+                      {/* Module cycling pill — walks forward through all modules until
+                          it finds one with a valid unit (some modules have empty grades/terms, e.g. M6 G6). */}
                       <button
                         onClick={() => {
                           const mods = CURRICULUM_MODULES;
-                          const nextMod = mods[(mods.findIndex(m => m.id === displayPos.moduleId) + 1) % mods.length];
-                          const firstUnit = nextMod.grades[0]?.terms[0]?.units[0];
-                          if (!firstUnit) return;
-                          setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: nextMod.id });
-                          setSelectedUnitId(firstUnit.id);
-                          autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                          const curIdx = mods.findIndex(m => m.id === displayPos.moduleId);
+                          for (let offset = 1; offset <= mods.length; offset++) {
+                            const nextMod = mods[(curIdx + offset) % mods.length];
+                            for (const g of nextMod.grades) {
+                              for (const t of g.terms) {
+                                if (t.units.length > 0) {
+                                  const firstUnit = t.units[0];
+                                  setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: nextMod.id });
+                                  setSelectedUnitId(firstUnit.id);
+                                  autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                                  return;
+                                }
+                              }
+                            }
+                          }
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95"
                       >
                         {displayPos.moduleId}
                       </button>
-                      {/* Grade cycling pill */}
+                      {/* Grade cycling pill — skips grades with empty terms. */}
                       <button
                         onClick={() => {
                           const mod = CURRICULUM_MODULES.find(m => m.id === displayPos.moduleId);
                           if (!mod) return;
-                          const nextGrade = mod.grades[(mod.grades.findIndex(g => g.grade === displayPos.grade) + 1) % mod.grades.length];
-                          const firstUnit = nextGrade.terms[0]?.units[0];
-                          if (!firstUnit) return;
-                          setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: displayPos.moduleId });
-                          setSelectedUnitId(firstUnit.id);
-                          autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                          const curIdx = mod.grades.findIndex(g => g.grade === displayPos.grade);
+                          for (let offset = 1; offset <= mod.grades.length; offset++) {
+                            const nextGrade = mod.grades[(curIdx + offset) % mod.grades.length];
+                            for (const t of nextGrade.terms) {
+                              if (t.units.length > 0) {
+                                const firstUnit = t.units[0];
+                                setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: displayPos.moduleId });
+                                setSelectedUnitId(firstUnit.id);
+                                autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                                return;
+                              }
+                            }
+                          }
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95"
                       >
                         G{displayPos.grade}
                       </button>
-                      {/* Term cycling pill */}
+                      {/* Term cycling pill — skips terms with empty units. */}
                       <button
                         onClick={() => {
                           const mod = CURRICULUM_MODULES.find(m => m.id === displayPos.moduleId);
                           const gradeData = mod?.grades.find(g => g.grade === displayPos.grade);
                           if (!gradeData) return;
-                          const nextTerm = gradeData.terms[(gradeData.terms.findIndex(t => t.term === displayPos.term) + 1) % gradeData.terms.length];
-                          const firstUnit = nextTerm.units[0];
-                          if (!firstUnit) return;
-                          setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: displayPos.moduleId });
-                          setSelectedUnitId(firstUnit.id);
-                          autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                          const curIdx = gradeData.terms.findIndex(t => t.term === displayPos.term);
+                          for (let offset = 1; offset <= gradeData.terms.length; offset++) {
+                            const nextTerm = gradeData.terms[(curIdx + offset) % gradeData.terms.length];
+                            if (nextTerm.units.length > 0) {
+                              const firstUnit = nextTerm.units[0];
+                              setViewingOverride({ exerciseId: '', unitId: firstUnit.id, moduleId: displayPos.moduleId });
+                              setSelectedUnitId(firstUnit.id);
+                              autoSelectExerciseForUnit(firstUnit.id, selectedStudentId!);
+                              return;
+                            }
+                          }
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95"
                       >
@@ -1162,8 +1188,14 @@ export default function ScoreEntryPage() {
                           <RotateCcw className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                         </button>
                       )}
-                      {/* Full position dialog */}
-                      <button onClick={() => { setPositionDialogStudentId(selectedStudentId); setPositionDialogModuleId(slotModule?.id ?? ''); setPositionDialogOpen(true); }}
+                      {/* Full position dialog — opens at whatever is currently displayed
+                          (respects pill cycling / viewing override), not the student's saved position. */}
+                      <button onClick={() => {
+                          setPositionDialogStudentId(selectedStudentId);
+                          setPositionDialogModuleId(displayPos.moduleId);
+                          setPositionDialogInitialGrade(displayPos.grade);
+                          setPositionDialogOpen(true);
+                        }}
                         className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center active:scale-90 transition-transform"
                         title="Position settings">
                         <SlidersHorizontal className="w-3 h-3 text-muted-foreground" />
@@ -1614,6 +1646,7 @@ export default function ScoreEntryPage() {
           modulePositions={modulePositions ?? []}
           initialStudentId={positionDialogStudentId}
           initialModuleId={positionDialogModuleId || slotModule?.id || 'M1'}
+          initialGrade={positionDialogInitialGrade}
           onSelectExercise={handlePositionSelectExercise}
           onSavePosition={handlePositionSave}
         />

@@ -26,6 +26,8 @@ interface PositionDialogProps {
   modulePositions: PositionLike[];
   initialStudentId: Id<"students">;
   initialModuleId: string;
+  /** If provided, dialog opens at this grade instead of auto-detecting from the student's saved position. */
+  initialGrade?: number;
   onSelectExercise: (studentId: Id<"students">, exerciseId: string, unitId: string, moduleId: string) => void;
   onSavePosition: (studentId: Id<"students">, moduleId: string, grade: number, term: number) => Promise<void>;
 }
@@ -42,7 +44,7 @@ const UNIT_ORDER_KEY = 'mt-position-unit-order';
 
 export function PositionDialog({
   open, onOpenChange, students, allEntries, allExercises, modulePositions,
-  initialStudentId, initialModuleId, onSelectExercise, onSavePosition,
+  initialStudentId, initialModuleId, initialGrade, onSelectExercise, onSavePosition,
 }: PositionDialogProps) {
   // ─── State ───
   const [activeStudentId, setActiveStudentId] = useState<Id<"students">>(initialStudentId);
@@ -76,15 +78,20 @@ export function PositionDialog({
       setSubTab('progress');
       setDraftPositionExId(null);
       setPositionDirty(false);
-      // Auto-detect grade from student's current position
-      const student = students.find(s => s._id === initialStudentId);
-      if (student) {
-        const pos = getStudentPosition(initialStudentId, initialModuleId);
-        setActiveGrade(pos?.grade ?? student.schoolGrade);
+      // Prefer explicit initialGrade (caller is pointing at a specific view);
+      // otherwise auto-detect from the student's saved position.
+      if (initialGrade !== undefined) {
+        setActiveGrade(initialGrade);
+      } else {
+        const student = students.find(s => s._id === initialStudentId);
+        if (student) {
+          const pos = getStudentPosition(initialStudentId, initialModuleId);
+          setActiveGrade(pos?.grade ?? student.schoolGrade);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialStudentId, initialModuleId]);
+  }, [open, initialStudentId, initialModuleId, initialGrade]);
 
   // ─── Derived ───
   const activeStudent = useMemo(() => students.find(s => s._id === activeStudentId), [students, activeStudentId]);
