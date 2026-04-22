@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon, X, Lightbulb, SlidersHorizontal } from 'lucide-react';
+import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Zap, SkipForward, Radio, AlertTriangle, RotateCcw, Image as ImageIcon, X, Lightbulb, SlidersHorizontal, Pin, Clock } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { PinchZoomArea } from '@/components/pinch-zoom-area';
 import { PositionDialog } from '@/components/position-dialog';
@@ -40,6 +40,14 @@ function fmtCountdownCompact(mins: number): { value: string; unit: string } {
   if (mins >= 1440) { const d = Math.round(mins / 1440); return { value: String(d), unit: d === 1 ? 'day' : 'days' }; }
   if (mins >= 60) { const h = Math.round(mins / 60); return { value: String(h), unit: h === 1 ? 'hr' : 'hrs' }; }
   return { value: String(mins), unit: 'min' };
+}
+
+function fmtAssignedTime(ms: number): string {
+  const d = new Date(ms);
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
 function usePersistentState<T>(key: string, init: T): [T, React.Dispatch<React.SetStateAction<T>>] {
@@ -249,6 +257,42 @@ export default function ScoreEntryPage() {
   const submitSessionNewMut = useMutation(api.sessionSubmissions.submit);
   const flagQuestionMut = useMutation(api.doubts.flagQuestion);
   const unflagQuestionMut = useMutation(api.doubts.removePendingForQuestion);
+  const markAssignmentCompletedMut = useMutation(api.currentAssignments.markCompleted);
+
+  // Lead's current assignment for this student today — drives pin indicators.
+  const currentAssignment = useQuery(
+    api.currentAssignments.getForStudent,
+    selectedStudentId ? { studentId: selectedStudentId, date: today } : 'skip',
+  );
+  const [pinPopover, setPinPopover] = useState<{
+    label: string;
+    type: string;
+    questionKey?: string;
+    assignedAt?: number;
+    note?: string;
+    assignmentId?: Id<'currentAssignments'>;
+    completedAt?: number;
+  } | null>(null);
+
+  // Helper: open the pin popover with details for the current assignment.
+  const openPinPopover = useCallback((label: string) => {
+    if (!currentAssignment) return;
+    setPinPopover({
+      label,
+      type: currentAssignment.type,
+      questionKey: currentAssignment.redoQuestionKey,
+      assignedAt: currentAssignment.assignedAt,
+      note: currentAssignment.note,
+      assignmentId: currentAssignment._id as Id<'currentAssignments'>,
+      completedAt: currentAssignment.completedAt,
+    });
+  }, [currentAssignment]);
+
+  // Pin checks — kept inline in JSX as well, but centralized here for clarity.
+  const assignmentExerciseId = currentAssignment?.exerciseId as string | undefined;
+  const assignmentType = currentAssignment?.type;
+  const assignmentRedoKey = currentAssignment?.redoQuestionKey;
+  const assignmentDone = !!currentAssignment?.completedAt;
 
   // Pending "needs explanation" flags for the active (student, exercise).
   // Reactive: updates live if the Lead resolves a doubt elsewhere.
@@ -522,7 +566,7 @@ export default function ScoreEntryPage() {
   // Concepts surrounding the currently-selected scoring exercise (before = nearest concept above
   // it in the unit's ordered item list; next = nearest concept below it). Both update whenever
   // the selected exercise changes.
-  type ConceptInfo = { name: string; pageNumber?: number; pageNumberEnd?: number; unitId: string };
+  type ConceptInfo = { _id: Id<'exercises'>; name: string; pageNumber?: number; pageNumberEnd?: number; unitId: string };
   const exerciseConcepts = useMemo<{ before: ConceptInfo | null; next: ConceptInfo | null }>(() => {
     if (!scoringExercise || !allExercises) return { before: null, next: null };
     const items = allExercises.filter(e => e.unitId === scoringExercise.unitId).sort((a, b) => a.order - b.order);
@@ -531,14 +575,14 @@ export default function ScoreEntryPage() {
     let before: ConceptInfo | null = null;
     for (let i = idx - 1; i >= 0; i--) {
       if (items[i].type === 'concept') {
-        before = { name: items[i].name, pageNumber: items[i].pageNumber, pageNumberEnd: items[i].pageNumberEnd, unitId: scoringExercise.unitId };
+        before = { _id: items[i]._id as Id<'exercises'>, name: items[i].name, pageNumber: items[i].pageNumber, pageNumberEnd: items[i].pageNumberEnd, unitId: scoringExercise.unitId };
         break;
       }
     }
     let next: ConceptInfo | null = null;
     for (let i = idx + 1; i < items.length; i++) {
       if (items[i].type === 'concept') {
-        next = { name: items[i].name, pageNumber: items[i].pageNumber, pageNumberEnd: items[i].pageNumberEnd, unitId: scoringExercise.unitId };
+        next = { _id: items[i]._id as Id<'exercises'>, name: items[i].name, pageNumber: items[i].pageNumber, pageNumberEnd: items[i].pageNumberEnd, unitId: scoringExercise.unitId };
         break;
       }
     }
@@ -1364,22 +1408,38 @@ export default function ScoreEntryPage() {
                 )}
 
                 {/* Before concept card — sits above the exercise grid row */}
-                {exerciseConcepts.before && (
-                  <button
-                    onClick={() => exerciseConcepts.before?.pageNumber !== undefined ? setPageDrawerRange({
-                      unitId: exerciseConcepts.before.unitId,
-                      startPage: exerciseConcepts.before.pageNumber,
-                      endPage: exerciseConcepts.before.pageNumberEnd ?? exerciseConcepts.before.pageNumber,
-                      label: exerciseConcepts.before.name,
-                    }) : undefined}
-                    className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2 mb-3 w-full text-left active:scale-[0.98] transition-transform"
-                    aria-label="View before concept pages"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-xs font-medium text-foreground/80 truncate">{exerciseConcepts.before.name}</span>
-                    <BookOpen className="w-3.5 h-3.5 text-muted-foreground/60 ml-auto shrink-0" />
-                  </button>
-                )}
+                {exerciseConcepts.before && (() => {
+                  const isPinned = !assignmentDone && assignmentType === 'concept' && assignmentExerciseId === exerciseConcepts.before._id;
+                  const beforeName = exerciseConcepts.before.name;
+                  return (
+                    <div className="relative mb-3">
+                      <button
+                        onClick={() => exerciseConcepts.before?.pageNumber !== undefined ? setPageDrawerRange({
+                          unitId: exerciseConcepts.before.unitId,
+                          startPage: exerciseConcepts.before.pageNumber,
+                          endPage: exerciseConcepts.before.pageNumberEnd ?? exerciseConcepts.before.pageNumber,
+                          label: exerciseConcepts.before.name,
+                        }) : undefined}
+                        className={`flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2 w-full text-left active:scale-[0.98] transition-transform ${isPinned ? 'ring-2 ring-sky-500/40' : ''}`}
+                        aria-label="View before concept pages"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-xs font-medium text-foreground/80 truncate">{exerciseConcepts.before.name}</span>
+                        <BookOpen className="w-3.5 h-3.5 text-muted-foreground/60 ml-auto shrink-0" />
+                      </button>
+                      {isPinned && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); openPinPopover(beforeName); }}
+                          aria-label="View assignment"
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-sky-500 text-white flex items-center justify-center shadow-sm shadow-sky-500/40 active:scale-90 transition-transform"
+                        >
+                          <Pin className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Exercise selector boxes + page button */}
                 {selectedUnitExercises.length > 0 && (
@@ -1389,17 +1449,30 @@ export default function ScoreEntryPage() {
                         const st = getExerciseStatus(selectedStudentId, ex._id, ex.questionCount, selectedUnitId, ex.order);
                         const isCurrent = scoringExercise && ex._id === scoringExercise._id;
                         const lbl = ex.name.includes('.') ? ex.name.split('.').pop() : String(ex.order);
+                        const isPinned = !assignmentDone && assignmentExerciseId === ex._id && (assignmentType === 'exercise' || assignmentType === 'redo');
                         return (
-                          <button key={ex._id}
-                            onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
-                            className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
-                              ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
-                              ${st === 'perfect' ? 'bg-emerald-500 text-white'
-                                : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
-                                : st === 'wip' ? 'bg-amber-400 text-white'
-                                : 'bg-muted text-muted-foreground'}`}>
-                            {lbl}
-                          </button>
+                          <div key={ex._id} className="relative shrink-0">
+                            <button
+                              onClick={() => slotModule && handleExerciseTap(ex, selectedUnitId, slotModule.id)}
+                              className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center transition-all
+                                ${isCurrent ? 'ring-2 ring-primary ring-offset-1' : ''}
+                                ${st === 'perfect' ? 'bg-emerald-500 text-white'
+                                  : st === 'skipped' ? 'bg-emerald-300 text-emerald-800'
+                                  : st === 'wip' ? 'bg-amber-400 text-white'
+                                  : 'bg-muted text-muted-foreground'}`}>
+                              {lbl}
+                            </button>
+                            {isPinned && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); openPinPopover(ex.name); }}
+                                aria-label="View assignment"
+                                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-sky-500 text-white flex items-center justify-center shadow-sm shadow-sky-500/40 active:scale-90 transition-transform"
+                              >
+                                <Pin className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -1440,22 +1513,38 @@ export default function ScoreEntryPage() {
                   return (
                     <div className="space-y-3">
                       {/* Next concept card — relative to the selected exercise (sits below exercise grid) */}
-                      {exerciseConcepts.next && (
-                        <button
-                          onClick={() => exerciseConcepts.next?.pageNumber !== undefined ? setPageDrawerRange({
-                            unitId: exerciseConcepts.next.unitId,
-                            startPage: exerciseConcepts.next.pageNumber,
-                            endPage: exerciseConcepts.next.pageNumberEnd ?? exerciseConcepts.next.pageNumber,
-                            label: exerciseConcepts.next.name,
-                          }) : undefined}
-                          className="flex items-center gap-2 bg-primary/10 rounded-xl px-3 py-2 w-full text-left active:scale-[0.98] transition-transform"
-                          aria-label="View next concept pages"
-                        >
-                          <ChevronRight className="w-3.5 h-3.5 text-primary/60 shrink-0" />
-                          <span className="text-xs font-medium text-primary truncate">{exerciseConcepts.next.name}</span>
-                          <BookOpen className="w-3.5 h-3.5 text-primary/60 ml-auto shrink-0" />
-                        </button>
-                      )}
+                      {exerciseConcepts.next && (() => {
+                        const isPinned = !assignmentDone && assignmentType === 'concept' && assignmentExerciseId === exerciseConcepts.next._id;
+                        const nextName = exerciseConcepts.next.name;
+                        return (
+                          <div className="relative">
+                            <button
+                              onClick={() => exerciseConcepts.next?.pageNumber !== undefined ? setPageDrawerRange({
+                                unitId: exerciseConcepts.next.unitId,
+                                startPage: exerciseConcepts.next.pageNumber,
+                                endPage: exerciseConcepts.next.pageNumberEnd ?? exerciseConcepts.next.pageNumber,
+                                label: exerciseConcepts.next.name,
+                              }) : undefined}
+                              className={`flex items-center gap-2 bg-primary/10 rounded-xl px-3 py-2 w-full text-left active:scale-[0.98] transition-transform ${isPinned ? 'ring-2 ring-sky-500/40' : ''}`}
+                              aria-label="View next concept pages"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5 text-primary/60 shrink-0" />
+                              <span className="text-xs font-medium text-primary truncate">{exerciseConcepts.next.name}</span>
+                              <BookOpen className="w-3.5 h-3.5 text-primary/60 ml-auto shrink-0" />
+                            </button>
+                            {isPinned && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); openPinPopover(nextName); }}
+                                aria-label="View assignment"
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-sky-500 text-white flex items-center justify-center shadow-sm shadow-sky-500/40 active:scale-90 transition-transform"
+                              >
+                                <Pin className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Question grid — chunked so expanded sub-groups break out into full-width panels */}
                       {(() => {
@@ -1482,10 +1571,12 @@ export default function ScoreEntryPage() {
                                 return (
                                   <div key={`grid-${ci}`} className="grid grid-cols-5 gap-1.5">
                                     {chunk.groups.map(group => {
+                                      const isRedoAssignedToThisExercise = !assignmentDone && assignmentType === 'redo' && assignmentExerciseId === scoringExercise._id;
                                       // Regular single-question cell
                                       if (!group.hasSubQuestions) {
                                         const item = group.items[0];
                                         const s = questionStates[item.key] || 'unmarked';
+                                        const isPinned = isRedoAssignedToThisExercise && assignmentRedoKey === item.key;
                                         return (
                                           <div key={item.key} className="relative">
                                           <button onClick={() => handleQuestionTap(item.key)}
@@ -1505,6 +1596,16 @@ export default function ScoreEntryPage() {
                                               onToggle={() => handleFlagToggle(item.key)}
                                             />
                                           )}
+                                          {isPinned && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); openPinPopover(`${scoringExercise.name} · Q${item.key}`); }}
+                                              aria-label="View assignment"
+                                              className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-sky-500 text-white flex items-center justify-center shadow-sm shadow-sky-500/40 active:scale-90 transition-transform"
+                                            >
+                                              <Pin className="w-2.5 h-2.5" />
+                                            </button>
+                                          )}
                                           </div>
                                         );
                                       }
@@ -1518,18 +1619,30 @@ export default function ScoreEntryPage() {
                                             : gs.status === 'wip'
                                               ? 'bg-amber-500/10 border-amber-500/50 text-amber-600 dark:text-amber-400'
                                               : 'bg-primary/10 border-primary/50 text-primary';
+                                      const groupHasPinnedSub = isRedoAssignedToThisExercise && !!assignmentRedoKey && group.items.some(it => it.key === assignmentRedoKey);
                                       return (
-                                        <button
-                                          key={`pill-${group.mainQ}`}
-                                          onClick={() => setExpandedMainQ(group.mainQ)}
-                                          className={`relative h-11 rounded-full border-2 border-dashed flex items-center justify-center gap-1 text-[11px] font-semibold active:scale-90 transition-all ${pillTone}`}
-                                          aria-label={`Expand question ${group.mainQ} with ${group.items.length} sub-questions`}
-                                        >
-                                          <span className="font-bold text-sm">Q{group.mainQ}</span>
-                                          <span className="opacity-40">·</span>
-                                          <span className="tabular-nums">{gs.done}/{gs.total}</span>
-                                          <ChevronDown className="w-3 h-3 opacity-70" />
-                                        </button>
+                                        <div key={`pill-wrap-${group.mainQ}`} className="relative">
+                                          <button
+                                            onClick={() => setExpandedMainQ(group.mainQ)}
+                                            className={`relative h-11 w-full rounded-full border-2 border-dashed flex items-center justify-center gap-1 text-[11px] font-semibold active:scale-90 transition-all ${pillTone}`}
+                                            aria-label={`Expand question ${group.mainQ} with ${group.items.length} sub-questions`}
+                                          >
+                                            <span className="font-bold text-sm">Q{group.mainQ}</span>
+                                            <span className="opacity-40">·</span>
+                                            <span className="tabular-nums">{gs.done}/{gs.total}</span>
+                                            <ChevronDown className="w-3 h-3 opacity-70" />
+                                          </button>
+                                          {groupHasPinnedSub && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); openPinPopover(`${scoringExercise.name} · Q${assignmentRedoKey}`); }}
+                                              aria-label="View assignment"
+                                              className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-sky-500 text-white flex items-center justify-center shadow-sm shadow-sky-500/40 active:scale-90 transition-transform"
+                                            >
+                                              <Pin className="w-2.5 h-2.5" />
+                                            </button>
+                                          )}
+                                        </div>
                                       );
                                     })}
                                   </div>
@@ -1561,6 +1674,8 @@ export default function ScoreEntryPage() {
                                   <div className="flex flex-wrap gap-1.5">
                                     {group.items.map(item => {
                                       const s = questionStates[item.key] || 'unmarked';
+                                      const isExpRedoAssigned = !assignmentDone && assignmentType === 'redo' && assignmentExerciseId === scoringExercise._id;
+                                      const isPinned = isExpRedoAssigned && assignmentRedoKey === item.key;
                                       return (
                                         <div key={item.key} className="relative">
                                         <button
@@ -1580,6 +1695,16 @@ export default function ScoreEntryPage() {
                                             active={!!flaggedKeys[item.key]}
                                             onToggle={() => handleFlagToggle(item.key)}
                                           />
+                                        )}
+                                        {isPinned && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); openPinPopover(`${scoringExercise.name} · Q${item.key}`); }}
+                                            aria-label="View assignment"
+                                            className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-sky-500 text-white flex items-center justify-center shadow-sm shadow-sky-500/40 active:scale-90 transition-transform"
+                                          >
+                                            <Pin className="w-2.5 h-2.5" />
+                                          </button>
                                         )}
                                         </div>
                                       );
@@ -1944,6 +2069,77 @@ export default function ScoreEntryPage() {
           )}
         </DrawerContent>
       </Drawer>
+
+      {/* Pin popover — shows what the Lead has assigned for this student */}
+      <Dialog open={!!pinPopover} onOpenChange={(o) => { if (!o) setPinPopover(null); }}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-sky-500/15 flex items-center justify-center">
+                <Pin className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+              </div>
+              <span className="text-sm font-bold">Lead assignment</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Pinned by the Lead Teacher for this student.
+            </DialogDescription>
+          </DialogHeader>
+          {pinPopover && (
+            <div className="space-y-2.5 py-1">
+              <div className="rounded-xl border border-sky-500/40 bg-sky-500/5 px-3 py-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400 font-bold mb-0.5">
+                  {pinPopover.type === 'exercise' ? 'Next exercise'
+                    : pinPopover.type === 'concept' ? 'Concept video'
+                    : pinPopover.type === 'redo' ? 'Redo past mistake'
+                    : pinPopover.type === 'resting' ? 'Resting' : pinPopover.type}
+                </p>
+                <p className="text-sm font-semibold">{pinPopover.label}</p>
+                {pinPopover.questionKey && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Question Q{pinPopover.questionKey}</p>
+                )}
+                {pinPopover.note && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5 italic">{pinPopover.note}</p>
+                )}
+              </div>
+              {pinPopover.assignedAt && (
+                <p className="text-[10px] text-muted-foreground inline-flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> Assigned at {fmtAssignedTime(pinPopover.assignedAt)}
+                </p>
+              )}
+              {pinPopover.completedAt && (
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Marked done
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {pinPopover && pinPopover.assignmentId && !pinPopover.completedAt && (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={async () => {
+                  if (!pinPopover.assignmentId) return;
+                  try {
+                    await markAssignmentCompletedMut({ id: pinPopover.assignmentId });
+                    toast.success('Marked done');
+                    setPinPopover(null);
+                  } catch (e) {
+                    toast.error('Could not update');
+                    console.error(e);
+                  }
+                }}
+                className="h-8 px-3 text-xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Mark done
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setPinPopover(null)} className="h-8 px-3 text-xs">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Concept Drawer */}
       <Sheet open={conceptDrawerOpen} onOpenChange={setConceptDrawerOpen}>

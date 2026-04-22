@@ -124,3 +124,72 @@ export const liveRoster = query({
     };
   },
 });
+
+// Per-student context bundle for the Lead drawer + curriculum view.
+// Pass `unitIds` (computed on the client from curriculum-data + the student's
+// grade in this module) so the server can scope exercises tightly.
+export const studentContext = query({
+  args: {
+    studentId: v.id("students"),
+    moduleId: v.string(),
+    date: v.string(),
+    unitIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const student = await ctx.db.get(args.studentId);
+    if (!student) return null;
+
+    // All entries by this student (used for status indicators across the
+    // module + recent timeline). For a typical student this is small (<200).
+    const allEntries = await ctx.db
+      .query("entries")
+      .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
+      .collect();
+
+    // All doubts by this student.
+    const allDoubts = await ctx.db
+      .query("doubts")
+      .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
+      .collect();
+
+    // Current assignment for the date.
+    const currentAssignment = await ctx.db
+      .query("currentAssignments")
+      .withIndex("by_student_date", (q) =>
+        q.eq("studentId", args.studentId).eq("date", args.date)
+      )
+      .first();
+
+    // Module positions
+    const positions = await ctx.db
+      .query("studentModulePositions")
+      .withIndex("by_student_module", (q) => q.eq("studentId", args.studentId))
+      .collect();
+    const modulePosition =
+      positions.find((p) => p.moduleId === args.moduleId) ?? null;
+
+    // Exercises in the requested unit set.
+    const unitSet = new Set(args.unitIds);
+    const allExercises: Doc<"exercises">[] = [];
+    for (const uid of args.unitIds) {
+      const rows = await ctx.db
+        .query("exercises")
+        .withIndex("by_unit", (q) => q.eq("unitId", uid))
+        .collect();
+      for (const r of rows) allExercises.push(r);
+    }
+
+    return {
+      student,
+      currentAssignment,
+      modulePosition,
+      allEntries,
+      allDoubts,
+      exercises: allExercises,
+      unitIds: Array.from(unitSet),
+    };
+  },
+});
