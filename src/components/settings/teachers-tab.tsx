@@ -20,7 +20,7 @@ export function TeachersTab() {
   const [editId, setEditId] = useState<Id<"teachers"> | null>(null);
   const [formName, setFormName] = useState('');
   const [formClerkId, setFormClerkId] = useState('');
-  const [formRole, setFormRole] = useState('teacher');
+  const [formRole, setFormRole] = useState('correction');
 
   const { user } = useUser();
   const teachers = useQuery(api.teachers.list);
@@ -40,7 +40,7 @@ export function TeachersTab() {
   const resetForm = () => {
     setFormName('');
     setFormClerkId('');
-    setFormRole('teacher');
+    setFormRole('correction');
     setEditId(null);
   };
 
@@ -156,11 +156,13 @@ export function TeachersTab() {
             )}
             <div>
               <Label className="text-sm">Role</Label>
-              <Select value={formRole} onValueChange={(v: string | null) => setFormRole(v ?? 'teacher')}>
+              <Select value={formRole} onValueChange={(v: string | null) => setFormRole(v ?? 'correction')}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="teacher">Teacher</SelectItem>
+                  <SelectItem value="lead">Lead</SelectItem>
+                  <SelectItem value="correction">Correction Officer</SelectItem>
+                  <SelectItem value="teacher">Teacher (legacy)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

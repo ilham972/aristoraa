@@ -10,8 +10,11 @@
 
 import type * as attendance from "../attendance.js";
 import type * as centers from "../centers.js";
+import type * as currentAssignments from "../currentAssignments.js";
+import type * as doubts from "../doubts.js";
 import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
+import type * as lead from "../lead.js";
 import type * as migrations from "../migrations.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
@@ -25,6 +28,7 @@ import type * as students from "../students.js";
 import type * as teachers from "../teachers.js";
 import type * as textbookPages from "../textbookPages.js";
 import type * as textbooks from "../textbooks.js";
+import type * as timeline from "../timeline.js";
 import type * as unitMetadata from "../unitMetadata.js";
 
 import type {
@@ -36,8 +40,11 @@ import type {
 declare const fullApi: ApiFromModules<{
   attendance: typeof attendance;
   centers: typeof centers;
+  currentAssignments: typeof currentAssignments;
+  doubts: typeof doubts;
   entries: typeof entries;
   exercises: typeof exercises;
+  lead: typeof lead;
   migrations: typeof migrations;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
@@ -51,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   teachers: typeof teachers;
   textbookPages: typeof textbookPages;
   textbooks: typeof textbooks;
+  timeline: typeof timeline;
   unitMetadata: typeof unitMetadata;
 }>;
 

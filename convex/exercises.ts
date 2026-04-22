@@ -155,6 +155,27 @@ export const update = mutation({
   },
 });
 
+// Set/clear the YouTube video URL and optional summary on a concept-type exercise.
+// Pass empty string or undefined to clear.
+export const setConceptVideo = mutation({
+  args: {
+    id: v.id("exercises"),
+    videoUrl: v.optional(v.string()),
+    conceptSummary: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await ctx.db.patch(args.id, {
+      videoUrl: args.videoUrl && args.videoUrl.trim() !== "" ? args.videoUrl : undefined,
+      conceptSummary:
+        args.conceptSummary && args.conceptSummary.trim() !== ""
+          ? args.conceptSummary
+          : undefined,
+    });
+  },
+});
+
 export const trimToCount = mutation({
   args: {
     unitId: v.string(),

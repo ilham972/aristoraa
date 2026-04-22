@@ -6,6 +6,7 @@ import { BookOpen, CheckCircle2, Send, ChevronLeft, ChevronRight, ChevronDown, S
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { PinchZoomArea } from '@/components/pinch-zoom-area';
 import { PositionDialog } from '@/components/position-dialog';
+import { FlagToggle } from '@/components/flag-toggle';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { getTodayDateStr, parseTimeToMinutes } from '@/lib/types';
@@ -246,6 +247,25 @@ export default function ScoreEntryPage() {
   const updateEntryMut = useMutation(api.entries.update);
   const setModulePosMut = useMutation(api.studentModulePositions.set);
   const submitSessionNewMut = useMutation(api.sessionSubmissions.submit);
+  const flagQuestionMut = useMutation(api.doubts.flagQuestion);
+  const unflagQuestionMut = useMutation(api.doubts.removePendingForQuestion);
+
+  // Pending "needs explanation" flags for the active (student, exercise).
+  // Reactive: updates live if the Lead resolves a doubt elsewhere.
+  const activeDoubts = useQuery(
+    api.doubts.listPendingForStudentExercise,
+    selectedStudentId && scoringExercise
+      ? { studentId: selectedStudentId, exerciseId: scoringExercise._id }
+      : 'skip'
+  );
+  const flaggedKeys = useMemo(() => {
+    if (!activeDoubts) return {} as Record<string, boolean>;
+    const m: Record<string, boolean> = {};
+    for (const d of activeDoubts) {
+      if (d.questionKey) m[d.questionKey] = true;
+    }
+    return m;
+  }, [activeDoubts]);
 
   // Draft present IDs for current session
   const draftPresentIds = useMemo(() => new Set(draftAttendance[sessionKey] || []), [draftAttendance, sessionKey]);
@@ -723,6 +743,43 @@ export default function ScoreEntryPage() {
     const newStates = { ...questionStates, [key]: newVal };
     setQuestionStates(newStates);
     liveSave(newStates);
+
+    // If the question was flagged and no longer 'wrong', auto-clear the pending doubt.
+    // Flags only make sense on wrong answers, so the Correction Officer shouldn't have
+    // to un-flag manually after correcting a previous mark.
+    if (cur === 'wrong' && newVal !== 'wrong' && flaggedKeys[key] && selectedStudentId && scoringExercise) {
+      const sid = selectedStudentId;
+      const exId = scoringExercise._id;
+      unflagQuestionMut({ studentId: sid, exerciseId: exId, questionKey: key }).catch((err) => {
+        console.error('[flag] auto-unflag failed', err);
+      });
+    }
+  };
+
+  const handleFlagToggle = async (key: string) => {
+    if (!selectedStudentId || !scoringExercise) return;
+    const wasFlagged = !!flaggedKeys[key];
+    try {
+      if (wasFlagged) {
+        await unflagQuestionMut({
+          studentId: selectedStudentId,
+          exerciseId: scoringExercise._id,
+          questionKey: key,
+        });
+      } else {
+        await flagQuestionMut({
+          studentId: selectedStudentId,
+          exerciseId: scoringExercise._id,
+          questionKey: key,
+          slotId: effectiveSlot?._id as Id<"scheduleSlots"> | undefined,
+          centerId: slotCenter?._id as Id<"centers"> | undefined,
+          source: 'correction',
+        });
+      }
+    } catch (err) {
+      console.error('[flag] toggle failed', err);
+      toast.error('Failed to update flag');
+    }
   };
 
   // Guarded exercise tap: same blocking checks
@@ -1430,8 +1487,9 @@ export default function ScoreEntryPage() {
                                         const item = group.items[0];
                                         const s = questionStates[item.key] || 'unmarked';
                                         return (
-                                          <button key={item.key} onClick={() => handleQuestionTap(item.key)}
-                                            className={`relative h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
+                                          <div key={item.key} className="relative">
+                                          <button onClick={() => handleQuestionTap(item.key)}
+                                            className={`w-full h-11 rounded-xl font-bold text-sm transition-all duration-150 active:scale-90
                                               ${s === 'correct'
                                                 ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
                                                 : s === 'wrong'
@@ -1441,6 +1499,13 @@ export default function ScoreEntryPage() {
                                                     : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
                                             {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : group.mainQ}
                                           </button>
+                                          {s === 'wrong' && (
+                                            <FlagToggle
+                                              active={!!flaggedKeys[item.key]}
+                                              onToggle={() => handleFlagToggle(item.key)}
+                                            />
+                                          )}
+                                          </div>
                                         );
                                       }
                                       // Collapsed sub-group expander — dashed pill, clearly NOT a scoring cell
@@ -1497,10 +1562,10 @@ export default function ScoreEntryPage() {
                                     {group.items.map(item => {
                                       const s = questionStates[item.key] || 'unmarked';
                                       return (
+                                        <div key={item.key} className="relative">
                                         <button
-                                          key={item.key}
                                           onClick={() => handleQuestionTap(item.key)}
-                                          className={`relative w-11 h-11 rounded-xl font-bold text-xs transition-all duration-150 active:scale-90
+                                          className={`w-11 h-11 rounded-xl font-bold text-xs transition-all duration-150 active:scale-90
                                             ${s === 'correct'
                                               ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
                                               : s === 'wrong'
@@ -1510,6 +1575,13 @@ export default function ScoreEntryPage() {
                                                   : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}>
                                           {s === 'correct' ? '\u2713' : s === 'wrong' ? '\u2717' : s === 'skipped' ? '~' : item.label}
                                         </button>
+                                        {s === 'wrong' && (
+                                          <FlagToggle
+                                            active={!!flaggedKeys[item.key]}
+                                            onToggle={() => handleFlagToggle(item.key)}
+                                          />
+                                        )}
+                                        </div>
                                       );
                                     })}
                                   </div>

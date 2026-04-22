@@ -19,6 +19,8 @@ export default defineSchema({
     pageNumber: v.optional(v.number()),
     pageNumberEnd: v.optional(v.number()),
     subQuestions: v.optional(v.any()), // Record<string, { count: number, type: 'letter' | 'roman' }>
+    videoUrl: v.optional(v.string()), // YouTube (unlisted) URL for concept-type rows
+    conceptSummary: v.optional(v.string()), // short text shown next to video
   }).index("by_unit", ["unitId"]),
 
   entries: defineTable({
@@ -142,4 +144,50 @@ export default defineSchema({
   })
     .index("by_textbook", ["textbookId"])
     .index("by_textbook_page", ["textbookId", "pageNumber"]),
+
+  // Doubts queue surfaced on the Lead's dashboard.
+  // Sources:
+  //   "correction"  — Correction Officer flagged a wrong answer as "needs explanation"
+  //   "student-app" — Student tapped "I need help" from their tablet/home
+  //   "lead-manual" — Lead added a student to the queue manually
+  doubts: defineTable({
+    studentId: v.id("students"),
+    centerId: v.optional(v.id("centers")),
+    slotId: v.optional(v.id("scheduleSlots")),
+    raisedAt: v.number(),
+    source: v.string(), // "correction" | "student-app" | "lead-manual"
+    status: v.string(), // "pending" | "in-progress" | "resolved"
+    exerciseId: v.optional(v.id("exercises")),
+    conceptExerciseId: v.optional(v.id("exercises")), // concept-type exercise this doubt maps to
+    // Question key matches the entries.questions shape: "1", "3", "2.a", "5.iii".
+    // Stored as string so sub-questions stay identifiable.
+    questionKey: v.optional(v.string()),
+    note: v.optional(v.string()),
+    resolvedAt: v.optional(v.number()),
+    resolvedByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_status", ["status"])
+    .index("by_student", ["studentId"])
+    .index("by_center_status", ["centerId", "status"])
+    .index("by_slot_status", ["slotId", "status"])
+    .index("by_student_exercise", ["studentId", "exerciseId"]),
+
+  // Lead's per-student "next task" for a given day. Upserted by (studentId, date).
+  // Phase 4 (student tablet) reads this for the student's home screen.
+  currentAssignments: defineTable({
+    studentId: v.id("students"),
+    date: v.string(), // YYYY-MM-DD
+    slotId: v.optional(v.id("scheduleSlots")),
+    type: v.string(), // "exercise" | "concept" | "redo" | "resting"
+    exerciseId: v.optional(v.id("exercises")), // for exercise/concept
+    redoEntryId: v.optional(v.id("entries")), // for redo: past entry containing the mistake
+    redoQuestionKey: v.optional(v.string()), // for redo: specific question within that entry
+    note: v.optional(v.string()),
+    assignedAt: v.number(),
+    assignedByTeacherId: v.optional(v.id("teachers")),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_student_date", ["studentId", "date"])
+    .index("by_slot_date", ["slotId", "date"])
+    .index("by_date", ["date"]),
 });

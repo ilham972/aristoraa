@@ -39,6 +39,29 @@ export interface Exercise {
   name: string;
   questionCount: number;
   order: number;
+  type?: 'exercise' | 'concept';
+  videoUrl?: string; // concept-type only: YouTube (unlisted) URL
+  conceptSummary?: string; // concept-type only: short text
+}
+
+export type DoubtSource = 'correction' | 'student-app' | 'lead-manual';
+export type DoubtStatus = 'pending' | 'in-progress' | 'resolved';
+
+export interface Doubt {
+  id: string;
+  studentId: string;
+  centerId?: string;
+  slotId?: string;
+  raisedAt: number;
+  source: DoubtSource;
+  status: DoubtStatus;
+  exerciseId?: string;
+  conceptExerciseId?: string;
+  /** Matches entries.questions key format: "1", "3", "2.a", "5.iii". */
+  questionKey?: string;
+  note?: string;
+  resolvedAt?: number;
+  resolvedByTeacherId?: string;
 }
 
 export interface ScoreEntry {

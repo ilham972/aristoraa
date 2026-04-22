@@ -40,6 +40,10 @@ export const getByClerkUserId = query({
   },
 });
 
+// Valid role values. `teacher` is a legacy alias kept for backward compat —
+// new assignments should pick `lead` or `correction` explicitly.
+const VALID_ROLES = ["admin", "lead", "correction", "teacher"];
+
 export const add = mutation({
   args: {
     clerkUserId: v.string(),
@@ -50,8 +54,7 @@ export const add = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
 
-    // Only allow "admin" or "teacher" roles
-    if (args.role !== "admin" && args.role !== "teacher") {
+    if (!VALID_ROLES.includes(args.role)) {
       throw new Error("Invalid role");
     }
 
@@ -81,7 +84,7 @@ export const update = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
 
-    if (args.role !== "admin" && args.role !== "teacher") {
+    if (!VALID_ROLES.includes(args.role)) {
       throw new Error("Invalid role");
     }
 

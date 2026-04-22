@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { BarChart3, Pencil, Trash2, Plus } from 'lucide-react';
+import { BarChart3, Pencil, Trash2, Plus, Activity } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -143,12 +143,20 @@ export default function StudentsPage() {
 
   return (
     <div className="px-4 pt-5 pb-6 max-w-lg mx-auto">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2">
         <h1 className="text-lg font-bold text-foreground">Students</h1>
-        <Button onClick={openAdd} size="sm" className="rounded-xl gap-1.5">
-          <Plus className="w-4 h-4" />
-          Add
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Link href="/timeline/compare">
+            <Button size="sm" variant="outline" className="rounded-xl gap-1.5">
+              <Activity className="w-4 h-4" />
+              Timeline
+            </Button>
+          </Link>
+          <Button onClick={openAdd} size="sm" className="rounded-xl gap-1.5">
+            <Plus className="w-4 h-4" />
+            Add
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -213,6 +221,11 @@ export default function StudentsPage() {
                     <Link href={`/progress?id=${student._id}`}>
                       <Button variant="ghost" size="icon-xs" title="View Progress">
                         <BarChart3 className="w-3.5 h-3.5" />
+                      </Button>
+                    </Link>
+                    <Link href={`/timeline/student/${student._id}`}>
+                      <Button variant="ghost" size="icon-xs" title="View Timeline">
+                        <Activity className="w-3.5 h-3.5" />
                       </Button>
                     </Link>
                     <Button variant="ghost" size="icon-xs" onClick={() => handleEdit(student)} title="Edit">
