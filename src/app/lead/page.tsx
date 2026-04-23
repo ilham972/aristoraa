@@ -30,7 +30,8 @@ import type { Id } from '@/lib/convex';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { useActiveSlot } from '@/hooks/useActiveSlot';
 import { getTodayDateStr, MODULE_COLORS } from '@/lib/types';
-import { getModuleById, getModuleForDay } from '@/lib/curriculum-data';
+import { CURRICULUM_MODULES, getModuleById, getModuleForDay } from '@/lib/curriculum-data';
+import { resolveAssignedGrades, lowestAssignedGrade } from '@/lib/student-grades';
 import { toast } from 'sonner';
 
 const IDLE_WARNING_MIN = 20;
@@ -281,10 +282,8 @@ export default function LeadDashboardPage() {
         <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-3xl">
           {curriculumStudent && (
             <CurriculumDrawerBody
-              studentId={curriculumStudent._id}
-              studentName={curriculumStudent.name}
-              schoolGrade={curriculumStudent.schoolGrade}
-              moduleId={slotModuleId}
+              student={curriculumStudent}
+              initialModuleId={slotModuleId}
               today={today}
               slotId={slotId}
               teacherId={teacher?._id ?? null}
@@ -776,10 +775,8 @@ type RowStatus =
   | 'here';
 
 function CurriculumDrawerBody({
-  studentId,
-  studentName,
-  schoolGrade,
-  moduleId,
+  student,
+  initialModuleId,
   today,
   slotId,
   teacherId,
@@ -788,10 +785,14 @@ function CurriculumDrawerBody({
   onClearAssignment,
   onClose,
 }: {
-  studentId: Id<'students'>;
-  studentName: string;
-  schoolGrade: number;
-  moduleId: string | null;
+  student: {
+    _id: Id<'students'>;
+    name: string;
+    schoolGrade: number;
+    assignedGrades?: number[];
+    assignedGradesByModule?: Record<string, number[]>;
+  };
+  initialModuleId: string | null;
   today: string;
   slotId: Id<'scheduleSlots'> | null;
   teacherId: Id<'teachers'> | null;
@@ -809,25 +810,113 @@ function CurriculumDrawerBody({
   onClearAssignment: () => Promise<void>;
   onClose: () => void;
 }) {
-  // Compute the unit IDs for the student's grade in this module.
-  const moduleData = moduleId ? getModuleById(moduleId) : null;
-  const gradeData = moduleData?.grades.find((g) => g.grade === schoolGrade) ?? null;
+  const { _id: studentId, name: studentName, schoolGrade } = student;
+
+  // Cycling state — mirrors the scoring page's module/grade/term pills so the
+  // lead can flip through the student's curriculum without closing the drawer.
+  // Term = null means "show all terms of the active grade".
+  const [activeModuleId, setActiveModuleId] = useState<string | null>(initialModuleId);
+  const [activeGrade, setActiveGrade] = useState<number>(() => {
+    if (initialModuleId) return lowestAssignedGrade(student, initialModuleId);
+    return schoolGrade;
+  });
+  const [activeTerm, setActiveTerm] = useState<number | null>(null);
+
+  const moduleData = activeModuleId ? getModuleById(activeModuleId) : null;
+  const gradeData = moduleData?.grades.find((g) => g.grade === activeGrade) ?? null;
+
+  // Modules that have at least one assigned-grade unit for this student.
+  const cyclableModules = useMemo(() => {
+    return CURRICULUM_MODULES.filter((mod) => {
+      const assigned = new Set(resolveAssignedGrades(student, mod.id));
+      return mod.grades.some(
+        (g) => assigned.has(g.grade) && g.terms.some((t) => t.units.length > 0),
+      );
+    });
+  }, [student]);
+
+  // Grades for the active module filtered by the student's assigned grades.
+  type ModuleGrade = NonNullable<ReturnType<typeof getModuleById>>['grades'][number];
+  const cyclableGrades = useMemo<ModuleGrade[]>(() => {
+    if (!moduleData) return [];
+    const assigned = new Set(resolveAssignedGrades(student, moduleData.id));
+    return moduleData.grades.filter(
+      (g) => assigned.has(g.grade) && g.terms.some((t) => t.units.length > 0),
+    );
+  }, [moduleData, student]);
+
+  // Terms for the active grade that actually have units.
+  const cyclableTerms = useMemo(
+    () => (gradeData ? gradeData.terms.filter((t) => t.units.length > 0) : []),
+    [gradeData],
+  );
+
+  // Keep grade valid when module changes.
+  useEffect(() => {
+    if (!activeModuleId) return;
+    const assigned = new Set(resolveAssignedGrades(student, activeModuleId));
+    if (!assigned.has(activeGrade)) {
+      setActiveGrade(lowestAssignedGrade(student, activeModuleId));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModuleId, student]);
+
+  // Clear term filter if it no longer exists in the active grade.
+  useEffect(() => {
+    if (activeTerm != null && !cyclableTerms.some((t) => t.term === activeTerm)) {
+      setActiveTerm(null);
+    }
+  }, [cyclableTerms, activeTerm]);
+
+  // Compute the unit IDs for the student's selected grade (and term) in this module.
   const orderedUnits = useMemo(() => {
     if (!gradeData) return [] as { id: string; name: string; term: number }[];
     const rows: { id: string; name: string; term: number }[] = [];
     for (const t of gradeData.terms) {
+      if (activeTerm != null && t.term !== activeTerm) continue;
       for (const u of t.units) rows.push({ id: u.id, name: u.name, term: t.term });
     }
     return rows;
-  }, [gradeData]);
+  }, [gradeData, activeTerm]);
   const unitIds = useMemo(() => orderedUnits.map((u) => u.id), [orderedUnits]);
 
   const ctx = useQuery(
     api.lead.studentContext,
-    moduleId
-      ? { studentId, moduleId, date: today, unitIds }
+    activeModuleId
+      ? { studentId, moduleId: activeModuleId, date: today, unitIds }
       : 'skip',
   );
+
+  const handleCycleModule = () => {
+    if (cyclableModules.length === 0) return;
+    const curIdx = cyclableModules.findIndex((m) => m.id === activeModuleId);
+    const next = cyclableModules[(curIdx + 1) % cyclableModules.length];
+    setActiveModuleId(next.id);
+    setActiveTerm(null);
+  };
+
+  const handleCycleGrade = () => {
+    if (cyclableGrades.length === 0) return;
+    const curIdx = cyclableGrades.findIndex((g) => g.grade === activeGrade);
+    const next = cyclableGrades[(curIdx + 1) % cyclableGrades.length];
+    setActiveGrade(next.grade);
+    setActiveTerm(null);
+  };
+
+  const handleCycleTerm = () => {
+    if (cyclableTerms.length === 0) return;
+    // "All" → T1 → T2 → T3 → All
+    if (activeTerm == null) {
+      setActiveTerm(cyclableTerms[0].term);
+      return;
+    }
+    const curIdx = cyclableTerms.findIndex((t) => t.term === activeTerm);
+    if (curIdx === cyclableTerms.length - 1) {
+      setActiveTerm(null);
+    } else {
+      setActiveTerm(cyclableTerms[curIdx + 1].term);
+    }
+  };
 
   // Index entries by exerciseId and pick the latest entry per exercise.
   const entriesByExId = useMemo(() => {
@@ -941,16 +1030,49 @@ function CurriculumDrawerBody({
     return () => clearTimeout(t);
   }, [hereExerciseId, timelineByUnit.length]);
 
-  const loading = !ctx || !moduleId;
+  const loading = !ctx || !activeModuleId;
 
   return (
     <>
       <StudentDrawerHeader
         name={studentName}
         schoolGrade={schoolGrade}
-        moduleId={moduleId}
+        moduleId={activeModuleId}
         subtitle={moduleData ? moduleData.name : undefined}
       />
+
+      {/* Module / Grade / Term cycling pills — match the scoring page so the
+          lead can flip through modules without closing the drawer. */}
+      <div className="mt-3 flex items-center gap-1.5">
+        <button
+          onClick={handleCycleModule}
+          disabled={cyclableModules.length === 0}
+          className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95 disabled:opacity-40"
+          title="Cycle module"
+        >
+          {activeModuleId ?? '—'}
+        </button>
+        <button
+          onClick={handleCycleGrade}
+          disabled={cyclableGrades.length <= 1}
+          className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95 disabled:opacity-40"
+          title={cyclableGrades.length <= 1 ? 'Only one grade assigned' : 'Cycle grade'}
+        >
+          G{activeGrade}
+        </button>
+        <button
+          onClick={handleCycleTerm}
+          disabled={cyclableTerms.length === 0}
+          className="px-2.5 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-[11px] font-mono font-bold text-foreground transition-all active:scale-95 disabled:opacity-40"
+          title={activeTerm == null ? 'Filter to a term' : 'Next term'}
+        >
+          {activeTerm == null ? 'All T' : `T${activeTerm}`}
+        </button>
+        <div className="flex-1" />
+        <span className="text-[10px] text-muted-foreground">
+          {cyclableModules.length} mod · {cyclableGrades.length} gr
+        </span>
+      </div>
 
       {/* Current assignment strip */}
       {currentAssignment && (
