@@ -8,6 +8,14 @@ export default defineSchema({
     parentPhone: v.string(),
     schoolName: v.string(),
     centerId: v.optional(v.id("centers")),
+    // Grades the student is taught across all 6 modules. Defaults to
+    // [schoolGrade] when unset. Lead can downgrade a weak student by adding
+    // lower grades (e.g. a G10 student gets [10, 9] so they re-cover G9 work).
+    assignedGrades: v.optional(v.array(v.number())),
+    // Per-module override of assignedGrades. Key = moduleId ("M1".."M6"),
+    // value = grade list. When a module has its own override, it takes
+    // precedence over the global assignedGrades for that module.
+    assignedGradesByModule: v.optional(v.any()),
   }).index("by_center", ["centerId"]),
 
   exercises: defineTable({

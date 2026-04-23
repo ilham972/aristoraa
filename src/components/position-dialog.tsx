@@ -2,12 +2,11 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { CURRICULUM_MODULES, getOrderedUnits, getModuleById } from '@/lib/curriculum-data';
 import { getStudentNextExercise, getExerciseDetails, type PositionOptions } from '@/lib/scoring';
 import { getTotalScoreable } from '@/lib/sub-questions';
-import { X, RotateCcw, Layers, ArrowDownNarrowWide } from 'lucide-react';
-import { toast } from 'sonner';
+import { resolveAssignedGrades, lowestAssignedGrade } from '@/lib/student-grades';
+import { X, Layers, ArrowDownNarrowWide } from 'lucide-react';
 import type { Id } from '@/lib/convex';
 
 // ─── Types ───
@@ -15,7 +14,14 @@ import type { Id } from '@/lib/convex';
 type EntryLike = { studentId: string; moduleId: string; exerciseId: string; correctCount: number; totalAttempted: number; questions?: Record<string, string>; _id?: string };
 type ExerciseLike = { _id: string; unitId: string; name: string; questionCount: number; order: number; type?: string; pageNumber?: number; moduleId?: string; subQuestions?: Record<string, { count: number; type: 'letter' | 'roman' }> | null };
 type PositionLike = { studentId: string; moduleId: string; grade: number; term: number };
-type StudentLike = { _id: Id<"students">; name: string; schoolGrade: number; badgeColor?: string };
+type StudentLike = {
+  _id: Id<"students">;
+  name: string;
+  schoolGrade: number;
+  badgeColor?: string;
+  assignedGrades?: number[];
+  assignedGradesByModule?: Record<string, number[]>;
+};
 
 interface PositionDialogProps {
   open: boolean;
@@ -29,7 +35,6 @@ interface PositionDialogProps {
   /** If provided, dialog opens at this grade instead of auto-detecting from the student's saved position. */
   initialGrade?: number;
   onSelectExercise: (studentId: Id<"students">, exerciseId: string, unitId: string, moduleId: string) => void;
-  onSavePosition: (studentId: Id<"students">, moduleId: string, grade: number, term: number) => Promise<void>;
 }
 
 // Term background tints
@@ -44,15 +49,12 @@ const UNIT_ORDER_KEY = 'mt-position-unit-order';
 
 export function PositionDialog({
   open, onOpenChange, students, allEntries, allExercises, modulePositions,
-  initialStudentId, initialModuleId, initialGrade, onSelectExercise, onSavePosition,
+  initialStudentId, initialModuleId, initialGrade, onSelectExercise,
 }: PositionDialogProps) {
   // ─── State ───
   const [activeStudentId, setActiveStudentId] = useState<Id<"students">>(initialStudentId);
   const [activeModuleId, setActiveModuleId] = useState(initialModuleId);
   const [activeGrade, setActiveGrade] = useState<number>(6);
-  const [subTab, setSubTab] = useState<'progress' | 'position'>('progress');
-  const [draftPositionExId, setDraftPositionExId] = useState<string | null>(null);
-  const [positionDirty, setPositionDirty] = useState(false);
   const [moduleViewOn, setModuleViewOn] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try { const v = localStorage.getItem(MODULE_VIEW_KEY); return v === null ? true : JSON.parse(v); } catch { return true; }
@@ -75,18 +77,15 @@ export function PositionDialog({
     if (open) {
       setActiveStudentId(initialStudentId);
       setActiveModuleId(initialModuleId);
-      setSubTab('progress');
-      setDraftPositionExId(null);
-      setPositionDirty(false);
       // Prefer explicit initialGrade (caller is pointing at a specific view);
-      // otherwise auto-detect from the student's saved position.
+      // otherwise auto-detect from the student's current activity-derived position.
       if (initialGrade !== undefined) {
         setActiveGrade(initialGrade);
       } else {
         const student = students.find(s => s._id === initialStudentId);
         if (student) {
           const pos = getStudentPosition(initialStudentId, initialModuleId);
-          setActiveGrade(pos?.grade ?? student.schoolGrade);
+          setActiveGrade(pos?.grade ?? lowestAssignedGrade(student, initialModuleId));
         }
       }
     }
@@ -96,16 +95,48 @@ export function PositionDialog({
   // ─── Derived ───
   const activeStudent = useMemo(() => students.find(s => s._id === activeStudentId), [students, activeStudentId]);
   const activeMod = useMemo(() => CURRICULUM_MODULES.find(m => m.id === activeModuleId), [activeModuleId]);
-  const moduleGrades = useMemo(() => activeMod?.grades ?? [], [activeMod]);
 
-  // Get student position for a module
+  // Grades the active student is taught in the active module.
+  const assignedGradesForActive = useMemo(() => {
+    if (!activeStudent) return new Set<number>();
+    return new Set(resolveAssignedGrades(activeStudent, activeModuleId));
+  }, [activeStudent, activeModuleId]);
+
+  // Module grade tabs filtered to the student's assigned grades
+  const moduleGrades = useMemo(() => {
+    if (!activeMod) return [];
+    return activeMod.grades.filter((g) => assignedGradesForActive.has(g.grade));
+  }, [activeMod, assignedGradesForActive]);
+
+  // All-modules grade tabs (union of assigned grades across modules where the
+  // student has assignments)
+  const allModulesGradeTabs = useMemo(() => {
+    if (!activeStudent) return [] as Array<{ grade: number }>;
+    const set = new Set<number>();
+    for (const mod of CURRICULUM_MODULES) {
+      const grades = resolveAssignedGrades(activeStudent, mod.id);
+      // Only include grades that actually exist in this module
+      for (const g of grades) {
+        if (mod.grades.some((mg) => mg.grade === g)) set.add(g);
+      }
+    }
+    return Array.from(set).sort((a, b) => a - b).map((g) => ({ grade: g }));
+  }, [activeStudent]);
+
+  // Get student position for a module (auto-derived from activity)
   const getStudentPosition = useCallback((sid: string, modId: string) => {
-    const override = modulePositions.find(p => p.studentId === sid && p.moduleId === modId);
     const student = students.find(s => s._id === sid);
-    const grade = override?.grade ?? student?.schoolGrade ?? 6;
+    const override = modulePositions.find(p => p.studentId === sid && p.moduleId === modId);
+    const defaultGrade = student
+      ? lowestAssignedGrade(student, modId)
+      : (override?.grade ?? 6);
+    const grade = override?.grade ?? defaultGrade;
     const term = override?.term ?? 1;
     const units = getOrderedUnits(modId);
-    const opts: PositionOptions = { positionOverride: override ? { grade: override.grade, term: override.term } : undefined, defaultGrade: student?.schoolGrade ?? 6 };
+    const opts: PositionOptions = {
+      positionOverride: override ? { grade: override.grade, term: override.term } : undefined,
+      defaultGrade,
+    };
     const next = getStudentNextExercise(sid, modId, allEntries, allExercises, units, opts);
     return { grade, term, nextExerciseId: next?.exerciseId ?? null, nextUnitId: next?.unitId ?? null };
   }, [modulePositions, students, allEntries, allExercises]);
@@ -117,27 +148,28 @@ export function PositionDialog({
   );
 
   // ─── Module progress for progress bars ───
+  // Counts only exercises within the student's assigned grades for that module.
   const moduleProgress = useMemo(() => {
     return CURRICULUM_MODULES.map(mod => {
       const units = getOrderedUnits(mod.id);
-      const student = students.find(s => s._id === activeStudentId);
-      const override = modulePositions.find(p => p.studentId === activeStudentId && p.moduleId === mod.id);
-      const startGrade = override?.grade ?? student?.schoolGrade ?? 6;
+      const assigned = activeStudent
+        ? new Set(resolveAssignedGrades(activeStudent, mod.id))
+        : new Set<number>();
 
       let total = 0, completed = 0;
       for (const unit of units) {
-        if (unit.grade < startGrade) continue;
+        if (!assigned.has(unit.grade)) continue;
         const exs = allExercises.filter(e => e.unitId === unit.id && (e.type || 'exercise') === 'exercise');
         for (const ex of exs) {
           total++;
           const entry = allEntries.find(e => e.studentId === activeStudentId && e.exerciseId === ex._id);
           const effQ = getTotalScoreable(ex.questionCount, ex.subQuestions);
-            if (entry && entry.totalAttempted >= effQ) completed++;
+          if (entry && entry.totalAttempted >= effQ) completed++;
         }
       }
       return { moduleId: mod.id, color: mod.color, name: mod.name, total, completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 };
     });
-  }, [activeStudentId, allEntries, allExercises, modulePositions, students]);
+  }, [activeStudentId, activeStudent, allEntries, allExercises]);
 
   const overallProgress = useMemo(() => {
     const t = moduleProgress.reduce((s, m) => s + m.total, 0);
@@ -176,6 +208,8 @@ export function PositionDialog({
       if (!activeMod) return [];
       const gradeData = activeMod.grades.find(g => g.grade === activeGrade);
       if (!gradeData) return [];
+      // Skip if grade is not assigned to the student
+      if (!assignedGradesForActive.has(activeGrade)) return [];
 
       let unitIdx = 0;
       for (const term of gradeData.terms) {
@@ -196,16 +230,22 @@ export function PositionDialog({
         }
       }
     } else {
-      // All modules — group by term across modules
-      // Collect all terms, then within each term gather units from all modules
+      // All modules — group by term across modules. Only include modules where
+      // this grade is assigned for this student.
       const termNums = new Set<number>();
       for (const mod of CURRICULUM_MODULES) {
+        if (!activeStudent) continue;
+        const gradesForMod = new Set(resolveAssignedGrades(activeStudent, mod.id));
+        if (!gradesForMod.has(activeGrade)) continue;
         const gd = mod.grades.find(g => g.grade === activeGrade);
         if (gd) for (const t of gd.terms) termNums.add(t.term);
       }
 
       for (const termNum of Array.from(termNums).sort((a, b) => a - b)) {
         for (const mod of CURRICULUM_MODULES) {
+          if (!activeStudent) continue;
+          const gradesForMod = new Set(resolveAssignedGrades(activeStudent, mod.id));
+          if (!gradesForMod.has(activeGrade)) continue;
           const gradeData = mod.grades.find(g => g.grade === activeGrade);
           if (!gradeData) continue;
           const termData = gradeData.terms.find(t => t.term === termNum);
@@ -232,14 +272,13 @@ export function PositionDialog({
       }
     }
     return rows;
-  }, [activeMod, activeGrade, activeStudentId, allEntries, allExercises, currentPos.nextExerciseId, moduleViewOn, allModuleCurrentPositions]);
+  }, [activeMod, activeGrade, activeStudentId, activeStudent, allEntries, allExercises, currentPos.nextExerciseId, moduleViewOn, allModuleCurrentPositions, assignedGradesForActive]);
 
   // Group rows for tinting
   const termGroups = useMemo(() => {
     const groups: Array<{ term: number; moduleId: string; moduleColor: string; rows: typeof gridData }> = [];
 
     if (!moduleViewOn && unitOrderOn) {
-      // Sort all rows by unit number, then group by term
       const sorted = [...gridData].sort((a, b) => {
         const na = parseInt(a.unitLabel) || 0;
         const nb = parseInt(b.unitLabel) || 0;
@@ -269,74 +308,30 @@ export function PositionDialog({
     return groups;
   }, [gridData, moduleViewOn, unitOrderOn]);
 
-  // ─── Position tab: determine which exercises are "before" the draft position ───
-  const orderedExerciseIds = useMemo(() => {
-    if (!activeMod) return [];
-    const ids: string[] = [];
-    for (const grade of activeMod.grades) {
-      for (const term of grade.terms) {
-        for (const unit of term.units) {
-          const exs = allExercises.filter(e => e.unitId === unit.id && (e.type || 'exercise') === 'exercise').sort((a, b) => a.order - b.order);
-          for (const ex of exs) ids.push(ex._id);
-        }
-      }
-    }
-    return ids;
-  }, [activeMod, allExercises]);
-
-  const draftSkippedSet = useMemo(() => {
-    if (!draftPositionExId) return new Set<string>();
-    const idx = orderedExerciseIds.indexOf(draftPositionExId);
-    if (idx <= 0) return new Set<string>();
-    return new Set(orderedExerciseIds.slice(0, idx));
-  }, [draftPositionExId, orderedExerciseIds]);
-
-  // Find grade+term for the draft position exercise
-  const draftPositionInfo = useMemo(() => {
-    if (!draftPositionExId || !activeMod) return null;
-    for (const grade of activeMod.grades) {
-      for (const term of grade.terms) {
-        for (const unit of term.units) {
-          const exs = allExercises.filter(e => e.unitId === unit.id && (e.type || 'exercise') === 'exercise');
-          if (exs.some(e => e._id === draftPositionExId)) {
-            return { grade: grade.grade, term: term.term, unitId: unit.id };
-          }
-        }
-      }
-    }
-    return null;
-  }, [draftPositionExId, activeMod, allExercises]);
-
   // ─── Handlers ───
   const handleStudentSwitch = useCallback((sid: Id<"students">) => {
     setActiveStudentId(sid);
-    setDraftPositionExId(null);
-    setPositionDirty(false);
-    // Auto-navigate to student's current position grade
-    const pos = getStudentPosition(sid, activeModuleId);
     const student = students.find(s => s._id === sid);
-    // If this grade exists in the module, navigate to it
+    const pos = getStudentPosition(sid, activeModuleId);
     const mod = getModuleById(activeModuleId);
-    const posGrade = pos.grade;
-    if (mod?.grades.some(g => g.grade === posGrade)) {
-      setActiveGrade(posGrade);
+    const assigned = student ? new Set(resolveAssignedGrades(student, activeModuleId)) : new Set<number>();
+    if (mod?.grades.some(g => g.grade === pos.grade) && assigned.has(pos.grade)) {
+      setActiveGrade(pos.grade);
     } else if (student) {
-      setActiveGrade(student.schoolGrade);
+      setActiveGrade(lowestAssignedGrade(student, activeModuleId));
     }
   }, [activeModuleId, getStudentPosition, students]);
 
   const handleModuleSwitch = useCallback((modId: string) => {
     setActiveModuleId(modId);
-    setDraftPositionExId(null);
-    setPositionDirty(false);
-    // Auto-navigate to student's position grade in this module
     const pos = getStudentPosition(activeStudentId, modId);
     const mod = getModuleById(modId);
-    if (mod?.grades.some(g => g.grade === pos.grade)) {
+    const student = students.find(s => s._id === activeStudentId);
+    const assigned = student ? new Set(resolveAssignedGrades(student, modId)) : new Set<number>();
+    if (mod?.grades.some(g => g.grade === pos.grade) && assigned.has(pos.grade)) {
       setActiveGrade(pos.grade);
-    } else {
-      const student = students.find(s => s._id === activeStudentId);
-      setActiveGrade(student?.schoolGrade ?? 6);
+    } else if (student) {
+      setActiveGrade(lowestAssignedGrade(student, modId));
     }
   }, [activeStudentId, getStudentPosition, students]);
 
@@ -344,34 +339,6 @@ export function PositionDialog({
     onSelectExercise(activeStudentId, exerciseId, unitId, moduleId);
     onOpenChange(false);
   }, [activeStudentId, onSelectExercise, onOpenChange]);
-
-  const handlePositionCellTap = useCallback((exerciseId: string) => {
-    setDraftPositionExId(exerciseId);
-    setPositionDirty(true);
-  }, []);
-
-  const handleSavePosition = useCallback(async () => {
-    if (!draftPositionInfo) return;
-    await onSavePosition(activeStudentId, activeModuleId, draftPositionInfo.grade, draftPositionInfo.term);
-    setDraftPositionExId(null);
-    setPositionDirty(false);
-    toast.success('Position saved');
-  }, [activeStudentId, activeModuleId, draftPositionInfo, onSavePosition]);
-
-  const handleDiscardPosition = useCallback(() => {
-    setDraftPositionExId(null);
-    setPositionDirty(false);
-  }, []);
-
-  // ─── Check if grade is below student's school grade ───
-  const isBelowGrade = useCallback((grade: number, modId?: string) => {
-    const student = students.find(s => s._id === activeStudentId);
-    if (!student) return false;
-    const mid = modId ?? activeModuleId;
-    const override = modulePositions.find(p => p.studentId === activeStudentId && p.moduleId === mid);
-    const startGrade = override?.grade ?? student.schoolGrade;
-    return grade < startGrade;
-  }, [activeStudentId, activeModuleId, modulePositions, students]);
 
   if (!open) return null;
 
@@ -381,23 +348,13 @@ export function PositionDialog({
         showCloseButton={false}
         className="fixed inset-0 max-w-none w-full h-full rounded-none p-0 translate-x-0 translate-y-0 top-0 left-0 overflow-hidden flex flex-col sm:max-w-none"
       >
-        {/* ═══ TOP BAR: Progress/Position tabs + Module toggle + Close ═══ */}
+        {/* ═══ TOP BAR: Position label + Module toggle + Close ═══ */}
         <div className="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-border/50 shrink-0">
-          <div className="flex gap-1 flex-1 min-w-0">
-            <button
-              onClick={() => setSubTab('progress')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all
-                ${subTab === 'progress' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
-            >
-              Progress
-            </button>
-            <button
-              onClick={() => setSubTab('position')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all
-                ${subTab === 'position' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
-            >
-              Position
-            </button>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-bold text-foreground">Position & Progress</h2>
+            <p className="text-[10px] text-muted-foreground">
+              Position auto-tracks the last exercise scored or video watched.
+            </p>
           </div>
           {!moduleViewOn && (
             <button
@@ -489,30 +446,26 @@ export function PositionDialog({
             </>
           )}
 
-          {/* ═══ GRADE TABS ═══ */}
+          {/* ═══ GRADE TABS (filtered to student's assigned grades) ═══ */}
           <div className="flex gap-1 px-4 mb-3 overflow-x-auto py-1">
-            {(moduleViewOn ? moduleGrades : (() => {
-              // When module view is off, collect all unique grades across all modules
-              const gradeSet = new Set<number>();
-              for (const mod of CURRICULUM_MODULES) {
-                for (const g of mod.grades) gradeSet.add(g.grade);
-              }
-              return Array.from(gradeSet).sort((a, b) => a - b).map(g => ({ grade: g }));
-            })()).map(g => {
-              const below = isBelowGrade(g.grade);
+            {(moduleViewOn ? moduleGrades : allModulesGradeTabs).map(g => {
               const isActive = g.grade === activeGrade;
               return (
                 <button
                   key={g.grade}
-                  onClick={() => { setActiveGrade(g.grade); setDraftPositionExId(null); setPositionDirty(false); }}
+                  onClick={() => setActiveGrade(g.grade)}
                   className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all active:scale-95
-                    ${isActive ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'}
-                    ${below && !isActive ? 'opacity-40' : ''}`}
+                    ${isActive ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'}`}
                 >
                   G{g.grade}
                 </button>
               );
             })}
+            {(moduleViewOn ? moduleGrades : allModulesGradeTabs).length === 0 && (
+              <span className="text-[11px] text-muted-foreground py-1.5">
+                No grades assigned for this student in this module.
+              </span>
+            )}
           </div>
 
           {/* ═══ EXERCISE GRID (transposed: units = rows, exercises = columns) ═══ */}
@@ -542,32 +495,17 @@ export function PositionDialog({
                           </div>
                           {/* Exercise cells - horizontal */}
                           <div className="flex gap-0.5">
-                            {row.exercises.map(ex => {
-                              const isDraftSkipped = subTab === 'position' && draftSkippedSet.has(ex.exerciseId);
-                              const isDraftPosition = subTab === 'position' && draftPositionExId === ex.exerciseId;
-
-                              return (
-                                <ExerciseCell
-                                  key={ex.exerciseId}
-                                  label={ex.label}
-                                  percentage={ex.percentage}
-                                  status={ex.status}
-                                  hasWrong={ex.hasWrong}
-                                  isCurrentPosition={ex.isCurrentPosition}
-                                  isBelowGrade={isBelowGrade(row.grade, row.moduleId)}
-                                  isDraftSkipped={isDraftSkipped}
-                                  isDraftPosition={isDraftPosition}
-                                  isPositionTab={subTab === 'position'}
-                                  onClick={() => {
-                                    if (subTab === 'progress') {
-                                      handleProgressCellTap(ex.exerciseId, row.unitId, row.moduleId);
-                                    } else {
-                                      handlePositionCellTap(ex.exerciseId);
-                                    }
-                                  }}
-                                />
-                              );
-                            })}
+                            {row.exercises.map(ex => (
+                              <ExerciseCell
+                                key={ex.exerciseId}
+                                label={ex.label}
+                                percentage={ex.percentage}
+                                status={ex.status}
+                                hasWrong={ex.hasWrong}
+                                isCurrentPosition={ex.isCurrentPosition}
+                                onClick={() => handleProgressCellTap(ex.exerciseId, row.unitId, row.moduleId)}
+                              />
+                            ))}
                           </div>
                         </div>
                       ))}
@@ -586,22 +524,10 @@ export function PositionDialog({
               <LegendDot color="bg-muted border border-border" label="Not started" />
               <LegendDot color="bg-emerald-300 dark:bg-emerald-400/30" label="Skipped" />
               <LegendDot color="bg-red-400/40" label="Has errors" />
+              <LegendDot color="bg-emerald-500 ring-1 ring-emerald-500" label="Current position" />
             </div>
           </div>
         </div>
-
-        {/* ═══ POSITION TAB FOOTER ═══ */}
-        {subTab === 'position' && positionDirty && (
-          <div className="shrink-0 flex gap-2 px-4 py-3 border-t border-border/50 bg-background">
-            <Button variant="outline" className="flex-1" onClick={handleDiscardPosition}>
-              <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-              Discard
-            </Button>
-            <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={handleSavePosition}>
-              Save Position
-            </Button>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );
@@ -610,29 +536,20 @@ export function PositionDialog({
 // ─── Exercise Cell ───
 
 function ExerciseCell({
-  label, percentage, status, hasWrong, isCurrentPosition,
-  isBelowGrade, isDraftSkipped, isDraftPosition, isPositionTab, onClick,
+  label, percentage, status, hasWrong, isCurrentPosition, onClick,
 }: {
   label: string;
   percentage: number;
   status: 'perfect' | 'skipped' | 'wip' | 'none';
   hasWrong: boolean;
   isCurrentPosition: boolean;
-  isBelowGrade: boolean;
-  isDraftSkipped: boolean;
-  isDraftPosition: boolean;
-  isPositionTab: boolean;
   onClick: () => void;
 }) {
   // Determine cell color
   let bgClass = '';
   let textClass = '';
 
-  if (isDraftSkipped) {
-    // Position tab: everything before draft position
-    bgClass = 'bg-emerald-200 dark:bg-emerald-400/20';
-    textClass = 'text-emerald-700 dark:text-emerald-300';
-  } else if (status === 'perfect' && !hasWrong) {
+  if (status === 'perfect' && !hasWrong) {
     bgClass = 'bg-emerald-500';
     textClass = 'text-white';
   } else if (status === 'perfect' && hasWrong) {
@@ -654,16 +571,10 @@ function ExerciseCell({
       onClick={onClick}
       className={`relative w-12 h-10 rounded-lg flex flex-col items-center justify-center transition-all active:scale-90 shrink-0
         ${bgClass} ${textClass}
-        ${isBelowGrade ? 'opacity-30' : ''}
-        ${isDraftPosition ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''}
-        ${isCurrentPosition && !isPositionTab ? 'ring-2 ring-emerald-500 ring-offset-1 ring-offset-background' : ''}`}
+        ${isCurrentPosition ? 'ring-2 ring-emerald-500 ring-offset-1 ring-offset-background' : ''}`}
     >
-      {/* Current position indicator */}
-      {isCurrentPosition && !isPositionTab && (
+      {isCurrentPosition && (
         <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-background" />
-      )}
-      {isDraftPosition && (
-        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-primary border-2 border-background" />
       )}
       <span className="text-[11px] font-bold leading-none">{label}</span>
       {percentage > 0 && (

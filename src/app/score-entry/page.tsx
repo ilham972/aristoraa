@@ -13,6 +13,7 @@ import { getTodayDateStr, parseTimeToMinutes } from '@/lib/types';
 import { api } from '@/lib/convex';
 import { CURRICULUM_MODULES, getModuleForDay, getModuleById, getOrderedUnits, findUnit } from '@/lib/curriculum-data';
 import { getTotalCorrectForDay, calculateDailyPoints, getStudentNextExercise, getStudentUpcomingItems, getWeekDates, type PositionOptions } from '@/lib/scoring';
+import { resolveAssignedGrades, lowestAssignedGrade } from '@/lib/student-grades';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
@@ -253,7 +254,6 @@ export default function ScoreEntryPage() {
   // ─── Mutations ───
   const addEntryMut = useMutation(api.entries.add);
   const updateEntryMut = useMutation(api.entries.update);
-  const setModulePosMut = useMutation(api.studentModulePositions.set);
   const submitSessionNewMut = useMutation(api.sessionSubmissions.submit);
   const flagQuestionMut = useMutation(api.doubts.flagQuestion);
   const unflagQuestionMut = useMutation(api.doubts.removePendingForQuestion);
@@ -357,7 +357,10 @@ export default function ScoreEntryPage() {
     const units = getOrderedUnits(slotModule.id);
     for (const st of effectiveStudents) {
       const ov = modulePositions.find((p: { studentId: string; moduleId: string }) => p.studentId === st._id && p.moduleId === slotModule.id);
-      const opts: PositionOptions = { positionOverride: ov ? { grade: ov.grade, term: ov.term } : undefined, defaultGrade: st.schoolGrade };
+      const opts: PositionOptions = {
+        positionOverride: ov ? { grade: ov.grade, term: ov.term } : undefined,
+        defaultGrade: lowestAssignedGrade(st, slotModule.id),
+      };
       const next = getStudentNextExercise(st._id, slotModule.id, allEntries, allExercises, units, opts);
       if (next) {
         const ui = findUnit(next.unitId);
@@ -442,7 +445,7 @@ export default function ScoreEntryPage() {
   // Scoring students: ALL students with badge colors
   const scoringStudents = useMemo(() => {
     if (!effectiveStudents) return [];
-    return effectiveStudents.map((s: { _id: Id<"students">; name: string; schoolGrade: number }) => {
+    return effectiveStudents.map((s: { _id: Id<"students">; name: string; schoolGrade: number; assignedGrades?: number[]; assignedGradesByModule?: Record<string, number[]> }) => {
       const isPresent = presentStudentIds.has(s._id);
       const isFinished = finishedStudentIds.has(s._id);
       const hasEntries = studentsWithEntries.has(s._id);
@@ -493,7 +496,9 @@ export default function ScoreEntryPage() {
 
   const getPositionOpts = (sid: string, mid: string, grade: number): PositionOptions => {
     const ov = modulePositions?.find((p: { studentId: string; moduleId: string }) => p.studentId === sid && p.moduleId === mid);
-    return { positionOverride: ov ? { grade: ov.grade, term: ov.term } : undefined, defaultGrade: grade };
+    const st = effectiveStudents?.find((s: { _id: string }) => s._id === sid);
+    const defaultGrade = st ? lowestAssignedGrade(st as Parameters<typeof lowestAssignedGrade>[0], mid) : grade;
+    return { positionOverride: ov ? { grade: ov.grade, term: ov.term } : undefined, defaultGrade };
   };
   const getStudentTermUnits = (sid: string) => {
     const p = studentPositions.get(sid);
@@ -890,10 +895,6 @@ export default function ScoreEntryPage() {
     if (ex) setupScoring(ex, unitId, moduleId);
   };
 
-  const handlePositionSave = async (studentId: Id<"students">, moduleId: string, grade: number, term: number) => {
-    await setModulePosMut({ studentId, moduleId, grade, term });
-  };
-
   const saveEntry = async () => {
     if (!selectedStudentId || !scoringExercise) return;
     const qs: Record<string, string> = {};
@@ -1235,14 +1236,24 @@ export default function ScoreEntryPage() {
                       >
                         {displayPos.moduleId}
                       </button>
-                      {/* Grade cycling pill — skips grades with empty terms. */}
+                      {/* Grade cycling pill — only iterates the student's
+                          assigned grades for this module. Skips grades with
+                          empty terms. */}
                       <button
                         onClick={() => {
                           const mod = CURRICULUM_MODULES.find(m => m.id === displayPos.moduleId);
-                          if (!mod) return;
-                          const curIdx = mod.grades.findIndex(g => g.grade === displayPos.grade);
-                          for (let offset = 1; offset <= mod.grades.length; offset++) {
-                            const nextGrade = mod.grades[(curIdx + offset) % mod.grades.length];
+                          if (!mod || !selectedStudent) return;
+                          const assigned = new Set(
+                            resolveAssignedGrades(
+                              selectedStudent as Parameters<typeof resolveAssignedGrades>[0],
+                              displayPos.moduleId,
+                            ),
+                          );
+                          const cyclable = mod.grades.filter(g => assigned.has(g.grade));
+                          if (cyclable.length === 0) return;
+                          const curIdx = cyclable.findIndex(g => g.grade === displayPos.grade);
+                          for (let offset = 1; offset <= cyclable.length; offset++) {
+                            const nextGrade = cyclable[((curIdx === -1 ? 0 : curIdx) + offset) % cyclable.length];
                             for (const t of nextGrade.terms) {
                               if (t.units.length > 0) {
                                 const firstUnit = t.units[0];
@@ -1845,7 +1856,6 @@ export default function ScoreEntryPage() {
           initialModuleId={positionDialogModuleId || slotModule?.id || 'M1'}
           initialGrade={positionDialogInitialGrade}
           onSelectExercise={handlePositionSelectExercise}
-          onSavePosition={handlePositionSave}
         />
       )}
 
