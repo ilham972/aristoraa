@@ -663,12 +663,14 @@ export default function ScoreEntryPage() {
     setSelectedStudentId(sid);
     const p = studentPositions.get(sid);
     let unitId = p?.unitId ?? '';
-    // Fallback: if no position (all exercises done), find the student's current grade/term unit
+    // Fallback: if no position (all exercises done), find the student's current grade/term unit.
+    // Starts at the lowest assigned grade so downgraded students don't jump
+    // to their school grade when they've finished nothing yet.
     if (!unitId && slotModule) {
       const student = effectiveStudents?.find((s: { _id: string }) => s._id === sid);
       if (student) {
         const ov = modulePositions?.find((mp: { studentId: string; moduleId: string }) => mp.studentId === sid && mp.moduleId === slotModule.id);
-        const grade = ov?.grade ?? (student as { schoolGrade: number }).schoolGrade;
+        const grade = ov?.grade ?? lowestAssignedGrade(student as Parameters<typeof lowestAssignedGrade>[0], slotModule.id);
         const term = ov?.term ?? 1;
         const mod = CURRICULUM_MODULES.find(m => m.id === slotModule.id);
         const termData = mod?.grades.find(g => g.grade === grade)?.terms.find(t => t.term === term);
@@ -1211,15 +1213,30 @@ export default function ScoreEntryPage() {
                   <div className="mb-3">
                     {/* Row 1: Position component — 3 cycling pills + refresh + dialog button */}
                     <div className="flex items-center gap-1.5 mb-2">
-                      {/* Module cycling pill — walks forward through all modules until
-                          it finds one with a valid unit (some modules have empty grades/terms, e.g. M6 G6). */}
+                      {/* Module cycling pill — walks forward through modules
+                          and lands on the student's assigned grades only
+                          (not G6 by default when the student only learns G10). */}
                       <button
                         onClick={() => {
+                          if (!selectedStudent) return;
                           const mods = CURRICULUM_MODULES;
                           const curIdx = mods.findIndex(m => m.id === displayPos.moduleId);
                           for (let offset = 1; offset <= mods.length; offset++) {
                             const nextMod = mods[(curIdx + offset) % mods.length];
-                            for (const g of nextMod.grades) {
+                            const assigned = new Set(
+                              resolveAssignedGrades(
+                                selectedStudent as Parameters<typeof resolveAssignedGrades>[0],
+                                nextMod.id,
+                              ),
+                            );
+                            // Prefer the lowest assigned grade so the student
+                            // starts at their oldest-assigned content; fall
+                            // back to any assigned grade if the lowest has no
+                            // units in that module.
+                            const orderedGrades = nextMod.grades
+                              .filter(g => assigned.has(g.grade))
+                              .sort((a, b) => a.grade - b.grade);
+                            for (const g of orderedGrades) {
                               for (const t of g.terms) {
                                 if (t.units.length > 0) {
                                   const firstUnit = t.units[0];
