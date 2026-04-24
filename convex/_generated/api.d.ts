@@ -10,6 +10,7 @@
 
 import type * as attendance from "../attendance.js";
 import type * as centers from "../centers.js";
+import type * as concepts from "../concepts.js";
 import type * as currentAssignments from "../currentAssignments.js";
 import type * as doubts from "../doubts.js";
 import type * as entries from "../entries.js";
@@ -40,6 +41,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   attendance: typeof attendance;
   centers: typeof centers;
+  concepts: typeof concepts;
   currentAssignments: typeof currentAssignments;
   doubts: typeof doubts;
   entries: typeof entries;

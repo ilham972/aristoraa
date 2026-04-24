@@ -176,6 +176,41 @@ export const setConceptVideo = mutation({
   },
 });
 
+// Rename a concept-type exercise row. Used in the Concepts subtab.
+export const renameConcept = mutation({
+  args: {
+    id: v.id("exercises"),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const name = args.name.trim();
+    if (!name) throw new Error("Name is required");
+    await ctx.db.patch(args.id, { name });
+  },
+});
+
+// Set/replace the prerequisite list on a concept-type exercise. Pass an
+// empty array (or undefined) to clear. Prerequisites must be other
+// concept-type exercise rows — this is enforced on the client side to keep
+// the mutation simple, but server checks self-reference so a concept can
+// never be its own prerequisite.
+export const setConceptPrerequisites = mutation({
+  args: {
+    id: v.id("exercises"),
+    prerequisiteExerciseIds: v.optional(v.array(v.id("exercises"))),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const cleaned = (args.prerequisiteExerciseIds ?? []).filter((pid) => pid !== args.id);
+    await ctx.db.patch(args.id, {
+      prerequisiteExerciseIds: cleaned.length ? cleaned : undefined,
+    });
+  },
+});
+
 export const trimToCount = mutation({
   args: {
     unitId: v.string(),

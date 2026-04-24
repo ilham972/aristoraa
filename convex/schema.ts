@@ -29,6 +29,10 @@ export default defineSchema({
     subQuestions: v.optional(v.any()), // Record<string, { count: number, type: 'letter' | 'roman' }>
     videoUrl: v.optional(v.string()), // YouTube (unlisted) URL for concept-type rows
     conceptSummary: v.optional(v.string()), // short text shown next to video
+    // For concept-type rows only: other concept-type exercise rows that must
+    // be mastered before this one. Forms the prerequisite DAG used by the
+    // sheet generator to avoid assigning content whose prereqs aren't ready.
+    prerequisiteExerciseIds: v.optional(v.array(v.id("exercises"))),
   }).index("by_unit", ["unitId"]),
 
   entries: defineTable({
@@ -179,6 +183,48 @@ export default defineSchema({
     .index("by_center_status", ["centerId", "status"])
     .index("by_slot_status", ["slotId", "status"])
     .index("by_student_exercise", ["studentId", "exerciseId"]),
+
+  // ─── Learning engine (Phase 0) ─────────────────────────────────────────
+  // A single croppable question image + its tags. Source today is textbook
+  // pages (OCR unusable due to Tamil encoding issues — we crop per-question
+  // images from existing textbookPages instead). Past-paper and teacher-
+  // authored sources join in sub-phase 0.5.
+  questionBank: defineTable({
+    source: v.string(), // "textbook" | "past-paper" | "teacher-authored"
+    textbookPageId: v.optional(v.id("textbookPages")),
+    // Normalized (0–1) crop coordinates on the source page image so crops
+    // are resolution-independent and re-render cleanly at any size.
+    cropBox: v.optional(v.object({
+      x: v.number(),
+      y: v.number(),
+      w: v.number(),
+      h: v.number(),
+    })),
+    difficulty: v.optional(v.number()), // 1-5
+    answerKey: v.optional(v.string()), // added later
+    expectedTimeMin: v.optional(v.number()),
+    // Back-link to the legacy exercise/question identity. Keeps the existing
+    // score-entry flow working while the question-bank flow is built alongside.
+    // linkedQuestionKey matches entries.questions keys ("1", "3.a", "5.iii").
+    linkedExerciseId: v.optional(v.id("exercises")),
+    linkedQuestionKey: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_source", ["source"])
+    .index("by_textbook_page", ["textbookPageId"])
+    .index("by_linked_exercise", ["linkedExerciseId"]),
+
+  // Many-to-many join tagging questionBank rows with concept-type exercises.
+  // A "concept" here = an existing exercises row where type === "concept"
+  // (the theory chunk already part of each unit's timeline). Convex can't
+  // index array-member lookups so this join lets us efficiently answer
+  // "give me all questions tagged to concept X" for the sheet generator.
+  questionConcepts: defineTable({
+    questionId: v.id("questionBank"),
+    conceptExerciseId: v.id("exercises"),
+  })
+    .index("by_question", ["questionId"])
+    .index("by_concept_exercise", ["conceptExerciseId"]),
 
   // Lead's per-student "next task" for a given day. Upserted by (studentId, date).
   // Phase 4 (student tablet) reads this for the student's home screen.

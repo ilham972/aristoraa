@@ -21,8 +21,9 @@ import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
 import { SubQuestionInline } from '@/components/sub-question-inline';
 import type { SubQuestionsMap } from '@/lib/sub-questions';
+import { ConceptsUnitDrawer } from '@/components/settings/concepts-unit-drawer';
 
-type Layer = 'exercises' | 'pages' | 'details';
+type Layer = 'exercises' | 'pages' | 'details' | 'concepts';
 
 interface BookUnit {
   id: string;
@@ -71,6 +72,9 @@ export function DataEntryTab() {
   // === Sub-question inline expansion ===
   const [expandedSubQId, setExpandedSubQId] = useState<Id<'exercises'> | null>(null);
 
+  // === LAYER 4 — Concepts drawer ===
+  const [conceptsDrawerUnit, setConceptsDrawerUnit] = useState<BookUnit | null>(null);
+
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
 
@@ -118,6 +122,9 @@ export function DataEntryTab() {
   const getUnitMeta = (unitId: string) =>
     allUnitMeta?.find(m => m.unitId === unitId);
 
+  const getUnitConcepts = (unitId: string) =>
+    getUnitExercises(unitId).filter(e => e.type === 'concept');
+
   const isUnitDone = (unit: BookUnit): boolean => {
     if (activeLayer === 'exercises') {
       return getExercisesOnly(unit.id).length > 0;
@@ -125,6 +132,13 @@ export function DataEntryTab() {
     if (activeLayer === 'pages') {
       const meta = getUnitMeta(unit.id);
       return meta?.startPage != null && meta?.endPage != null;
+    }
+    if (activeLayer === 'concepts') {
+      // Concepts subtab "done" = unit has at least one concept-type row AND
+      // every concept has a video URL set. This is the metric that matters
+      // for the pre-recorded theory video workflow.
+      const cs = getUnitConcepts(unit.id);
+      return cs.length > 0 && cs.every(c => !!c.videoUrl);
     }
     // details: all exercises have questionCount > 0
     const exs = getExercisesOnly(unit.id);
@@ -137,6 +151,10 @@ export function DataEntryTab() {
       if (layer === 'pages') {
         const meta = getUnitMeta(u.id);
         return meta?.startPage != null && meta?.endPage != null;
+      }
+      if (layer === 'concepts') {
+        const cs = getUnitConcepts(u.id);
+        return cs.length > 0 && cs.every(c => !!c.videoUrl);
       }
       const exs = getExercisesOnly(u.id);
       return exs.length > 0 && exs.every(e => e.questionCount > 0);
@@ -152,6 +170,8 @@ export function DataEntryTab() {
       setPgStart(meta?.startPage?.toString() || '');
       setPgEnd(meta?.endPage?.toString() || '');
       setPgDialogUnit(unit);
+    } else if (activeLayer === 'concepts') {
+      setConceptsDrawerUnit(unit);
     } else {
       setDetailUnit(unit);
     }
@@ -616,6 +636,7 @@ export function DataEntryTab() {
                 { key: 'exercises', label: 'Exercises' },
                 { key: 'pages', label: 'Page Nos' },
                 { key: 'details', label: 'Details' },
+                { key: 'concepts', label: 'Concepts' },
               ] as { key: Layer; label: string }[]
             ).map(layer => {
               const done = layerDoneCount(layer.key);
@@ -735,6 +756,15 @@ export function DataEntryTab() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ─── LAYER 4: Concepts Drawer ─── */}
+      <ConceptsUnitDrawer
+        open={!!conceptsDrawerUnit}
+        onOpenChange={(o) => { if (!o) setConceptsDrawerUnit(null); }}
+        unit={conceptsDrawerUnit}
+        unitMeta={conceptsDrawerUnit ? getUnitMeta(conceptsDrawerUnit.id) : undefined}
+        allExercises={allExercises || []}
+      />
     </>
   );
 }
