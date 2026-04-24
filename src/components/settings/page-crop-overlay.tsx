@@ -65,64 +65,108 @@ export function PageCropOverlay({
     return m;
   }, [unitExercises]);
 
-  const getNormalizedPoint = (e: React.PointerEvent<HTMLDivElement>) => {
+  // Native event listeners — attached directly to the container with
+  // passive:false + stopImmediatePropagation so Vaul's drawer-drag handlers
+  // (which sit on the same DOM tree) can't swallow the gesture first.
+  // React synthetic pointer handlers weren't enough because Vaul attaches
+  // at the drawer root and receives events before React's delegated dispatch.
+  useEffect(() => {
     const el = containerRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return null;
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    return {
-      x: Math.max(0, Math.min(1, x)),
-      y: Math.max(0, Math.min(1, y)),
+    if (!el || !cropMode) return;
+
+    let active: { startX: number; startY: number; pointerId: number } | null = null;
+
+    const toPoint = (clientX: number, clientY: number) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return null;
+      return {
+        x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+      };
     };
-  };
 
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!cropMode) return;
-    // Left-click / primary touch only
-    if (e.button !== undefined && e.button !== 0) return;
-    const p = getNormalizedPoint(e);
-    if (!p) return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-    e.preventDefault();
-    e.stopPropagation();
-  };
+    // Don't start a drag if the pointer went down on an existing crop
+    // rectangle — those handle their own tap/delete via their own listeners.
+    const isOnExistingCrop = (target: EventTarget | null): boolean => {
+      const node = target as HTMLElement | null;
+      return !!node?.closest?.('[data-crop-rect="1"]');
+    };
 
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!cropMode || !dragging) return;
-    const p = getNormalizedPoint(e);
-    if (!p) return;
-    setDragging({ ...dragging, endX: p.x, endY: p.y });
-    e.preventDefault();
-    e.stopPropagation();
-  };
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 && e.button !== -1) return;
+      if (isOnExistingCrop(e.target)) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) return;
+      active = { startX: p.x, startY: p.y, pointerId: e.pointerId };
+      setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
 
-  const onPointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!cropMode || !dragging) return;
-    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-    const { startX, startY, endX, endY } = dragging;
-    setDragging(null);
+    const onMove = (e: PointerEvent) => {
+      if (!active || e.pointerId !== active.pointerId) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) return;
+      setDragging({ startX: active.startX, startY: active.startY, endX: p.x, endY: p.y });
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
 
-    const x = Math.min(startX, endX);
-    const y = Math.min(startY, endY);
-    const w = Math.abs(endX - startX);
-    const h = Math.abs(endY - startY);
+    const onUp = (e: PointerEvent) => {
+      if (!active || e.pointerId !== active.pointerId) return;
+      const { startX, startY, pointerId } = active;
+      const p = toPoint(e.clientX, e.clientY);
+      active = null;
+      try { el.releasePointerCapture(pointerId); } catch { /* ignore */ }
+      setDragging(null);
 
-    if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return; // ignore taps
+      if (!p) return;
+      const x = Math.min(startX, p.x);
+      const y = Math.min(startY, p.y);
+      const w = Math.abs(p.x - startX);
+      const h = Math.abs(p.y - startY);
 
-    try {
-      await createMut({
-        source: 'textbook',
-        textbookPageId: pageId,
-        cropBox: { x, y, w, h },
-      });
-    } catch (err) {
-      console.error(err);
-      toast.error('Could not save crop');
-    }
-  };
+      if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
+
+      createMut({ source: 'textbook', textbookPageId: pageId, cropBox: { x, y, w, h } })
+        .catch((err) => {
+          console.error(err);
+          toast.error('Could not save crop');
+        });
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+
+    const onCancel = () => {
+      active = null;
+      setDragging(null);
+    };
+
+    el.addEventListener('pointerdown', onDown, { passive: false });
+    el.addEventListener('pointermove', onMove, { passive: false });
+    el.addEventListener('pointerup', onUp, { passive: false });
+    el.addEventListener('pointercancel', onCancel);
+    // Also block touchstart at passive:false to prevent iOS Safari from
+    // treating the first tap as a scroll gesture on some layouts.
+    const onTouchStart = (e: TouchEvent) => {
+      if (isOnExistingCrop(e.target)) return;
+      e.preventDefault();
+    };
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onCancel);
+      el.removeEventListener('touchstart', onTouchStart);
+    };
+  }, [cropMode, pageId, createMut]);
 
   const preview = dragging
     ? {
@@ -152,13 +196,9 @@ export function PageCropOverlay({
 
       <div
         ref={containerRef}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => setDragging(null)}
         data-vaul-no-drag
         className={`relative select-none ${cropMode ? 'cursor-crosshair touch-none' : ''}`}
-        style={{ WebkitUserSelect: 'none' }}
+        style={{ WebkitUserSelect: 'none', touchAction: cropMode ? 'none' : undefined }}
       >
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -266,6 +306,7 @@ function CropRect({
 
   return (
     <div
+      data-crop-rect="1"
       className={`absolute rounded-sm transition-colors ${
         isLinked
           ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
@@ -281,10 +322,6 @@ function CropRect({
         if (!cropMode) return;
         e.stopPropagation();
         onEdit();
-      }}
-      onPointerDown={(e) => {
-        // Prevent drawing-start from bubbling when interacting with a crop
-        if (cropMode) e.stopPropagation();
       }}
     >
       {/* Label chip at top-left */}
