@@ -552,9 +552,13 @@ export function DataEntryTab() {
         </Dialog>
 
         {/* Book page drawer */}
+        {/* dismissible={!cropMode} disables Vaul's swipe-to-close entirely
+            while in crop mode — without this, Vaul claims horizontal drags
+            inside the drawer and our pointer listeners never get the gesture. */}
         <Drawer
           direction="right"
           open={drawerOpen}
+          dismissible={!cropMode}
           onOpenChange={(o) => {
             setDrawerOpen(o);
             if (!o) setCropMode(false);

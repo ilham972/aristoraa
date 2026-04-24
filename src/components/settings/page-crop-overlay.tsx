@@ -65,16 +65,16 @@ export function PageCropOverlay({
     return m;
   }, [unitExercises]);
 
-  // Native event listeners — attached directly to the container with
-  // passive:false + stopImmediatePropagation so Vaul's drawer-drag handlers
-  // (which sit on the same DOM tree) can't swallow the gesture first.
-  // React synthetic pointer handlers weren't enough because Vaul attaches
-  // at the drawer root and receives events before React's delegated dispatch.
+  // Drag handling via native listeners. We use touch events on touch devices
+  // and mouse events on desktop — NOT pointer events — because shadcn/Vaul's
+  // drawer grabs pointer events first on mobile, and because iOS Safari has
+  // been flaky about firing pointerdown inside a modal stack. Raw touch/mouse
+  // events fire reliably on the target element before Vaul's handlers.
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !cropMode) return;
 
-    let active: { startX: number; startY: number; pointerId: number } | null = null;
+    let active: { startX: number; startY: number; id: number | null } | null = null;
 
     const toPoint = (clientX: number, clientY: number) => {
       const rect = el.getBoundingClientRect();
@@ -85,86 +85,118 @@ export function PageCropOverlay({
       };
     };
 
-    // Don't start a drag if the pointer went down on an existing crop
-    // rectangle — those handle their own tap/delete via their own listeners.
     const isOnExistingCrop = (target: EventTarget | null): boolean => {
       const node = target as HTMLElement | null;
       return !!node?.closest?.('[data-crop-rect="1"]');
     };
 
-    const onDown = (e: PointerEvent) => {
-      if (e.button !== 0 && e.button !== -1) return;
-      if (isOnExistingCrop(e.target)) return;
-      const p = toPoint(e.clientX, e.clientY);
-      if (!p) return;
-      active = { startX: p.x, startY: p.y, pointerId: e.pointerId };
-      setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-    };
-
-    const onMove = (e: PointerEvent) => {
-      if (!active || e.pointerId !== active.pointerId) return;
-      const p = toPoint(e.clientX, e.clientY);
-      if (!p) return;
-      setDragging({ startX: active.startX, startY: active.startY, endX: p.x, endY: p.y });
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-    };
-
-    const onUp = (e: PointerEvent) => {
-      if (!active || e.pointerId !== active.pointerId) return;
-      const { startX, startY, pointerId } = active;
-      const p = toPoint(e.clientX, e.clientY);
+    const finish = (endX: number, endY: number) => {
+      if (!active) return;
+      const { startX, startY } = active;
       active = null;
-      try { el.releasePointerCapture(pointerId); } catch { /* ignore */ }
       setDragging(null);
-
-      if (!p) return;
-      const x = Math.min(startX, p.x);
-      const y = Math.min(startY, p.y);
-      const w = Math.abs(p.x - startX);
-      const h = Math.abs(p.y - startY);
-
+      const x = Math.min(startX, endX);
+      const y = Math.min(startY, endY);
+      const w = Math.abs(endX - startX);
+      const h = Math.abs(endY - startY);
       if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
-
       createMut({ source: 'textbook', textbookPageId: pageId, cropBox: { x, y, w, h } })
         .catch((err) => {
           console.error(err);
           toast.error('Could not save crop');
         });
-
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
     };
 
-    const onCancel = () => {
-      active = null;
-      setDragging(null);
-    };
-
-    el.addEventListener('pointerdown', onDown, { passive: false });
-    el.addEventListener('pointermove', onMove, { passive: false });
-    el.addEventListener('pointerup', onUp, { passive: false });
-    el.addEventListener('pointercancel', onCancel);
-    // Also block touchstart at passive:false to prevent iOS Safari from
-    // treating the first tap as a scroll gesture on some layouts.
+    // ── Touch handlers (mobile) ────────────────────────────
     const onTouchStart = (e: TouchEvent) => {
       if (isOnExistingCrop(e.target)) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const p = toPoint(t.clientX, t.clientY);
+      if (!p) return;
+      active = { startX: p.x, startY: p.y, id: t.identifier };
+      setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+      // Stop the browser, Vaul, and any other ancestor from claiming the gesture.
       e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
     };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!active) return;
+      const t = Array.from(e.touches).find((t) => t.identifier === active?.id) || e.touches[0];
+      if (!t) return;
+      const p = toPoint(t.clientX, t.clientY);
+      if (!p) return;
+      setDragging({ startX: active.startX, startY: active.startY, endX: p.x, endY: p.y });
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!active) return;
+      const t = Array.from(e.changedTouches).find((t) => t.identifier === active?.id) || e.changedTouches[0];
+      if (!t) {
+        active = null;
+        setDragging(null);
+        return;
+      }
+      const p = toPoint(t.clientX, t.clientY);
+      if (p) finish(p.x, p.y);
+      else { active = null; setDragging(null); }
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+    };
+
+    const onTouchCancel = () => { active = null; setDragging(null); };
+
+    // ── Mouse handlers (desktop) ───────────────────────────
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      if (isOnExistingCrop(e.target)) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) return;
+      active = { startX: p.x, startY: p.y, id: null };
+      setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+      // Mouse-move/up listen on window so we capture off-element motion too.
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!active) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) return;
+      setDragging({ startX: active.startX, startY: active.startY, endX: p.x, endY: p.y });
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      if (!active) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (p) finish(p.x, p.y);
+      else { active = null; setDragging(null); }
+    };
+
     el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: false });
+    el.addEventListener('touchcancel', onTouchCancel);
+    el.addEventListener('mousedown', onMouseDown);
 
     return () => {
-      el.removeEventListener('pointerdown', onDown);
-      el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
-      el.removeEventListener('pointercancel', onCancel);
       el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchCancel);
+      el.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
     };
   }, [cropMode, pageId, createMut]);
 
