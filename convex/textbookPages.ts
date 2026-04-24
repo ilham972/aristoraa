@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 
 export const generateUploadUrl = mutation({
   handler: async (ctx) => {
@@ -104,14 +105,14 @@ export const getPagesInRange = query({
         .map((p) => [p.pageNumber, p])
     );
 
-    const results: { pageNumber: number; url: string | null }[] = [];
+    const results: { pageNumber: number; url: string | null; pageId: Id<"textbookPages"> | null }[] = [];
     for (let p = args.startPage; p <= args.endPage; p++) {
       const page = pageMap.get(p);
       if (page) {
         const url = await ctx.storage.getUrl(page.storageId);
-        results.push({ pageNumber: p, url });
+        results.push({ pageNumber: p, url, pageId: page._id });
       } else {
-        results.push({ pageNumber: p, url: null });
+        results.push({ pageNumber: p, url: null, pageId: null });
       }
     }
 

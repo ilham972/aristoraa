@@ -10,13 +10,13 @@
 
 import type * as attendance from "../attendance.js";
 import type * as centers from "../centers.js";
-import type * as concepts from "../concepts.js";
 import type * as currentAssignments from "../currentAssignments.js";
 import type * as doubts from "../doubts.js";
 import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as lead from "../lead.js";
 import type * as migrations from "../migrations.js";
+import type * as questionBank from "../questionBank.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
@@ -41,13 +41,13 @@ import type {
 declare const fullApi: ApiFromModules<{
   attendance: typeof attendance;
   centers: typeof centers;
-  concepts: typeof concepts;
   currentAssignments: typeof currentAssignments;
   doubts: typeof doubts;
   entries: typeof entries;
   exercises: typeof exercises;
   lead: typeof lead;
   migrations: typeof migrations;
+  questionBank: typeof questionBank;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
   seed: typeof seed;

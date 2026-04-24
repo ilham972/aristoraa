@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Plus, Trash2, BookOpen, Image as ImageIcon, List } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, BookOpen, Image as ImageIcon, List, Scissors } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { SubQuestionInline } from '@/components/sub-question-inline';
 import type { SubQuestionsMap } from '@/lib/sub-questions';
 import { ConceptsUnitDrawer } from '@/components/settings/concepts-unit-drawer';
+import { PageCropOverlay } from '@/components/settings/page-crop-overlay';
 
 type Layer = 'exercises' | 'pages' | 'details' | 'concepts';
 
@@ -75,6 +76,9 @@ export function DataEntryTab() {
   // === LAYER 4 — Concepts drawer ===
   const [conceptsDrawerUnit, setConceptsDrawerUnit] = useState<BookUnit | null>(null);
 
+  // === Page-drawer crop mode ===
+  const [cropMode, setCropMode] = useState(false);
+
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
 
@@ -100,6 +104,35 @@ export function DataEntryTab() {
         }
       : 'skip',
   );
+
+  // Captured-page IDs in the current unit range — fed to the crop-bank query.
+  const pageIdsForQuery = useMemo<Id<'textbookPages'>[]>(
+    () =>
+      (unitPages || [])
+        .map(p => p.pageId)
+        .filter((id): id is Id<'textbookPages'> => id !== null),
+    [unitPages],
+  );
+
+  const pageCrops = useQuery(
+    api.questionBank.listByPages,
+    drawerOpen && pageIdsForQuery.length > 0
+      ? { textbookPageIds: pageIdsForQuery }
+      : 'skip',
+  );
+
+  type PageCrop = NonNullable<typeof pageCrops>[number];
+  const cropsByPage = useMemo(() => {
+    const map = new Map<string, PageCrop[]>();
+    if (!pageCrops) return map;
+    for (const c of pageCrops) {
+      if (!c.textbookPageId) continue;
+      const arr = map.get(c.textbookPageId) || [];
+      arr.push(c);
+      map.set(c.textbookPageId, arr);
+    }
+    return map;
+  }, [pageCrops]);
 
   // === HELPERS ===
   const getUnitExercises = (unitId: string) =>
@@ -517,18 +550,37 @@ export function DataEntryTab() {
         </Dialog>
 
         {/* Book page drawer */}
-        <Drawer direction="right" open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <Drawer
+          direction="right"
+          open={drawerOpen}
+          onOpenChange={(o) => {
+            setDrawerOpen(o);
+            if (!o) setCropMode(false);
+          }}
+        >
           <DrawerContent>
             <DrawerHeader>
-              <DrawerTitle className="text-sm truncate">
-                {detailUnit.name}
-                {meta?.startPage != null && meta?.endPage != null && (
-                  <span className="text-muted-foreground font-normal">
-                    {' '}
-                    (pp. {meta.startPage}–{meta.endPage})
-                  </span>
-                )}
-              </DrawerTitle>
+              <div className="flex items-center gap-2">
+                <DrawerTitle className="text-sm truncate flex-1 min-w-0">
+                  {detailUnit.name}
+                  {meta?.startPage != null && meta?.endPage != null && (
+                    <span className="text-muted-foreground font-normal">
+                      {' '}
+                      (pp. {meta.startPage}–{meta.endPage})
+                    </span>
+                  )}
+                </DrawerTitle>
+                <Button
+                  variant={cropMode ? 'default' : 'outline'}
+                  size="sm"
+                  className="gap-1.5 shrink-0"
+                  onClick={() => setCropMode(m => !m)}
+                  disabled={meta?.startPage == null || meta?.endPage == null}
+                >
+                  <Scissors className="w-3.5 h-3.5" />
+                  {cropMode ? 'Done' : 'Crop'}
+                </Button>
+              </div>
             </DrawerHeader>
 
             {meta?.startPage == null || meta?.endPage == null ? (
@@ -544,30 +596,39 @@ export function DataEntryTab() {
                 ))}
               </div>
             ) : (
-              <PinchZoomArea className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar">
+              <PinchZoomArea
+                className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar"
+                disabled={cropMode}
+              >
                 <div className="space-y-3">
-                  {unitPages.map(pg => (
-                    <div key={pg.pageNumber} className="relative">
-                      <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
-                        p.{pg.pageNumber}
-                      </div>
-                      {pg.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={pg.url}
-                          alt={`Page ${pg.pageNumber}`}
-                          className="w-full rounded-lg border border-border"
-                        />
-                      ) : (
-                        <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
-                          <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
-                          <p className="text-sm text-muted-foreground">
-                            Page {pg.pageNumber} not captured
-                          </p>
+                  {unitPages.map(pg => {
+                    if (!pg.pageId) {
+                      return (
+                        <div key={pg.pageNumber} className="relative">
+                          <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
+                            p.{pg.pageNumber}
+                          </div>
+                          <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
+                            <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
+                            <p className="text-sm text-muted-foreground">
+                              Page {pg.pageNumber} not captured
+                            </p>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      );
+                    }
+                    return (
+                      <PageCropOverlay
+                        key={pg.pageId}
+                        pageId={pg.pageId}
+                        pageNumber={pg.pageNumber}
+                        imageUrl={pg.url}
+                        cropMode={cropMode}
+                        crops={cropsByPage.get(pg.pageId) || []}
+                        unitExercises={getUnitExercises(detailUnit.id)}
+                      />
+                    );
+                  })}
                 </div>
               </PinchZoomArea>
             )}
@@ -774,9 +835,11 @@ export function DataEntryTab() {
 function PinchZoomArea({
   children,
   className,
+  disabled = false,
 }: {
   children: React.ReactNode;
   className?: string;
+  disabled?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -786,7 +849,17 @@ function PinchZoomArea({
   const lastTapRef = useRef(0);
   const originRef = useRef({ x: 50, y: 50 });
 
+  // Reset zoom when disabled (e.g. entering crop mode).
   useEffect(() => {
+    if (disabled && scaleRef.current !== 1) {
+      scaleRef.current = 1;
+      setScale(1);
+      originRef.current = { x: 50, y: 50 };
+    }
+  }, [disabled]);
+
+  useEffect(() => {
+    if (disabled) return;
     const el = containerRef.current;
     if (!el) return;
 
@@ -869,7 +942,7 @@ function PinchZoomArea({
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
     };
-  }, []);
+  }, [disabled]);
 
   return (
     <div
