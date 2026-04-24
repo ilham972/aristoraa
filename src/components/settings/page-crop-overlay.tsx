@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect, type TouchEventHandler, type MouseEventHandler } from 'react';
 import { useMutation } from 'convex/react';
 import { X, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -54,7 +54,12 @@ export function PageCropOverlay({
   const clearLinkMut = useMutation(api.questionBank.clearLink);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [dragging, setDragging] = useState<null | {
+  const captureRef = useRef<HTMLDivElement | null>(null);
+  // Drag state in a ref so rapid re-renders don't wipe it. setDraggingPreview
+  // is only called to drive the visual preview rectangle, not to persist
+  // drag coordinates.
+  const dragRef = useRef<{ startX: number; startY: number; touchId: number | null } | null>(null);
+  const [draggingPreview, setDraggingPreview] = useState<null | {
     startX: number; startY: number; endX: number; endY: number;
   }>(null);
   const [editCrop, setEditCrop] = useState<QuestionBankRow | null>(null);
@@ -65,149 +70,116 @@ export function PageCropOverlay({
     return m;
   }, [unitExercises]);
 
-  // Drag handling via native listeners. We use touch events on touch devices
-  // and mouse events on desktop — NOT pointer events — because shadcn/Vaul's
-  // drawer grabs pointer events first on mobile, and because iOS Safari has
-  // been flaky about firing pointerdown inside a modal stack. Raw touch/mouse
-  // events fire reliably on the target element before Vaul's handlers.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !cropMode) return;
-
-    let active: { startX: number; startY: number; id: number | null } | null = null;
-
-    const toPoint = (clientX: number, clientY: number) => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return null;
-      return {
-        x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
-        y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
-      };
+  const toPoint = (clientX: number, clientY: number) => {
+    const el = captureRef.current ?? containerRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    return {
+      x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
     };
+  };
 
-    const isOnExistingCrop = (target: EventTarget | null): boolean => {
-      const node = target as HTMLElement | null;
-      return !!node?.closest?.('[data-crop-rect="1"]');
+  const finishDrag = (endX: number, endY: number) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDraggingPreview(null);
+    if (!d) return;
+    const x = Math.min(d.startX, endX);
+    const y = Math.min(d.startY, endY);
+    const w = Math.abs(endX - d.startX);
+    const h = Math.abs(endY - d.startY);
+    if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
+    createMut({ source: 'textbook', textbookPageId: pageId, cropBox: { x, y, w, h } })
+      .catch((err) => {
+        console.error(err);
+        toast.error('Could not save crop');
+      });
+  };
+
+  // ── React synthetic touch handlers (mobile) ────────────
+  // React synthetic touchstart/move/end are passive by default — but since
+  // the capture div has touch-action: none and data-vaul-no-drag, the
+  // browser/Vaul won't claim the gesture, so passive is fine.
+  const onTouchStart: TouchEventHandler<HTMLDivElement> = (e) => {
+    const t = e.touches[0];
+    if (!t) return;
+    const p = toPoint(t.clientX, t.clientY);
+    if (!p) return;
+    dragRef.current = { startX: p.x, startY: p.y, touchId: t.identifier };
+    setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+  };
+
+  const onTouchMove: TouchEventHandler<HTMLDivElement> = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const t = Array.from(e.touches).find((x) => x.identifier === d.touchId) || e.touches[0];
+    if (!t) return;
+    const p = toPoint(t.clientX, t.clientY);
+    if (!p) return;
+    setDraggingPreview({ startX: d.startX, startY: d.startY, endX: p.x, endY: p.y });
+  };
+
+  const onTouchEnd: TouchEventHandler<HTMLDivElement> = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const t = Array.from(e.changedTouches).find((x) => x.identifier === d.touchId) || e.changedTouches[0];
+    if (!t) { dragRef.current = null; setDraggingPreview(null); return; }
+    const p = toPoint(t.clientX, t.clientY);
+    if (!p) { dragRef.current = null; setDraggingPreview(null); return; }
+    finishDrag(p.x, p.y);
+  };
+
+  const onTouchCancel: TouchEventHandler<HTMLDivElement> = () => {
+    dragRef.current = null;
+    setDraggingPreview(null);
+  };
+
+  // ── Mouse handlers (desktop) ───────────────────────────
+  const onMouseDown: MouseEventHandler<HTMLDivElement> = (e) => {
+    if (e.button !== 0) return;
+    const p = toPoint(e.clientX, e.clientY);
+    if (!p) return;
+    dragRef.current = { startX: p.x, startY: p.y, touchId: null };
+    setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+
+    // Listen on window so drag continues even when cursor leaves the div.
+    const onMove = (ev: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const pt = toPoint(ev.clientX, ev.clientY);
+      if (!pt) return;
+      setDraggingPreview({ startX: d.startX, startY: d.startY, endX: pt.x, endY: pt.y });
     };
-
-    const finish = (endX: number, endY: number) => {
-      if (!active) return;
-      const { startX, startY } = active;
-      active = null;
-      setDragging(null);
-      const x = Math.min(startX, endX);
-      const y = Math.min(startY, endY);
-      const w = Math.abs(endX - startX);
-      const h = Math.abs(endY - startY);
-      if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
-      createMut({ source: 'textbook', textbookPageId: pageId, cropBox: { x, y, w, h } })
-        .catch((err) => {
-          console.error(err);
-          toast.error('Could not save crop');
-        });
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const pt = toPoint(ev.clientX, ev.clientY);
+      if (pt) finishDrag(pt.x, pt.y);
+      else { dragRef.current = null; setDraggingPreview(null); }
     };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  };
 
-    // ── Touch handlers (mobile) ────────────────────────────
-    const onTouchStart = (e: TouchEvent) => {
-      if (isOnExistingCrop(e.target)) return;
-      const t = e.touches[0];
-      if (!t) return;
-      const p = toPoint(t.clientX, t.clientY);
-      if (!p) return;
-      active = { startX: p.x, startY: p.y, id: t.identifier };
-      setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-      // Stop the browser, Vaul, and any other ancestor from claiming the gesture.
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation?.();
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (!active) return;
-      const t = Array.from(e.touches).find((t) => t.identifier === active?.id) || e.touches[0];
-      if (!t) return;
-      const p = toPoint(t.clientX, t.clientY);
-      if (!p) return;
-      setDragging({ startX: active.startX, startY: active.startY, endX: p.x, endY: p.y });
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation?.();
-    };
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (!active) return;
-      const t = Array.from(e.changedTouches).find((t) => t.identifier === active?.id) || e.changedTouches[0];
-      if (!t) {
-        active = null;
-        setDragging(null);
-        return;
-      }
-      const p = toPoint(t.clientX, t.clientY);
-      if (p) finish(p.x, p.y);
-      else { active = null; setDragging(null); }
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation?.();
-    };
-
-    const onTouchCancel = () => { active = null; setDragging(null); };
-
-    // ── Mouse handlers (desktop) ───────────────────────────
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      if (isOnExistingCrop(e.target)) return;
-      const p = toPoint(e.clientX, e.clientY);
-      if (!p) return;
-      active = { startX: p.x, startY: p.y, id: null };
-      setDragging({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-      // Mouse-move/up listen on window so we capture off-element motion too.
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (!active) return;
-      const p = toPoint(e.clientX, e.clientY);
-      if (!p) return;
-      setDragging({ startX: active.startX, startY: active.startY, endX: p.x, endY: p.y });
-    };
-
-    const onMouseUp = (e: MouseEvent) => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      if (!active) return;
-      const p = toPoint(e.clientX, e.clientY);
-      if (p) finish(p.x, p.y);
-      else { active = null; setDragging(null); }
-    };
-
-    el.addEventListener('touchstart', onTouchStart, { passive: false });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd, { passive: false });
-    el.addEventListener('touchcancel', onTouchCancel);
-    el.addEventListener('mousedown', onMouseDown);
-
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-      el.removeEventListener('touchcancel', onTouchCancel);
-      el.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, [cropMode, pageId, createMut]);
-
-  const preview = dragging
+  const preview = draggingPreview
     ? {
-        x: Math.min(dragging.startX, dragging.endX),
-        y: Math.min(dragging.startY, dragging.endY),
-        w: Math.abs(dragging.endX - dragging.startX),
-        h: Math.abs(dragging.endY - dragging.startY),
+        x: Math.min(draggingPreview.startX, draggingPreview.endX),
+        y: Math.min(draggingPreview.startY, draggingPreview.endY),
+        w: Math.abs(draggingPreview.endX - draggingPreview.startX),
+        h: Math.abs(draggingPreview.endY - draggingPreview.startY),
       }
     : null;
+
+  // Reset drag state when crop mode turns off mid-drag.
+  useEffect(() => {
+    if (!cropMode) {
+      dragRef.current = null;
+      setDraggingPreview(null);
+    }
+  }, [cropMode]);
 
   return (
     <div className="relative">
@@ -228,9 +200,8 @@ export function PageCropOverlay({
 
       <div
         ref={containerRef}
-        data-vaul-no-drag
-        className={`relative select-none ${cropMode ? 'cursor-crosshair touch-none' : ''}`}
-        style={{ WebkitUserSelect: 'none', touchAction: cropMode ? 'none' : undefined }}
+        className="relative select-none"
+        style={{ WebkitUserSelect: 'none' }}
       >
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -246,7 +217,27 @@ export function PageCropOverlay({
           </div>
         )}
 
-        {/* Existing crops */}
+        {/* Dedicated touch-capture layer: only exists in crop mode, sits
+            above the image but below the rendered crops so tapping an
+            existing crop hits the crop, and dragging anywhere else starts
+            a new drag. React synthetic events on the capture div keep the
+            handlers stable across re-renders. */}
+        {cropMode && (
+          <div
+            ref={captureRef}
+            data-vaul-no-drag
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+            onTouchCancel={onTouchCancel}
+            onMouseDown={onMouseDown}
+            className="absolute inset-0 cursor-crosshair z-10"
+            style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
+          />
+        )}
+
+        {/* Existing crops — rendered AFTER the capture layer so they are
+            on top and receive their own taps. */}
         {crops.map((c) => (
           c.cropBox && (
             <CropRect
@@ -271,7 +262,7 @@ export function PageCropOverlay({
         {/* In-progress drag preview */}
         {preview && preview.w >= 0.005 && preview.h >= 0.005 && (
           <div
-            className="absolute border-2 border-primary bg-primary/15 rounded-sm pointer-events-none"
+            className="absolute border-2 border-primary bg-primary/15 rounded-sm pointer-events-none z-20"
             style={{
               left: `${preview.x * 100}%`,
               top: `${preview.y * 100}%`,
@@ -339,7 +330,7 @@ function CropRect({
   return (
     <div
       data-crop-rect="1"
-      className={`absolute rounded-sm transition-colors ${
+      className={`absolute rounded-sm transition-colors z-30 ${
         isLinked
           ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
           : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20'
@@ -355,6 +346,8 @@ function CropRect({
         e.stopPropagation();
         onEdit();
       }}
+      onTouchStart={(e) => { if (cropMode) e.stopPropagation(); }}
+      onMouseDown={(e) => { if (cropMode) e.stopPropagation(); }}
     >
       {/* Label chip at top-left */}
       <div
