@@ -106,11 +106,13 @@ export function DataEntryTab() {
   );
 
   // Captured-page IDs in the current unit range — fed to the crop-bank query.
+  // Guard against both null (page not captured) and undefined (stale backend
+  // still running the old getPagesInRange shape before pageId was added).
   const pageIdsForQuery = useMemo<Id<'textbookPages'>[]>(
     () =>
       (unitPages || [])
-        .map(p => p.pageId)
-        .filter((id): id is Id<'textbookPages'> => id !== null),
+        .map(p => (p as { pageId?: Id<'textbookPages'> | null }).pageId)
+        .filter((id): id is Id<'textbookPages'> => !!id),
     [unitPages],
   );
 
@@ -602,29 +604,41 @@ export function DataEntryTab() {
               >
                 <div className="space-y-3">
                   {unitPages.map(pg => {
-                    if (!pg.pageId) {
+                    // Defensive: treat both null (not captured) and undefined
+                    // (stale backend) as "no pageId" — fall back to placeholder.
+                    const pageId = (pg as { pageId?: Id<'textbookPages'> | null }).pageId ?? null;
+                    if (!pageId) {
                       return (
                         <div key={pg.pageNumber} className="relative">
                           <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
                             p.{pg.pageNumber}
                           </div>
-                          <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
-                            <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
-                            <p className="text-sm text-muted-foreground">
-                              Page {pg.pageNumber} not captured
-                            </p>
-                          </div>
+                          {pg.url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={pg.url}
+                              alt={`Page ${pg.pageNumber}`}
+                              className="w-full rounded-lg border border-border"
+                            />
+                          ) : (
+                            <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
+                              <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
+                              <p className="text-sm text-muted-foreground">
+                                Page {pg.pageNumber} not captured
+                              </p>
+                            </div>
+                          )}
                         </div>
                       );
                     }
                     return (
                       <PageCropOverlay
-                        key={pg.pageId}
-                        pageId={pg.pageId}
+                        key={pageId}
+                        pageId={pageId}
                         pageNumber={pg.pageNumber}
                         imageUrl={pg.url}
                         cropMode={cropMode}
-                        crops={cropsByPage.get(pg.pageId) || []}
+                        crops={cropsByPage.get(pageId) || []}
                         unitExercises={getUnitExercises(detailUnit.id)}
                       />
                     );
