@@ -573,6 +573,7 @@ export function DataEntryTab() {
                   )}
                 </DrawerTitle>
                 <Button
+                  data-vaul-no-drag
                   variant={cropMode ? 'default' : 'outline'}
                   size="sm"
                   className="gap-1.5 shrink-0"
@@ -602,7 +603,16 @@ export function DataEntryTab() {
                 className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar"
                 disabled={cropMode}
               >
-                <div className="space-y-3">
+                {cropMode && (
+                  <div
+                    className="mb-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 text-xs text-primary flex items-center gap-2"
+                    data-vaul-no-drag
+                  >
+                    <Scissors className="w-3.5 h-3.5 shrink-0" />
+                    <span>Drag across a question to crop it. Tap a crop to link it to an exercise.</span>
+                  </div>
+                )}
+                <div className="space-y-3" data-vaul-no-drag>
                   {unitPages.map(pg => {
                     // Defensive: treat both null (not captured) and undefined
                     // (stale backend) as "no pageId" — fall back to placeholder.

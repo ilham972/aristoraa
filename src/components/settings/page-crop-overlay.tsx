@@ -156,6 +156,7 @@ export function PageCropOverlay({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={() => setDragging(null)}
+        data-vaul-no-drag
         className={`relative select-none ${cropMode ? 'cursor-crosshair touch-none' : ''}`}
         style={{ WebkitUserSelect: 'none' }}
       >
