@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from 'convex/react';
 import { ChevronLeft, Scissors, Image as ImageIcon } from 'lucide-react';
@@ -26,6 +26,42 @@ export default function UnitCropPage() {
   const unitId = params.unitId;
 
   const [cropMode, setCropMode] = useState(true);
+
+  // Diagnostic surfaced to the route header so it's always visible regardless
+  // of scroll position. PageCropOverlay reports its latest counters via the
+  // `cropdiag` custom event (one event bus, all pages share). The most recent
+  // event wins — that tells us which page got the most recent touch and
+  // whether the listener even fired.
+  const [headerDiag, setHeaderDiag] = useState<{
+    page: number;
+    attached: boolean;
+    ts: number;
+    tm: number;
+    te: number;
+    cm: number;
+    rectW: number;
+    rectH: number;
+    note: string;
+  } | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent;
+      setHeaderDiag(ce.detail);
+    };
+    window.addEventListener('cropdiag', handler);
+    return () => window.removeEventListener('cropdiag', handler);
+  }, []);
+
+  // Document-level contextmenu blocker. Android Chrome shows a long-press
+  // image menu via the contextmenu event — preventing it at the document
+  // catches it no matter which element gets the touch (capture layer,
+  // bg-image div, container, scrollbar, anywhere).
+  useEffect(() => {
+    if (!cropMode) return;
+    const onCtx = (e: Event) => e.preventDefault();
+    document.addEventListener('contextmenu', onCtx);
+    return () => document.removeEventListener('contextmenu', onCtx);
+  }, [cropMode]);
 
   const textbooks = useQuery(api.textbooks.list);
   const allUnitMeta = useQuery(api.unitMetadata.list);
@@ -148,7 +184,7 @@ export default function UnitCropPage() {
             )}
           </div>
           <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
-            v6
+            v7
           </span>
           <Button
             variant={cropMode ? 'default' : 'outline'}
@@ -161,6 +197,40 @@ export default function UnitCropPage() {
             {cropMode ? 'Done' : 'Crop'}
           </Button>
         </div>
+
+        {/* Big visible diagnostic strip — always shown when in cropMode so we
+            can tell at a glance whether touch events are reaching the
+            listener on the user's device. Remove once crop confirmed. */}
+        {cropMode && (
+          <div className="max-w-lg mx-auto px-3 pb-2">
+            <div className="bg-black text-white font-mono text-xs px-2 py-1.5 rounded leading-tight">
+              {headerDiag ? (
+                <>
+                  <div>
+                    p.{headerDiag.page} L:
+                    <span className={headerDiag.attached ? 'text-green-400' : 'text-red-400'}>
+                      {headerDiag.attached ? 'ON' : 'OFF'}
+                    </span>{' '}
+                    ts:<span className="text-yellow-300">{headerDiag.ts}</span>{' '}
+                    tm:<span className="text-yellow-300">{headerDiag.tm}</span>{' '}
+                    te:<span className="text-yellow-300">{headerDiag.te}</span>{' '}
+                    ctx:<span className="text-yellow-300">{headerDiag.cm}</span>
+                  </div>
+                  <div>
+                    rect:{Math.round(headerDiag.rectW)}x{Math.round(headerDiag.rectH)}
+                    {headerDiag.note && (
+                      <span className="text-amber-300 ml-2">{headerDiag.note}</span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="text-amber-300">
+                  no touch yet — drag a page to see counters
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Body */}

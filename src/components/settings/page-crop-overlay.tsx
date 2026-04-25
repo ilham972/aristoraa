@@ -83,12 +83,25 @@ export function PageCropOverlay({
     ts: 0,
     tm: 0,
     te: 0,
+    cm: 0,
     rectW: 0,
     rectH: 0,
     lastX: -1,
     lastY: -1,
     note: '',
   });
+
+  // Forward diag updates to the route header via window CustomEvent so the
+  // user can see the counters without having to find the small per-page
+  // panel. Only dispatches when we have a real signal (touch reached the
+  // listener at least once) to avoid each page's mount overwriting the
+  // others' counters with default zeros.
+  useEffect(() => {
+    if (diag.ts === 0 && diag.tm === 0 && diag.te === 0 && diag.cm === 0 && !diag.attached) return;
+    window.dispatchEvent(new CustomEvent('cropdiag', {
+      detail: { page: pageNumber, ...diag },
+    }));
+  }, [diag, pageNumber]);
 
   const exById = useMemo(() => {
     const m: Record<string, UnitExercise> = {};
@@ -217,7 +230,13 @@ export function PageCropOverlay({
     // Android Chrome's long-press image menu (save/share/copy) is fired via
     // the `contextmenu` event, NOT via touchstart's default. preventDefault
     // on touchstart does not block it. We must also block contextmenu.
-    const onContextMenu = (e: Event) => e.preventDefault();
+    // Also count it so we can see in the diagnostic whether contextmenu
+    // even reaches our listener (if cm:0 but the menu still appears, the
+    // long-press is not hitting captureRef at all).
+    const onContextMenu = (e: Event) => {
+      setDiag((d) => ({ ...d, cm: d.cm + 1 }));
+      e.preventDefault();
+    };
 
     el.addEventListener('touchstart', onTouchStart, { passive: false });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
