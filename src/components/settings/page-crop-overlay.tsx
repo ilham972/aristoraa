@@ -67,6 +67,24 @@ export function PageCropOverlay({
   }>(null);
   const [editCrop, setEditCrop] = useState<QuestionBankRow | null>(null);
 
+  // ─── Mobile-only on-screen diagnostic ──────────────────────────────────
+  // The user has no Mac/USB to see iOS console logs. This panel tells us
+  // in one screenshot whether: (a) the effect actually attached listeners,
+  // (b) touchstart/move/end are firing, (c) the captureRef has non-zero
+  // bounds, (d) the computed point is non-null. Remove once crop is
+  // confirmed working on device.
+  const [diag, setDiag] = useState({
+    attached: false,
+    ts: 0,
+    tm: 0,
+    te: 0,
+    rectW: 0,
+    rectH: 0,
+    lastX: -1,
+    lastY: -1,
+    note: '',
+  });
+
   const exById = useMemo(() => {
     const m: Record<string, UnitExercise> = {};
     for (const e of unitExercises) m[e._id] = e;
@@ -119,26 +137,40 @@ export function PageCropOverlay({
 
     // ── Touch (mobile) ─────────────────────────────
     const onTouchStart = (e: TouchEvent) => {
+      const r = el.getBoundingClientRect();
       const t = e.touches[0];
+      // Diag FIRST — if this counter never increments on screen, the
+      // listener isn't being reached at all (most likely cause of the bug).
+      setDiag((d) => ({
+        ...d,
+        ts: d.ts + 1,
+        rectW: r.width,
+        rectH: r.height,
+        note: !t ? 'no touches[0]' : r.width === 0 || r.height === 0 ? 'rect 0' : '',
+      }));
       if (!t) return;
       const p = toPoint(t.clientX, t.clientY);
       if (!p) return;
       dragRef.current = { startX: p.x, startY: p.y, touchId: t.identifier };
       setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+      setDiag((d) => ({ ...d, lastX: p.x, lastY: p.y }));
       e.preventDefault();
     };
     const onTouchMove = (e: TouchEvent) => {
       const d = dragRef.current;
+      setDiag((s) => ({ ...s, tm: s.tm + 1 }));
       if (!d) return;
       const t = Array.from(e.touches).find((x) => x.identifier === d.touchId) || e.touches[0];
       if (!t) return;
       const p = toPoint(t.clientX, t.clientY);
       if (!p) return;
       setDraggingPreview({ startX: d.startX, startY: d.startY, endX: p.x, endY: p.y });
+      setDiag((s) => ({ ...s, lastX: p.x, lastY: p.y }));
       e.preventDefault();
     };
     const onTouchEnd = (e: TouchEvent) => {
       const d = dragRef.current;
+      setDiag((s) => ({ ...s, te: s.te + 1 }));
       if (!d) return;
       const t = Array.from(e.changedTouches).find((x) => x.identifier === d.touchId) || e.changedTouches[0];
       const p = t ? toPoint(t.clientX, t.clientY) : null;
@@ -182,6 +214,7 @@ export function PageCropOverlay({
     el.addEventListener('touchend', onTouchEnd, { passive: false });
     el.addEventListener('touchcancel', onTouchCancel);
     el.addEventListener('mousedown', onMouseDown);
+    setDiag((d) => ({ ...d, attached: true }));
 
     return () => {
       el.removeEventListener('touchstart', onTouchStart);
@@ -191,6 +224,7 @@ export function PageCropOverlay({
       el.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      setDiag((d) => ({ ...d, attached: false }));
     };
   }, [cropMode, pageId]);
 
@@ -222,6 +256,19 @@ export function PageCropOverlay({
       {crops.length > 0 && (
         <div className="absolute top-2 right-2 z-20 bg-primary/90 text-primary-foreground rounded-full px-2 py-0.5 text-[10px] font-bold pointer-events-none">
           {crops.length}
+        </div>
+      )}
+
+      {/* DIAGNOSTIC — temporary, remove once iOS crop is verified working */}
+      {cropMode && (
+        <div
+          className="absolute top-9 left-2 z-40 bg-black/85 text-white text-[9px] font-mono px-1.5 py-1 rounded pointer-events-none leading-tight space-y-0.5"
+          style={{ maxWidth: 180 }}
+        >
+          <div>L:{diag.attached ? 'ON' : 'OFF'} ts:{diag.ts} tm:{diag.tm} te:{diag.te}</div>
+          <div>rect:{Math.round(diag.rectW)}x{Math.round(diag.rectH)}</div>
+          <div>last:{diag.lastX.toFixed(2)},{diag.lastY.toFixed(2)}</div>
+          {diag.note && <div className="text-amber-300">{diag.note}</div>}
         </div>
       )}
 
