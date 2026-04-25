@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState, useEffect, type TouchEventHandler, type MouseEventHandler } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useMutation } from 'convex/react';
 import { X, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -55,10 +55,13 @@ export function PageCropOverlay({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
-  // Drag state in a ref so rapid re-renders don't wipe it. setDraggingPreview
-  // is only called to drive the visual preview rectangle, not to persist
-  // drag coordinates.
+  // Drag state in a ref so re-renders don't wipe it.
   const dragRef = useRef<{ startX: number; startY: number; touchId: number | null } | null>(null);
+  // Mutation kept in a ref so the listener-attaching effect doesn't tear down
+  // and re-attach every render (Convex's useMutation can return new refs).
+  const createMutRef = useRef(createMut);
+  useEffect(() => { createMutRef.current = createMut; }, [createMut]);
+
   const [draggingPreview, setDraggingPreview] = useState<null | {
     startX: number; startY: number; endX: number; endY: number;
   }>(null);
@@ -70,101 +73,133 @@ export function PageCropOverlay({
     return m;
   }, [unitExercises]);
 
-  const toPoint = (clientX: number, clientY: number) => {
-    const el = captureRef.current ?? containerRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return null;
-    return {
-      x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
-    };
-  };
+  // Native event listeners on the capture div. Native (not React synthetic)
+  // because:
+  //   1. React synthetic touch events on iOS are PASSIVE by default — calling
+  //      e.preventDefault() in a synthetic handler is a no-op, so iOS's image
+  //      callout (long-press save/copy/share menu) couldn't be cancelled and
+  //      the image gesture recogniser kept stealing the touch.
+  //   2. Native addEventListener with { passive: false } lets us preventDefault
+  //      on touchstart and touchmove, which iOS respects.
+  // Effect deps are only [cropMode, pageId] — createMutRef stays stable so
+  // the effect doesn't tear down listeners mid-gesture.
+  useEffect(() => {
+    if (!cropMode) return;
+    const el = captureRef.current;
+    if (!el) return;
 
-  const finishDrag = (endX: number, endY: number) => {
-    const d = dragRef.current;
-    dragRef.current = null;
-    setDraggingPreview(null);
-    if (!d) return;
-    const x = Math.min(d.startX, endX);
-    const y = Math.min(d.startY, endY);
-    const w = Math.abs(endX - d.startX);
-    const h = Math.abs(endY - d.startY);
-    if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
-    createMut({ source: 'textbook', textbookPageId: pageId, cropBox: { x, y, w, h } })
-      .catch((err) => {
+    const toPoint = (clientX: number, clientY: number) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return null;
+      return {
+        x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+      };
+    };
+
+    const finishDrag = (endX: number, endY: number) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDraggingPreview(null);
+      if (!d) return;
+      const x = Math.min(d.startX, endX);
+      const y = Math.min(d.startY, endY);
+      const w = Math.abs(endX - d.startX);
+      const h = Math.abs(endY - d.startY);
+      if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
+      createMutRef.current({
+        source: 'textbook',
+        textbookPageId: pageId,
+        cropBox: { x, y, w, h },
+      }).catch((err) => {
         console.error(err);
         toast.error('Could not save crop');
       });
-  };
+    };
 
-  // ── React synthetic touch handlers (mobile) ────────────
-  // React synthetic touchstart/move/end are passive by default — but since
-  // the capture div has touch-action: none and data-vaul-no-drag, the
-  // browser/Vaul won't claim the gesture, so passive is fine.
-  const onTouchStart: TouchEventHandler<HTMLDivElement> = (e) => {
-    const t = e.touches[0];
-    if (!t) return;
-    const p = toPoint(t.clientX, t.clientY);
-    if (!p) return;
-    dragRef.current = { startX: p.x, startY: p.y, touchId: t.identifier };
-    setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-  };
-
-  const onTouchMove: TouchEventHandler<HTMLDivElement> = (e) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const t = Array.from(e.touches).find((x) => x.identifier === d.touchId) || e.touches[0];
-    if (!t) return;
-    const p = toPoint(t.clientX, t.clientY);
-    if (!p) return;
-    setDraggingPreview({ startX: d.startX, startY: d.startY, endX: p.x, endY: p.y });
-  };
-
-  const onTouchEnd: TouchEventHandler<HTMLDivElement> = (e) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const t = Array.from(e.changedTouches).find((x) => x.identifier === d.touchId) || e.changedTouches[0];
-    if (!t) { dragRef.current = null; setDraggingPreview(null); return; }
-    const p = toPoint(t.clientX, t.clientY);
-    if (!p) { dragRef.current = null; setDraggingPreview(null); return; }
-    finishDrag(p.x, p.y);
-  };
-
-  const onTouchCancel: TouchEventHandler<HTMLDivElement> = () => {
-    dragRef.current = null;
-    setDraggingPreview(null);
-  };
-
-  // ── Mouse handlers (desktop) ───────────────────────────
-  const onMouseDown: MouseEventHandler<HTMLDivElement> = (e) => {
-    if (e.button !== 0) return;
-    const p = toPoint(e.clientX, e.clientY);
-    if (!p) return;
-    dragRef.current = { startX: p.x, startY: p.y, touchId: null };
-    setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-
-    // Listen on window so drag continues even when cursor leaves the div.
-    const onMove = (ev: MouseEvent) => {
+    // ── Touch (mobile) ─────────────────────────────
+    const onTouchStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      const p = toPoint(t.clientX, t.clientY);
+      if (!p) return;
+      dragRef.current = { startX: p.x, startY: p.y, touchId: t.identifier };
+      setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+      e.preventDefault();
+    };
+    const onTouchMove = (e: TouchEvent) => {
       const d = dragRef.current;
       if (!d) return;
-      const pt = toPoint(ev.clientX, ev.clientY);
-      if (!pt) return;
-      setDraggingPreview({ startX: d.startX, startY: d.startY, endX: pt.x, endY: pt.y });
+      const t = Array.from(e.touches).find((x) => x.identifier === d.touchId) || e.touches[0];
+      if (!t) return;
+      const p = toPoint(t.clientX, t.clientY);
+      if (!p) return;
+      setDraggingPreview({ startX: d.startX, startY: d.startY, endX: p.x, endY: p.y });
+      e.preventDefault();
     };
-    const onUp = (ev: MouseEvent) => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      const pt = toPoint(ev.clientX, ev.clientY);
-      if (pt) finishDrag(pt.x, pt.y);
-      else { dragRef.current = null; setDraggingPreview(null); }
+    const onTouchEnd = (e: TouchEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const t = Array.from(e.changedTouches).find((x) => x.identifier === d.touchId) || e.changedTouches[0];
+      const p = t ? toPoint(t.clientX, t.clientY) : null;
+      if (!p) { dragRef.current = null; setDraggingPreview(null); return; }
+      finishDrag(p.x, p.y);
+      e.preventDefault();
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    e.preventDefault();
-  };
+    const onTouchCancel = () => {
+      dragRef.current = null;
+      setDraggingPreview(null);
+    };
 
-  const preview = draggingPreview
+    // ── Mouse (desktop) ────────────────────────────
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) return;
+      dragRef.current = { startX: p.x, startY: p.y, touchId: null };
+      setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+      e.preventDefault();
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) return;
+      setDraggingPreview({ startX: d.startX, startY: d.startY, endX: p.x, endY: p.y });
+    };
+    const onMouseUp = (e: MouseEvent) => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      const p = toPoint(e.clientX, e.clientY);
+      if (!p) { dragRef.current = null; setDraggingPreview(null); return; }
+      finishDrag(p.x, p.y);
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: false });
+    el.addEventListener('touchcancel', onTouchCancel);
+    el.addEventListener('mousedown', onMouseDown);
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchCancel);
+      el.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [cropMode, pageId]);
+
+  // Preview is gated by cropMode — when crop mode is off, the preview is
+  // always hidden, even if draggingPreview state still holds the last drag
+  // coordinates from before the mode toggled. The next touchstart in a
+  // future crop session overwrites it, so no explicit reset effect is needed
+  // (which would trigger the react-hooks/set-state-in-effect lint).
+  const preview = cropMode && draggingPreview
     ? {
         x: Math.min(draggingPreview.startX, draggingPreview.endX),
         y: Math.min(draggingPreview.startY, draggingPreview.endY),
@@ -172,14 +207,6 @@ export function PageCropOverlay({
         h: Math.abs(draggingPreview.endY - draggingPreview.startY),
       }
     : null;
-
-  // Reset drag state when crop mode turns off mid-drag.
-  useEffect(() => {
-    if (!cropMode) {
-      dragRef.current = null;
-      setDraggingPreview(null);
-    }
-  }, [cropMode]);
 
   return (
     <div className="relative">
@@ -201,7 +228,10 @@ export function PageCropOverlay({
       <div
         ref={containerRef}
         className="relative select-none"
-        style={{ WebkitUserSelect: 'none' }}
+        style={{
+          WebkitUserSelect: 'none',
+          WebkitTouchCallout: 'none',
+        }}
       >
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -210,6 +240,15 @@ export function PageCropOverlay({
             alt={`Page ${pageNumber}`}
             className="w-full rounded-lg border border-border block pointer-events-none"
             draggable={false}
+            style={{
+              // Critical iOS: disable the native long-press image callout
+              // (save/copy/share menu). Without this, iOS's image gesture
+              // recogniser intercepts touches above DOM stacking, breaking
+              // both long-press AND short drags on the page image.
+              WebkitTouchCallout: 'none',
+              WebkitUserSelect: 'none',
+              userSelect: 'none',
+            }}
           />
         ) : (
           <div className="w-full aspect-[3/4] bg-muted rounded-lg flex items-center justify-center">
@@ -217,22 +256,20 @@ export function PageCropOverlay({
           </div>
         )}
 
-        {/* Dedicated touch-capture layer: only exists in crop mode, sits
-            above the image but below the rendered crops so tapping an
-            existing crop hits the crop, and dragging anywhere else starts
-            a new drag. React synthetic events on the capture div keep the
-            handlers stable across re-renders. */}
+        {/* Dedicated touch-capture layer — listeners attached natively in
+            useEffect (see above). Only exists in crop mode; sits above the
+            image (z-10) and below crops (z-30) so tapping an existing crop
+            hits the crop and dragging empty area starts a new crop. */}
         {cropMode && (
           <div
             ref={captureRef}
-            data-vaul-no-drag
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onTouchCancel={onTouchCancel}
-            onMouseDown={onMouseDown}
             className="absolute inset-0 cursor-crosshair z-10"
-            style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
+            style={{
+              touchAction: 'none',
+              WebkitUserSelect: 'none',
+              WebkitTouchCallout: 'none',
+              userSelect: 'none',
+            }}
           />
         )}
 
@@ -396,23 +433,6 @@ function CropLinkDialog({
   }) => Promise<void>;
   onClear: () => Promise<void>;
 }) {
-  const [exerciseId, setExerciseId] = useState<Id<'exercises'> | ''>('');
-  const [questionKey, setQuestionKey] = useState('');
-
-  // Sync state when crop opens
-  useEffect(() => {
-    if (open && crop) {
-      setExerciseId(crop.linkedExerciseId ?? '');
-      setQuestionKey(crop.linkedQuestionKey ?? '');
-    }
-  }, [open, crop]);
-
-  const exerciseRows = unitExercises
-    .filter((e) => (e.type ?? 'exercise') === 'exercise')
-    .sort((a, b) => a.order - b.order);
-
-  const picked = exerciseId ? unitExercises.find((e) => e._id === exerciseId) : null;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm mx-auto">
@@ -422,9 +442,50 @@ function CropLinkDialog({
             Link crop to exercise
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <Label className="text-xs">Exercise</Label>
+        {/* Body remounts per crop via the key prop, so its useState
+            initialisers seed from the latest crop without an effect. */}
+        {crop && (
+          <CropLinkDialogBody
+            key={crop._id}
+            crop={crop}
+            unitExercises={unitExercises}
+            onSave={onSave}
+            onClear={onClear}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CropLinkDialogBody({
+  crop,
+  unitExercises,
+  onSave,
+  onClear,
+}: {
+  crop: QuestionBankRow;
+  unitExercises: UnitExercise[];
+  onSave: (payload: {
+    linkedExerciseId?: Id<'exercises'>;
+    linkedQuestionKey?: string;
+  }) => Promise<void>;
+  onClear: () => Promise<void>;
+}) {
+  const [exerciseId, setExerciseId] = useState<Id<'exercises'> | ''>(crop.linkedExerciseId ?? '');
+  const [questionKey, setQuestionKey] = useState(crop.linkedQuestionKey ?? '');
+
+  const exerciseRows = unitExercises
+    .filter((e) => (e.type ?? 'exercise') === 'exercise')
+    .sort((a, b) => a.order - b.order);
+
+  const picked = exerciseId ? unitExercises.find((e) => e._id === exerciseId) : null;
+
+  return (
+    <>
+      <div className="space-y-3">
+        <div>
+          <Label className="text-xs">Exercise</Label>
             <div className="grid grid-cols-5 gap-1 mt-1 max-h-[200px] overflow-y-auto">
               {exerciseRows.length === 0 ? (
                 <p className="col-span-5 text-[11px] text-muted-foreground py-2 text-center">
@@ -469,27 +530,26 @@ function CropLinkDialog({
             />
           </div>
 
-          <div className="flex gap-2 pt-1">
-            <Button
-              variant="outline"
-              onClick={onClear}
-              className="shrink-0"
-              disabled={!crop?.linkedExerciseId}
-            >
-              Clear link
-            </Button>
-            <Button
-              onClick={() => onSave({
-                linkedExerciseId: exerciseId || undefined,
-                linkedQuestionKey: questionKey.trim() || undefined,
-              })}
-              className="flex-1"
-            >
-              Save
-            </Button>
-          </div>
+        <div className="flex gap-2 pt-1">
+          <Button
+            variant="outline"
+            onClick={onClear}
+            className="shrink-0"
+            disabled={!crop.linkedExerciseId}
+          >
+            Clear link
+          </Button>
+          <Button
+            onClick={() => onSave({
+              linkedExerciseId: exerciseId || undefined,
+              linkedQuestionKey: questionKey.trim() || undefined,
+            })}
+            className="flex-1"
+          >
+            Save
+          </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </>
   );
 }

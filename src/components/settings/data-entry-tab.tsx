@@ -1,20 +1,15 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Plus, Trash2, BookOpen, Image as ImageIcon, List, Scissors } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Scissors, List, BookOpen } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer';
 import { getUnitsForBook } from '@/lib/curriculum-data';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
@@ -22,7 +17,6 @@ import { toast } from 'sonner';
 import { SubQuestionInline } from '@/components/sub-question-inline';
 import type { SubQuestionsMap } from '@/lib/sub-questions';
 import { ConceptsUnitDrawer } from '@/components/settings/concepts-unit-drawer';
-import { PageCropOverlay } from '@/components/settings/page-crop-overlay';
 
 type Layer = 'exercises' | 'pages' | 'details' | 'concepts';
 
@@ -35,6 +29,8 @@ interface BookUnit {
 }
 
 export function DataEntryTab() {
+  const router = useRouter();
+
   // === QUERIES ===
   const textbooks = useQuery(api.textbooks.list);
   const allExercises = useQuery(api.exercises.list);
@@ -65,7 +61,6 @@ export function DataEntryTab() {
 
   // === LAYER 3 — Detail view ===
   const [detailUnit, setDetailUnit] = useState<BookUnit | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
@@ -76,9 +71,6 @@ export function DataEntryTab() {
   // === LAYER 4 — Concepts drawer ===
   const [conceptsDrawerUnit, setConceptsDrawerUnit] = useState<BookUnit | null>(null);
 
-  // === Page-drawer crop mode ===
-  const [cropMode, setCropMode] = useState(false);
-
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
 
@@ -86,55 +78,6 @@ export function DataEntryTab() {
     if (!selectedBook?.startUnit || !selectedBook?.endUnit) return [];
     return getUnitsForBook(selectedBook.grade, selectedBook.startUnit, selectedBook.endUnit);
   }, [selectedBook]);
-
-  const detailMeta = detailUnit
-    ? allUnitMeta?.find(m => m.unitId === detailUnit.id)
-    : undefined;
-  const unitPageRange =
-    detailMeta?.startPage != null && detailMeta?.endPage != null
-      ? { start: detailMeta.startPage, end: detailMeta.endPage }
-      : null;
-  const unitPages = useQuery(
-    api.textbookPages.getPagesInRange,
-    drawerOpen && selectedBook && unitPageRange
-      ? {
-          textbookId: selectedBook._id as Id<'textbooks'>,
-          startPage: unitPageRange.start,
-          endPage: unitPageRange.end,
-        }
-      : 'skip',
-  );
-
-  // Captured-page IDs in the current unit range — fed to the crop-bank query.
-  // Guard against both null (page not captured) and undefined (stale backend
-  // still running the old getPagesInRange shape before pageId was added).
-  const pageIdsForQuery = useMemo<Id<'textbookPages'>[]>(
-    () =>
-      (unitPages || [])
-        .map(p => (p as { pageId?: Id<'textbookPages'> | null }).pageId)
-        .filter((id): id is Id<'textbookPages'> => !!id),
-    [unitPages],
-  );
-
-  const pageCrops = useQuery(
-    api.questionBank.listByPages,
-    drawerOpen && pageIdsForQuery.length > 0
-      ? { textbookPageIds: pageIdsForQuery }
-      : 'skip',
-  );
-
-  type PageCrop = NonNullable<typeof pageCrops>[number];
-  const cropsByPage = useMemo(() => {
-    const map = new Map<string, PageCrop[]>();
-    if (!pageCrops) return map;
-    for (const c of pageCrops) {
-      if (!c.textbookPageId) continue;
-      const arr = map.get(c.textbookPageId) || [];
-      arr.push(c);
-      map.set(c.textbookPageId, arr);
-    }
-    return map;
-  }, [pageCrops]);
 
   // === HELPERS ===
   const getUnitExercises = (unitId: string) =>
@@ -329,9 +272,9 @@ export function DataEntryTab() {
             variant="outline"
             size="sm"
             className="gap-1.5 shrink-0"
-            onClick={() => setDrawerOpen(true)}
+            onClick={() => router.push(`/settings/crop/${detailUnit.id}`)}
           >
-            <BookOpen className="w-3.5 h-3.5" />
+            <Scissors className="w-3.5 h-3.5" />
             Pages
           </Button>
         </div>
@@ -551,118 +494,6 @@ export function DataEntryTab() {
           </DialogContent>
         </Dialog>
 
-        {/* Book page drawer */}
-        {/* dismissible={!cropMode} disables Vaul's swipe-to-close entirely
-            while in crop mode — without this, Vaul claims horizontal drags
-            inside the drawer and our pointer listeners never get the gesture. */}
-        <Drawer
-          direction="right"
-          open={drawerOpen}
-          dismissible={!cropMode}
-          onOpenChange={(o) => {
-            setDrawerOpen(o);
-            if (!o) setCropMode(false);
-          }}
-        >
-          <DrawerContent>
-            <DrawerHeader>
-              <div className="flex items-center gap-2">
-                <DrawerTitle className="text-sm truncate flex-1 min-w-0">
-                  {detailUnit.name}
-                  {meta?.startPage != null && meta?.endPage != null && (
-                    <span className="text-muted-foreground font-normal">
-                      {' '}
-                      (pp. {meta.startPage}–{meta.endPage})
-                    </span>
-                  )}
-                </DrawerTitle>
-                <Button
-                  data-vaul-no-drag
-                  variant={cropMode ? 'default' : 'outline'}
-                  size="sm"
-                  className="gap-1.5 shrink-0"
-                  onClick={() => setCropMode(m => !m)}
-                  disabled={meta?.startPage == null || meta?.endPage == null}
-                >
-                  <Scissors className="w-3.5 h-3.5" />
-                  {cropMode ? 'Done' : 'Crop'}
-                </Button>
-              </div>
-            </DrawerHeader>
-
-            {meta?.startPage == null || meta?.endPage == null ? (
-              <div className="flex-1 flex items-center justify-center px-4">
-                <p className="text-sm text-muted-foreground text-center">
-                  Set page range in &quot;Page Nos&quot; layer first.
-                </p>
-              </div>
-            ) : !unitPages ? (
-              <div className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar space-y-3">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="w-full aspect-[3/4] bg-muted rounded-lg animate-pulse" />
-                ))}
-              </div>
-            ) : (
-              <PinchZoomArea
-                className="flex-1 overflow-y-auto px-4 pb-4 no-scrollbar"
-                disabled={cropMode}
-              >
-                {cropMode && (
-                  <div
-                    className="mb-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 text-xs text-primary flex items-center gap-2"
-                    data-vaul-no-drag
-                  >
-                    <Scissors className="w-3.5 h-3.5 shrink-0" />
-                    <span>Drag across a question to crop it. Tap a crop to link it to an exercise.</span>
-                  </div>
-                )}
-                <div className="space-y-3" data-vaul-no-drag>
-                  {unitPages.map(pg => {
-                    // Defensive: treat both null (not captured) and undefined
-                    // (stale backend) as "no pageId" — fall back to placeholder.
-                    const pageId = (pg as { pageId?: Id<'textbookPages'> | null }).pageId ?? null;
-                    if (!pageId) {
-                      return (
-                        <div key={pg.pageNumber} className="relative">
-                          <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
-                            p.{pg.pageNumber}
-                          </div>
-                          {pg.url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={pg.url}
-                              alt={`Page ${pg.pageNumber}`}
-                              className="w-full rounded-lg border border-border"
-                            />
-                          ) : (
-                            <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
-                              <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
-                              <p className="text-sm text-muted-foreground">
-                                Page {pg.pageNumber} not captured
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    }
-                    return (
-                      <PageCropOverlay
-                        key={pageId}
-                        pageId={pageId}
-                        pageNumber={pg.pageNumber}
-                        imageUrl={pg.url}
-                        cropMode={cropMode}
-                        crops={cropsByPage.get(pageId) || []}
-                        unitExercises={getUnitExercises(detailUnit.id)}
-                      />
-                    );
-                  })}
-                </div>
-              </PinchZoomArea>
-            )}
-          </DrawerContent>
-        </Drawer>
-
       </>
     );
   }
@@ -859,137 +690,6 @@ export function DataEntryTab() {
 }
 
 // ─── Sub-components ────────────────────────────
-
-function PinchZoomArea({
-  children,
-  className,
-  disabled = false,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  disabled?: boolean;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
-  const scaleRef = useRef(1);
-  const lastDistRef = useRef(0);
-  const wasPinching = useRef(false);
-  const lastTapRef = useRef(0);
-  const originRef = useRef({ x: 50, y: 50 });
-
-  // Reset zoom when disabled (e.g. entering crop mode).
-  useEffect(() => {
-    if (disabled && scaleRef.current !== 1) {
-      scaleRef.current = 1;
-      setScale(1);
-      originRef.current = { x: 50, y: 50 };
-    }
-  }, [disabled]);
-
-  useEffect(() => {
-    if (disabled) return;
-    const el = containerRef.current;
-    if (!el) return;
-
-    const getDist = (t: TouchList) =>
-      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-
-    const getMidpoint = (t: TouchList) => {
-      const rect = el.getBoundingClientRect();
-      const midX = (t[0].clientX + t[1].clientX) / 2;
-      const midY = (t[0].clientY + t[1].clientY) / 2;
-      const contentW = el.scrollWidth;
-      const contentH = el.scrollHeight;
-      const x = ((midX - rect.left + el.scrollLeft) / contentW) * 100;
-      const y = ((midY - rect.top + el.scrollTop) / contentH) * 100;
-      return { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
-    };
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        wasPinching.current = true;
-        lastDistRef.current = getDist(e.touches);
-        originRef.current = getMidpoint(e.touches);
-      }
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        e.preventDefault();
-        const dist = getDist(e.touches);
-        if (lastDistRef.current > 0) {
-          const prevScale = scaleRef.current;
-          scaleRef.current = Math.min(3, Math.max(1, scaleRef.current * (dist / lastDistRef.current)));
-          setScale(scaleRef.current);
-
-          if (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight) {
-            const ratio = scaleRef.current / prevScale;
-            const rect = el.getBoundingClientRect();
-            const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
-            const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
-            el.scrollLeft = (el.scrollLeft + midX) * ratio - midX;
-            el.scrollTop = (el.scrollTop + midY) * ratio - midY;
-          }
-        }
-        lastDistRef.current = dist;
-      }
-    };
-
-    const onTouchEnd = (e: TouchEvent) => {
-      lastDistRef.current = 0;
-
-      if (e.touches.length === 0) {
-        if (wasPinching.current) {
-          wasPinching.current = false;
-          if (scaleRef.current < 1.1) {
-            scaleRef.current = 1;
-            setScale(1);
-            originRef.current = { x: 50, y: 50 };
-          }
-          return;
-        }
-
-        if (scaleRef.current > 1) {
-          const now = Date.now();
-          if (now - lastTapRef.current < 300) {
-            scaleRef.current = 1;
-            setScale(1);
-            originRef.current = { x: 50, y: 50 };
-          }
-          lastTapRef.current = now;
-        }
-      }
-    };
-
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd);
-
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-    };
-  }, [disabled]);
-
-  return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={scale > 1 ? { overflow: 'auto' } : undefined}
-    >
-      <div
-        style={{
-          transformOrigin: `${originRef.current.x}% ${originRef.current.y}%`,
-          transform: scale > 1 ? `scale(${scale})` : undefined,
-          width: scale > 1 ? `${scale * 100}%` : undefined,
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function AddTheoryButton({ onClick }: { onClick: () => void }) {
   return (
