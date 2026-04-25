@@ -66,6 +66,11 @@ export function PageCropOverlay({
     startX: number; startY: number; endX: number; endY: number;
   }>(null);
   const [editCrop, setEditCrop] = useState<QuestionBankRow | null>(null);
+  // Natural aspect ratio of the page image (width / height). We render the
+  // visible page as a <div> with `background-image` to bypass Android Chrome's
+  // image context-menu (long-press save/share), which only fires on real <img>
+  // elements. A hidden preloader <img> reports the natural aspect once loaded.
+  const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
 
   // ─── Mobile-only on-screen diagnostic ──────────────────────────────────
   // The user has no Mac/USB to see iOS console logs. This panel tells us
@@ -209,11 +214,17 @@ export function PageCropOverlay({
       finishDrag(p.x, p.y);
     };
 
+    // Android Chrome's long-press image menu (save/share/copy) is fired via
+    // the `contextmenu` event, NOT via touchstart's default. preventDefault
+    // on touchstart does not block it. We must also block contextmenu.
+    const onContextMenu = (e: Event) => e.preventDefault();
+
     el.addEventListener('touchstart', onTouchStart, { passive: false });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd, { passive: false });
     el.addEventListener('touchcancel', onTouchCancel);
     el.addEventListener('mousedown', onMouseDown);
+    el.addEventListener('contextmenu', onContextMenu);
     setDiag((d) => ({ ...d, attached: true }));
 
     return () => {
@@ -222,6 +233,7 @@ export function PageCropOverlay({
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('touchcancel', onTouchCancel);
       el.removeEventListener('mousedown', onMouseDown);
+      el.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       setDiag((d) => ({ ...d, attached: false }));
@@ -281,22 +293,39 @@ export function PageCropOverlay({
         }}
       >
         {imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={imageUrl}
-            alt={`Page ${pageNumber}`}
-            className="w-full rounded-lg border border-border block pointer-events-none"
-            draggable={false}
-            style={{
-              // Critical iOS: disable the native long-press image callout
-              // (save/copy/share menu). Without this, iOS's image gesture
-              // recogniser intercepts touches above DOM stacking, breaking
-              // both long-press AND short drags on the page image.
-              WebkitTouchCallout: 'none',
-              WebkitUserSelect: 'none',
-              userSelect: 'none',
-            }}
-          />
+          // Replaced <img> with a hidden preloader + background-image div.
+          // Android Chrome's long-press save/share menu only fires on real
+          // <img> elements; rendering the page image via CSS background-image
+          // removes that target completely. The hidden <img> preloads the
+          // image so we can read naturalWidth/Height to compute aspect.
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageUrl}
+              alt=""
+              aria-hidden
+              onLoad={(e) => {
+                const im = e.currentTarget;
+                if (im.naturalWidth && im.naturalHeight) {
+                  setNaturalAspect(im.naturalWidth / im.naturalHeight);
+                }
+              }}
+              style={{ display: 'none' }}
+            />
+            <div
+              role="img"
+              aria-label={`Page ${pageNumber}`}
+              className="w-full rounded-lg border border-border block pointer-events-none"
+              style={{
+                backgroundImage: `url("${imageUrl}")`,
+                backgroundSize: '100% 100%',
+                backgroundRepeat: 'no-repeat',
+                aspectRatio: naturalAspect ? `${naturalAspect}` : '3 / 4',
+                WebkitUserSelect: 'none',
+                userSelect: 'none',
+              }}
+            />
+          </>
         ) : (
           <div className="w-full aspect-[3/4] bg-muted rounded-lg flex items-center justify-center">
             <p className="text-sm text-muted-foreground">Page {pageNumber} not captured</p>
