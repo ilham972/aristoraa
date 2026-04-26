@@ -30,7 +30,7 @@ type UnitExercise = {
 };
 
 interface Props {
-  pageId: Id<'textbookPages'>;
+  pageId: Id<'textbookPages'> | null;
   pageNumber: number;
   imageUrl: string | null;
   cropMode: boolean;
@@ -91,13 +91,12 @@ export function PageCropOverlay({
     note: '',
   });
 
-  // Forward diag updates to the route header via window CustomEvent so the
-  // user can see the counters without having to find the small per-page
-  // panel. Only dispatches when we have a real signal (touch reached the
-  // listener at least once) to avoid each page's mount overwriting the
-  // others' counters with default zeros.
+  // Forward EVERY diag update to the route header via window CustomEvent.
+  // No early-return — we want the user to see L:ON / rect / counters right
+  // after mount so they know the overlay is alive even before they touch.
+  // Multiple pages all dispatch into the same bus; the most recent dispatch
+  // wins, which means the user sees the *last-touched* page's counters.
   useEffect(() => {
-    if (diag.ts === 0 && diag.tm === 0 && diag.te === 0 && diag.cm === 0 && !diag.attached) return;
     window.dispatchEvent(new CustomEvent('cropdiag', {
       detail: { page: pageNumber, ...diag },
     }));
@@ -143,6 +142,10 @@ export function PageCropOverlay({
       const w = Math.abs(endX - d.startX);
       const h = Math.abs(endY - d.startY);
       if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
+      if (!pageId) {
+        toast.error('Page not captured yet — upload a snapshot first');
+        return;
+      }
       createMutRef.current({
         source: 'textbook',
         textbookPageId: pageId,
@@ -311,62 +314,58 @@ export function PageCropOverlay({
           WebkitTouchCallout: 'none',
         }}
       >
-        {imageUrl ? (
-          // Replaced <img> with a hidden preloader + background-image div.
-          // Android Chrome's long-press save/share menu only fires on real
-          // <img> elements; rendering the page image via CSS background-image
-          // removes that target completely. The hidden <img> preloads the
-          // image so we can read naturalWidth/Height to compute aspect.
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={imageUrl}
-              alt=""
-              aria-hidden
-              onLoad={(e) => {
-                const im = e.currentTarget;
-                if (im.naturalWidth && im.naturalHeight) {
-                  setNaturalAspect(im.naturalWidth / im.naturalHeight);
-                }
-              }}
-              style={{ display: 'none' }}
-            />
-            <div
-              role="img"
-              aria-label={`Page ${pageNumber}`}
-              className="w-full rounded-lg border border-border block pointer-events-none"
-              style={{
-                backgroundImage: `url("${imageUrl}")`,
-                backgroundSize: '100% 100%',
-                backgroundRepeat: 'no-repeat',
-                aspectRatio: naturalAspect ? `${naturalAspect}` : '3 / 4',
-                WebkitUserSelect: 'none',
-                userSelect: 'none',
-              }}
-            />
-          </>
-        ) : (
-          <div className="w-full aspect-[3/4] bg-muted rounded-lg flex items-center justify-center">
-            <p className="text-sm text-muted-foreground">Page {pageNumber} not captured</p>
-          </div>
-        )}
-
-        {/* Dedicated touch-capture layer — listeners attached natively in
-            useEffect (see above). Only exists in crop mode; sits above the
-            image (z-10) and below crops (z-30) so tapping an existing crop
-            hits the crop and dragging empty area starts a new crop. */}
-        {cropMode && (
-          <div
-            ref={captureRef}
-            className="absolute inset-0 cursor-crosshair z-10"
-            style={{
-              touchAction: 'none',
-              WebkitUserSelect: 'none',
-              WebkitTouchCallout: 'none',
-              userSelect: 'none',
+        {/* Hidden preloader to learn the natural image aspect ratio. */}
+        {imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imageUrl}
+            alt=""
+            aria-hidden
+            onLoad={(e) => {
+              const im = e.currentTarget;
+              if (im.naturalWidth && im.naturalHeight) {
+                setNaturalAspect(im.naturalWidth / im.naturalHeight);
+              }
             }}
+            style={{ display: 'none' }}
           />
         )}
+
+        {/* SINGLE capture-and-image element. Previous design used a separate
+            transparent overlay for touches with the image rendered below it,
+            but the layered approach kept failing on Android — either
+            zero-sized capture div, ignored hit-testing, or the overlay
+            simply wasn't intercepting. By making the visible page itself the
+            element with the touch listeners, "if you can see the image, your
+            touch hits the listener" — no z-index/layering can fail. */}
+        <div
+          ref={captureRef}
+          role={imageUrl ? 'img' : undefined}
+          aria-label={imageUrl ? `Page ${pageNumber}` : undefined}
+          className={`w-full rounded-lg border border-border block ${
+            cropMode ? 'cursor-crosshair' : ''
+          } ${!imageUrl ? 'bg-muted flex items-center justify-center' : ''}`}
+          style={{
+            backgroundImage: imageUrl ? `url("${imageUrl}")` : undefined,
+            backgroundSize: '100% 100%',
+            backgroundRepeat: 'no-repeat',
+            aspectRatio:
+              imageUrl && naturalAspect ? `${naturalAspect}` : '3 / 4',
+            // touch-action: none disables browser scroll/zoom on this element
+            // so our touchmove listener gets all the events without competing
+            // with native gestures. Only when in crop mode.
+            touchAction: cropMode ? 'none' : 'auto',
+            WebkitUserSelect: 'none',
+            WebkitTouchCallout: 'none',
+            userSelect: 'none',
+          }}
+        >
+          {!imageUrl && (
+            <p className="text-sm text-muted-foreground pointer-events-none">
+              Page {pageNumber} not captured
+            </p>
+          )}
+        </div>
 
         {/* Existing crops — rendered AFTER the capture layer so they are
             on top and receive their own taps. */}

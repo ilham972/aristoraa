@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from 'convex/react';
-import { ChevronLeft, Scissors, Image as ImageIcon } from 'lucide-react';
+import { ChevronLeft, Scissors } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
@@ -184,7 +184,7 @@ export default function UnitCropPage() {
             )}
           </div>
           <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
-            v7
+            v8 · {unitPages?.length ?? 0}p
           </span>
           <Button
             variant={cropMode ? 'default' : 'outline'}
@@ -265,38 +265,21 @@ export default function UnitCropPage() {
               {unitPages.map((pg) => {
                 const pageId =
                   (pg as { pageId?: Id<'textbookPages'> | null }).pageId ?? null;
-                if (!pageId) {
-                  return (
-                    <div key={pg.pageNumber} className="relative">
-                      <div className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50">
-                        p.{pg.pageNumber}
-                      </div>
-                      {pg.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={pg.url}
-                          alt={`Page ${pg.pageNumber}`}
-                          className="w-full rounded-lg border border-border"
-                        />
-                      ) : (
-                        <div className="w-full aspect-[3/4] bg-muted rounded-lg flex flex-col items-center justify-center gap-2">
-                          <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
-                          <p className="text-sm text-muted-foreground">
-                            Page {pg.pageNumber} not captured
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
+                // ALWAYS mount PageCropOverlay — even when pageId is null
+                // (uncaptured page). Internally it disables saving but still
+                // renders the capture div, dispatches diag, and lets the
+                // user see whether touches reach the listener. Previously
+                // the no-pageId path branched to a non-overlay <img>, which
+                // is exactly why the diagnostic stayed blank for pages that
+                // hadn't been uploaded yet.
                 return (
                   <PageCropOverlay
-                    key={pageId}
+                    key={pageId ?? `np-${pg.pageNumber}`}
                     pageId={pageId}
                     pageNumber={pg.pageNumber}
                     imageUrl={pg.url}
                     cropMode={cropMode}
-                    crops={cropsByPage.get(pageId) || []}
+                    crops={pageId ? cropsByPage.get(pageId) || [] : []}
                     unitExercises={unitExercises}
                   />
                 );
