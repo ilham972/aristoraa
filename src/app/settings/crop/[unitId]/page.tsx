@@ -35,6 +35,7 @@ export default function UnitCropPage() {
   const [headerDiag, setHeaderDiag] = useState<{
     page: number;
     attached: boolean;
+    hasPageId: boolean;
     ts: number;
     tm: number;
     te: number;
@@ -184,7 +185,7 @@ export default function UnitCropPage() {
             )}
           </div>
           <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
-            v9 · {unitPages?.length ?? 0}p
+            v10 · {unitPages?.length ?? 0}p
           </span>
           <Button
             variant={cropMode ? 'default' : 'outline'}
@@ -211,6 +212,10 @@ export default function UnitCropPage() {
                     <span className={headerDiag.attached ? 'text-green-400' : 'text-red-400'}>
                       {headerDiag.attached ? 'ON' : 'OFF'}
                     </span>{' '}
+                    pid:
+                    <span className={headerDiag.hasPageId ? 'text-green-400' : 'text-red-400'}>
+                      {headerDiag.hasPageId ? 'YES' : 'NO'}
+                    </span>{' '}
                     ts:<span className="text-yellow-300">{headerDiag.ts}</span>{' '}
                     tm:<span className="text-yellow-300">{headerDiag.tm}</span>{' '}
                     te:<span className="text-yellow-300">{headerDiag.te}</span>{' '}
@@ -222,6 +227,11 @@ export default function UnitCropPage() {
                       <span className="text-amber-300 ml-2">{headerDiag.note}</span>
                     )}
                   </div>
+                  {!headerDiag.hasPageId && (
+                    <div className="text-red-300 text-[10px] mt-0.5">
+                      pageId missing — backend out of date, run `npx convex deploy`
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="text-amber-300">

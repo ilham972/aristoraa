@@ -98,9 +98,9 @@ export function PageCropOverlay({
   // wins, which means the user sees the *last-touched* page's counters.
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('cropdiag', {
-      detail: { page: pageNumber, ...diag },
+      detail: { page: pageNumber, hasPageId: !!pageId, ...diag },
     }));
-  }, [diag, pageNumber]);
+  }, [diag, pageNumber, pageId]);
 
   const exById = useMemo(() => {
     const m: Record<string, UnitExercise> = {};
@@ -120,10 +120,14 @@ export function PageCropOverlay({
   // the effect doesn't tear down listeners mid-gesture.
   useEffect(() => {
     if (!cropMode) return;
-    // Don't attach listeners on uncaptured pages — there's no image to crop
-    // and saving would fail. Skipping here means the user simply can't drag,
-    // which is clearer than letting them draw a rectangle then rejecting it.
-    if (!pageId || !imageUrl) return;
+    // Listener attaches whenever there's an image to crop. We don't gate on
+    // pageId here: if the convex backend hasn't been redeployed (so pageId
+    // isn't returned from getPagesInRange), the listener still attaches and
+    // the user can drag — the save handler shows a clear toast pointing at
+    // the missing pageId. Gating here would cause "L:OFF" on visible pages,
+    // which looks like a frontend bug when it's actually a backend deploy
+    // mismatch.
+    if (!imageUrl) return;
     const el = captureRef.current;
     if (!el) return;
 
@@ -147,7 +151,10 @@ export function PageCropOverlay({
       const h = Math.abs(endY - d.startY);
       if (w < MIN_CROP_SIZE || h < MIN_CROP_SIZE) return;
       if (!pageId) {
-        toast.error('Page not captured yet — upload a snapshot first');
+        // pageId is null even though imageUrl is set → the production Convex
+        // backend is on an old version of getPagesInRange that doesn't
+        // return pageId. Tell the user the actual fix.
+        toast.error('Backend out of date — run `npx convex deploy`');
         return;
       }
       createMutRef.current({
