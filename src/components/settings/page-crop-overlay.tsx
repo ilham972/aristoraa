@@ -36,6 +36,22 @@ interface Props {
   cropMode: boolean;
   crops: QuestionBankRow[];
   unitExercises: UnitExercise[];
+  // ── Fast-mode (per-exercise) ──
+  // If `onDrawComplete` is provided, the parent owns crop persistence — the
+  // overlay does not call createMut itself. Used by the per-exercise crop
+  // route, which auto-keys each new crop with the currently-selected
+  // main-Q/sub key from its sticky pill header.
+  onDrawComplete?: (box: CropBox) => void;
+  // If provided, tap on an existing crop dispatches to parent instead of
+  // opening the legacy edit dialog. Lets the route highlight + re-key via
+  // the same pill header.
+  onCropTap?: (cropId: Id<'questionBank'>) => void;
+  // Highlights the currently-selected crop (used by the route while the user
+  // is re-keying a previously-saved crop).
+  selectedCropId?: Id<'questionBank'> | null;
+  // Caption rendered above each crop. Defaults to a "Ex.X Q.Y" derived from
+  // unitExercises; per-exercise mode passes only the question key.
+  cropLabelFor?: (crop: QuestionBankRow) => string;
 }
 
 const MIN_CROP_SIZE = 0.03; // 3% of image in either dimension
@@ -47,6 +63,10 @@ export function PageCropOverlay({
   cropMode,
   crops,
   unitExercises,
+  onDrawComplete,
+  onCropTap,
+  selectedCropId,
+  cropLabelFor,
 }: Props) {
   const createMut = useMutation(api.questionBank.create);
   const removeMut = useMutation(api.questionBank.remove);
@@ -61,6 +81,10 @@ export function PageCropOverlay({
   // and re-attach every render (Convex's useMutation can return new refs).
   const createMutRef = useRef(createMut);
   useEffect(() => { createMutRef.current = createMut; }, [createMut]);
+  // Same ref-pattern for the parent-owned save callback so the listener
+  // effect doesn't tear down on every render of the parent.
+  const onDrawCompleteRef = useRef(onDrawComplete);
+  useEffect(() => { onDrawCompleteRef.current = onDrawComplete; }, [onDrawComplete]);
 
   const [draggingPreview, setDraggingPreview] = useState<null | {
     startX: number; startY: number; endX: number; endY: number;
@@ -157,6 +181,13 @@ export function PageCropOverlay({
         toast.error('Backend out of date — run `npx convex deploy`');
         return;
       }
+      // Fast-mode: parent owns the save (it knows the active question key
+      // from its pill header and auto-advances after).
+      if (onDrawCompleteRef.current) {
+        onDrawCompleteRef.current({ x, y, w, h });
+        return;
+      }
+      // Legacy mode: overlay saves directly with no link.
       createMutRef.current({
         source: 'textbook',
         textbookPageId: pageId,
@@ -395,7 +426,12 @@ export function PageCropOverlay({
               crop={c}
               linkedExercise={c.linkedExerciseId ? exById[c.linkedExerciseId] : undefined}
               cropMode={cropMode}
-              onEdit={() => setEditCrop(c)}
+              isSelected={selectedCropId === c._id}
+              labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
+              onEdit={() => {
+                if (onCropTap) onCropTap(c._id);
+                else setEditCrop(c);
+              }}
               onDelete={async () => {
                 if (!confirm('Delete this crop?')) return;
                 try {
@@ -462,29 +498,39 @@ function CropRect({
   crop,
   linkedExercise,
   cropMode,
+  isSelected,
+  labelOverride,
   onEdit,
   onDelete,
 }: {
   crop: QuestionBankRow;
   linkedExercise?: UnitExercise;
   cropMode: boolean;
+  isSelected?: boolean;
+  labelOverride?: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const b = crop.cropBox!;
   const isLinked = !!crop.linkedExerciseId;
-  const label = isLinked && linkedExercise
+  const defaultLabel = isLinked && linkedExercise
     ? `${linkedExercise.name}${crop.linkedQuestionKey ? ` Q${crop.linkedQuestionKey}` : ''}`
     : 'unlinked';
+  const label = labelOverride ?? defaultLabel;
+  // Selected (in fast-mode re-keying) wins over linked/unlinked color so
+  // the user can see exactly which crop they're editing.
+  const colorClasses = isSelected
+    ? 'border-2 border-sky-400 bg-sky-400/20 hover:bg-sky-400/30 ring-2 ring-sky-400/40'
+    : isLinked
+      ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
+      : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20';
 
   return (
     <div
       data-crop-rect="1"
-      className={`absolute rounded-sm transition-colors z-30 ${
-        isLinked
-          ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
-          : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20'
-      } ${cropMode ? 'pointer-events-auto' : 'pointer-events-none opacity-60'}`}
+      className={`absolute rounded-sm transition-colors z-30 ${colorClasses} ${
+        cropMode ? 'pointer-events-auto' : 'pointer-events-none opacity-60'
+      }`}
       style={{
         left: `${b.x * 100}%`,
         top: `${b.y * 100}%`,
@@ -502,9 +548,11 @@ function CropRect({
       {/* Label chip at top-left */}
       <div
         className={`absolute top-0 left-0 -translate-y-full mb-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
-          isLinked
-            ? 'bg-emerald-500 text-white'
-            : 'bg-amber-500 text-white'
+          isSelected
+            ? 'bg-sky-500 text-white'
+            : isLinked
+              ? 'bg-emerald-500 text-white'
+              : 'bg-amber-500 text-white'
         }`}
         style={{ transform: 'translateY(-100%)' }}
       >

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import { ChevronLeft, Plus, Trash2, Scissors, List, BookOpen } from 'lucide-react';
@@ -28,6 +28,14 @@ interface BookUnit {
   term: number;
 }
 
+// ─── sessionStorage keys for restoring view state on back-navigation ───
+const SS_BOOK = 'dataEntry.selectedBookId';
+const SS_LAYER = 'dataEntry.activeLayer';
+const SS_DETAIL = 'dataEntry.detailUnitId';
+
+const isLayer = (v: string | null): v is Layer =>
+  v === 'exercises' || v === 'pages' || v === 'details' || v === 'concepts';
+
 export function DataEntryTab() {
   const router = useRouter();
 
@@ -46,9 +54,17 @@ export function DataEntryTab() {
   const removeExMutation = useMutation(api.exercises.remove);
   const setSubQuestionsMutation = useMutation(api.exercises.setSubQuestions);
 
-  // === SELECTION STATE ===
-  const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
-  const [activeLayer, setActiveLayer] = useState<Layer>('exercises');
+  // === SELECTION STATE (lazy-init from sessionStorage so back-navigation
+  // restores the same view) ===
+  const [selectedBookId, setSelectedBookId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage.getItem(SS_BOOK);
+  });
+  const [activeLayer, setActiveLayer] = useState<Layer>(() => {
+    if (typeof window === 'undefined') return 'exercises';
+    const v = window.sessionStorage.getItem(SS_LAYER);
+    return isLayer(v) ? v : 'exercises';
+  });
 
   // === LAYER 1 — Exercise dialog ===
   const [exDialogUnit, setExDialogUnit] = useState<BookUnit | null>(null);
@@ -60,7 +76,15 @@ export function DataEntryTab() {
   const [pgEnd, setPgEnd] = useState('');
 
   // === LAYER 3 — Detail view ===
-  const [detailUnit, setDetailUnit] = useState<BookUnit | null>(null);
+  // We hold the detail-unit *id* (not the BookUnit object) so it can be
+  // restored synchronously from sessionStorage on mount; the resolved unit
+  // is derived from `bookUnits` once the selected book's range is known.
+  // Keeps the back-from-crop restore path purely derived — no setState in
+  // effect when bookUnits arrive late.
+  const [detailUnitId, setDetailUnitId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage.getItem(SS_DETAIL);
+  });
   const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
@@ -74,10 +98,61 @@ export function DataEntryTab() {
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
 
+  // ─── Persist selection state. SS keys are read on mount (lazy init above)
+  // so back-navigation lands the user exactly where they left off. ───
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (selectedBookId) window.sessionStorage.setItem(SS_BOOK, selectedBookId);
+    else window.sessionStorage.removeItem(SS_BOOK);
+  }, [selectedBookId]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(SS_LAYER, activeLayer);
+  }, [activeLayer]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (detailUnitId) window.sessionStorage.setItem(SS_DETAIL, detailUnitId);
+    else window.sessionStorage.removeItem(SS_DETAIL);
+  }, [detailUnitId]);
+
   const bookUnits = useMemo(() => {
     if (!selectedBook?.startUnit || !selectedBook?.endUnit) return [];
     return getUnitsForBook(selectedBook.grade, selectedBook.startUnit, selectedBook.endUnit);
   }, [selectedBook]);
+
+  // Resolve the persisted detail-unit id to its BookUnit object. Returns
+  // null while the book is still loading or if the id no longer matches a
+  // unit in the selected book. No effect needed — purely derived.
+  const detailUnit = useMemo<BookUnit | null>(
+    () =>
+      detailUnitId ? bookUnits.find(b => b.id === detailUnitId) ?? null : null,
+    [detailUnitId, bookUnits],
+  );
+
+  // === Crop counts per exercise (only loaded while in Details view) ===
+  const detailExerciseIds = useMemo<Id<'exercises'>[]>(
+    () =>
+      detailUnit
+        ? (allExercises || [])
+            .filter(e => e.unitId === detailUnit.id && (e.type || 'exercise') === 'exercise')
+            .map(e => e._id)
+        : [],
+    [detailUnit, allExercises],
+  );
+
+  const cropRows = useQuery(
+    api.questionBank.listByLinkedExercises,
+    detailExerciseIds.length > 0 ? { exerciseIds: detailExerciseIds } : 'skip',
+  );
+
+  const cropCountByExerciseId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of cropRows || []) {
+      if (!r.linkedExerciseId) continue;
+      m.set(r.linkedExerciseId, (m.get(r.linkedExerciseId) || 0) + 1);
+    }
+    return m;
+  }, [cropRows]);
 
   // === HELPERS ===
   const getUnitExercises = (unitId: string) =>
@@ -151,7 +226,7 @@ export function DataEntryTab() {
     } else if (activeLayer === 'concepts') {
       setConceptsDrawerUnit(unit);
     } else {
-      setDetailUnit(unit);
+      setDetailUnitId(unit.id);
     }
   };
 
@@ -256,7 +331,7 @@ export function DataEntryTab() {
         <div className="flex items-center gap-2 mb-3">
           <button
             className="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-muted transition-colors"
-            onClick={() => setDetailUnit(null)}
+            onClick={() => setDetailUnitId(null)}
           >
             <ChevronLeft className="w-5 h-5 text-muted-foreground" />
           </button>
@@ -352,113 +427,35 @@ export function DataEntryTab() {
                       </button>
                     </div>
                   ) : (
-                    <Card className="border-border/50 my-0.5">
-                      <CardContent className="p-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono font-medium text-foreground w-10 shrink-0">
-                            {item.name}
-                          </span>
-                          {item.name.endsWith('.0') && (
-                            <Badge variant="secondary" className="text-[10px] shrink-0">
-                              Rev
-                            </Badge>
-                          )}
-                          <div className="flex-1" />
-                          <Input
-                            key={`qc-${item._id}-${item.questionCount}`}
-                            type="number"
-                            min={0}
-                            defaultValue={item.questionCount || ''}
-                            placeholder="Qs"
-                            className="w-12 h-7 text-xs text-center font-mono"
-                            onBlur={e => handleCountBlur(item._id, item.questionCount, e.target.value)}
-                          />
-                          {item.questionCount > 0 && (
-                            <button
-                              onClick={() =>
-                                setExpandedSubQId(prev => (prev === item._id ? null : item._id))
-                              }
-                              className={`relative w-7 h-7 rounded-lg flex items-center justify-center active:scale-90 transition-all shrink-0
-                                ${expandedSubQId === item._id
-                                  ? 'bg-primary text-primary-foreground'
-                                  : (item as { subQuestions?: SubQuestionsMap }).subQuestions
-                                    ? 'bg-primary/15 text-primary'
-                                    : 'bg-muted text-muted-foreground'}`}
-                              title="Sub-questions"
-                            >
-                              <List className="w-3.5 h-3.5" />
-                              {(item as { subQuestions?: SubQuestionsMap }).subQuestions && expandedSubQId !== item._id && (
-                                <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-[7px] font-bold text-primary-foreground flex items-center justify-center px-0.5">
-                                  {Object.keys((item as { subQuestions?: SubQuestionsMap }).subQuestions!).length}
-                                </span>
-                              )}
-                            </button>
-                          )}
-                          <Input
-                            key={`pg-${item._id}-${item.pageNumber}`}
-                            type="number"
-                            min={1}
-                            defaultValue={item.pageNumber || ''}
-                            placeholder="fr"
-                            className="w-11 h-7 text-xs text-center font-mono px-1"
-                            onBlur={e => {
-                              const endEl = e.target
-                                .closest('div')
-                                ?.querySelector<HTMLInputElement>(`[data-pgend="${item._id}"]`);
-                              handleItemPageBlur(
-                                item._id,
-                                item.pageNumber,
-                                item.pageNumberEnd,
-                                e.target.value,
-                                endEl?.value || '',
-                              );
-                            }}
-                          />
-                          <span className="text-[10px] text-muted-foreground">-</span>
-                          <Input
-                            key={`pge-${item._id}-${item.pageNumberEnd}`}
-                            data-pgend={item._id}
-                            type="number"
-                            min={1}
-                            defaultValue={item.pageNumberEnd || ''}
-                            placeholder="to"
-                            className="w-11 h-7 text-xs text-center font-mono px-1"
-                            onBlur={e => {
-                              handleItemPageBlur(
-                                item._id,
-                                item.pageNumber,
-                                item.pageNumberEnd,
-                                String(item.pageNumber || ''),
-                                e.target.value,
-                              );
-                            }}
-                          />
-                          <button
-                            onClick={() => handleDeleteItem(item._id)}
-                            className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        {expandedSubQId === item._id && item.questionCount > 0 && (
-                          <SubQuestionInline
-                            questionCount={item.questionCount}
-                            subQuestions={(item as { subQuestions?: SubQuestionsMap }).subQuestions ?? null}
-                            onSave={async (subQ) => {
-                              try {
-                                await setSubQuestionsMutation({ id: item._id, subQuestions: subQ });
-                              } catch (err) {
-                                console.error('[setSubQuestions] failed', err);
-                                toast.error(
-                                  err instanceof Error ? err.message : 'Failed to save sub-questions',
-                                );
-                                throw err;
-                              }
-                            }}
-                          />
-                        )}
-                      </CardContent>
-                    </Card>
+                    <ExerciseCard
+                      item={item}
+                      cropCount={cropCountByExerciseId.get(item._id) || 0}
+                      expandedSubQId={expandedSubQId}
+                      onToggleSubQ={() =>
+                        setExpandedSubQId(prev => (prev === item._id ? null : item._id))
+                      }
+                      onCountBlur={(v) => handleCountBlur(item._id, item.questionCount, v)}
+                      onPageBlur={(s, e) =>
+                        handleItemPageBlur(item._id, item.pageNumber, item.pageNumberEnd, s, e)
+                      }
+                      onDelete={() => handleDeleteItem(item._id)}
+                      onCrop={() =>
+                        router.push(
+                          `/settings/crop/${detailUnit.id}?exerciseId=${item._id}`,
+                        )
+                      }
+                      onSaveSubQ={async (subQ) => {
+                        try {
+                          await setSubQuestionsMutation({ id: item._id, subQuestions: subQ });
+                        } catch (err) {
+                          console.error('[setSubQuestions] failed', err);
+                          toast.error(
+                            err instanceof Error ? err.message : 'Failed to save sub-questions',
+                          );
+                          throw err;
+                        }
+                      }}
+                    />
                   )}
 
                   <AddTheoryButton
@@ -520,7 +517,7 @@ export function DataEntryTab() {
                   return;
                 }
                 setSelectedBookId(book._id);
-                setDetailUnit(null);
+                setDetailUnitId(null);
               }}
               className={`shrink-0 px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
                 isSelected
@@ -567,7 +564,7 @@ export function DataEntryTab() {
                   key={layer.key}
                   onClick={() => {
                     setActiveLayer(layer.key);
-                    setDetailUnit(null);
+                    setDetailUnitId(null);
                   }}
                   className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all ${
                     isActive ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -700,6 +697,175 @@ function AddTheoryButton({ onClick }: { onClick: () => void }) {
       </span>
       <div className="flex-1 h-px bg-border group-hover:bg-primary/40 transition-colors" />
     </button>
+  );
+}
+
+// ─── Exercise card (Details view) ────────────────
+// Two-row layout, generous touch targets. Top row = identity (name, Rev
+// badge, page range, delete). Bottom row = data-entry actions (qCount input,
+// sub-Q toggle, crop button) — each with its own count badge so the user
+// sees at a glance what's been captured.
+function ExerciseCard({
+  item,
+  cropCount,
+  expandedSubQId,
+  onToggleSubQ,
+  onCountBlur,
+  onPageBlur,
+  onDelete,
+  onCrop,
+  onSaveSubQ,
+}: {
+  item: {
+    _id: Id<'exercises'>;
+    name: string;
+    questionCount: number;
+    pageNumber?: number;
+    pageNumberEnd?: number;
+    subQuestions?: SubQuestionsMap;
+  };
+  cropCount: number;
+  expandedSubQId: Id<'exercises'> | null;
+  onToggleSubQ: () => void;
+  onCountBlur: (value: string) => void;
+  onPageBlur: (startVal: string, endVal: string) => void;
+  onDelete: () => void;
+  onCrop: () => void;
+  onSaveSubQ: (subQ: SubQuestionsMap | null) => Promise<void>;
+}) {
+  const isExpanded = expandedSubQId === item._id;
+  const hasSubQ = !!item.subQuestions;
+  const subQNum = hasSubQ ? Object.keys(item.subQuestions!).length : 0;
+  const isReview = item.name.endsWith('.0');
+
+  return (
+    <Card className="border-border/50 my-1">
+      <CardContent className="p-3">
+        {/* ── Row 1: identity ── */}
+        <div className="flex items-center gap-2">
+          <span className="text-base font-mono font-semibold text-foreground shrink-0">
+            {item.name}
+          </span>
+          {isReview && (
+            <Badge variant="secondary" className="text-[10px] shrink-0">
+              Rev
+            </Badge>
+          )}
+          <div className="flex-1" />
+          <div className="flex items-center gap-1 shrink-0">
+            <Input
+              key={`pg-${item._id}-${item.pageNumber}`}
+              type="number"
+              min={1}
+              defaultValue={item.pageNumber || ''}
+              placeholder="fr"
+              aria-label="Start page"
+              className="w-12 h-8 text-xs text-center font-mono px-1"
+              onBlur={e => {
+                const endEl = e.target
+                  .closest('div')
+                  ?.querySelector<HTMLInputElement>(`[data-pgend="${item._id}"]`);
+                onPageBlur(e.target.value, endEl?.value || '');
+              }}
+            />
+            <span className="text-[10px] text-muted-foreground">–</span>
+            <Input
+              key={`pge-${item._id}-${item.pageNumberEnd}`}
+              data-pgend={item._id}
+              type="number"
+              min={1}
+              defaultValue={item.pageNumberEnd || ''}
+              placeholder="to"
+              aria-label="End page"
+              className="w-12 h-8 text-xs text-center font-mono px-1"
+              onBlur={e => onPageBlur(String(item.pageNumber || ''), e.target.value)}
+            />
+          </div>
+          <button
+            onClick={onDelete}
+            aria-label="Delete exercise"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* ── Row 2: actions ── */}
+        <div className="flex items-center gap-2 mt-2">
+          {/* Question count */}
+          <div className="flex items-center gap-1.5">
+            <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">
+              Qs
+            </Label>
+            <Input
+              key={`qc-${item._id}-${item.questionCount}`}
+              type="number"
+              min={0}
+              defaultValue={item.questionCount || ''}
+              placeholder="0"
+              className="w-14 h-8 text-sm text-center font-mono"
+              onBlur={e => onCountBlur(e.target.value)}
+            />
+          </div>
+
+          <div className="flex-1" />
+
+          {/* Sub-question toggle (only when qCount set) */}
+          {item.questionCount > 0 && (
+            <button
+              onClick={onToggleSubQ}
+              title="Sub-questions"
+              className={`relative h-8 px-2.5 rounded-lg flex items-center gap-1 text-xs font-medium active:scale-95 transition-all shrink-0
+                ${isExpanded
+                  ? 'bg-primary text-primary-foreground'
+                  : hasSubQ
+                    ? 'bg-primary/15 text-primary hover:bg-primary/25'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>Parts</span>
+              {subQNum > 0 && (
+                <span className={`ml-0.5 text-[10px] font-bold rounded-full px-1 min-w-[16px] text-center ${
+                  isExpanded ? 'bg-primary-foreground/20' : 'bg-primary/30'
+                }`}>
+                  {subQNum}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Crop button — Phase 0.3 entry point */}
+          <button
+            onClick={onCrop}
+            title="Crop questions for this exercise"
+            disabled={item.questionCount === 0}
+            className={`relative h-8 px-2.5 rounded-lg flex items-center gap-1 text-xs font-medium active:scale-95 transition-all shrink-0
+              ${item.questionCount === 0
+                ? 'bg-muted/50 text-muted-foreground/50 cursor-not-allowed'
+                : cropCount > 0
+                  ? 'bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}
+          >
+            <Scissors className="w-3.5 h-3.5" />
+            <span>Crop</span>
+            {cropCount > 0 && (
+              <span className="ml-0.5 text-[10px] font-bold rounded-full px-1 min-w-[16px] text-center bg-emerald-500/30">
+                {cropCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* ── Expandable sub-question editor ── */}
+        {isExpanded && item.questionCount > 0 && (
+          <SubQuestionInline
+            questionCount={item.questionCount}
+            subQuestions={item.subQuestions ?? null}
+            onSave={onSaveSubQ}
+          />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

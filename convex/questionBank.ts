@@ -55,6 +55,25 @@ export const listByLinkedExercise = query({
   },
 });
 
+// Crops for any of a set of exercises — used by the Details list to render
+// per-exercise crop counts on each row's crop button.
+export const listByLinkedExercises = query({
+  args: { exerciseIds: v.array(v.id("exercises")) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const rows = await Promise.all(
+      args.exerciseIds.map((id) =>
+        ctx.db
+          .query("questionBank")
+          .withIndex("by_linked_exercise", (q) => q.eq("linkedExerciseId", id))
+          .collect(),
+      ),
+    );
+    return rows.flat();
+  },
+});
+
 export const create = mutation({
   args: {
     source: v.string(), // "textbook" for now

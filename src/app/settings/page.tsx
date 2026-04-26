@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { GeneralTab } from '@/components/settings/general-tab';
 import { CentersTab } from '@/components/settings/centers-tab';
@@ -11,6 +11,15 @@ import { ContentTab } from '@/components/settings/content-tab';
 import { DataEntryTab } from '@/components/settings/data-entry-tab';
 
 type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'content' | 'curriculum' | 'data-entry';
+
+const TAB_KEYS: Tab[] = ['general', 'centers', 'schedule', 'teachers', 'content', 'curriculum', 'data-entry'];
+const SS_KEY = 'settings.activeTab';
+
+function readPersistedTab(): Tab {
+  if (typeof window === 'undefined') return 'general';
+  const v = window.sessionStorage.getItem(SS_KEY);
+  return v && (TAB_KEYS as string[]).includes(v) ? (v as Tab) : 'general';
+}
 
 const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'general', label: 'General', adminOnly: false },
@@ -23,7 +32,15 @@ const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('general');
+  // Read once on mount from sessionStorage so back-from-crop returns to the
+  // same tab the user was on. Lazy initializer is fine on the client; SSR
+  // returns 'general'.
+  const [activeTab, setActiveTab] = useState<Tab>(() => readPersistedTab());
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(SS_KEY, activeTab);
+    }
+  }, [activeTab]);
   const { teacher, role, isLoading } = useCurrentTeacher();
 
   const isAdmin = role === 'admin';
