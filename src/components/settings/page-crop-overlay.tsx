@@ -120,6 +120,10 @@ export function PageCropOverlay({
   // the effect doesn't tear down listeners mid-gesture.
   useEffect(() => {
     if (!cropMode) return;
+    // Don't attach listeners on uncaptured pages — there's no image to crop
+    // and saving would fail. Skipping here means the user simply can't drag,
+    // which is clearer than letting them draw a rectangle then rejecting it.
+    if (!pageId || !imageUrl) return;
     const el = captureRef.current;
     if (!el) return;
 
@@ -260,7 +264,7 @@ export function PageCropOverlay({
       window.removeEventListener('mouseup', onMouseUp);
       setDiag((d) => ({ ...d, attached: false }));
     };
-  }, [cropMode, pageId]);
+  }, [cropMode, pageId, imageUrl]);
 
   // Preview is gated by cropMode — when crop mode is off, the preview is
   // always hidden, even if draggingPreview state still holds the last drag
@@ -342,9 +346,11 @@ export function PageCropOverlay({
           ref={captureRef}
           role={imageUrl ? 'img' : undefined}
           aria-label={imageUrl ? `Page ${pageNumber}` : undefined}
-          className={`w-full rounded-lg border border-border block ${
-            cropMode ? 'cursor-crosshair' : ''
-          } ${!imageUrl ? 'bg-muted flex items-center justify-center' : ''}`}
+          className={`w-full rounded-lg border block ${
+            cropMode && imageUrl && pageId
+              ? 'cursor-crosshair border-border'
+              : 'border-dashed border-muted-foreground/30'
+          } ${!imageUrl ? 'bg-muted/40 flex flex-col items-center justify-center gap-2 text-center px-4' : 'border-border'}`}
           style={{
             backgroundImage: imageUrl ? `url("${imageUrl}")` : undefined,
             backgroundSize: '100% 100%',
@@ -353,17 +359,23 @@ export function PageCropOverlay({
               imageUrl && naturalAspect ? `${naturalAspect}` : '3 / 4',
             // touch-action: none disables browser scroll/zoom on this element
             // so our touchmove listener gets all the events without competing
-            // with native gestures. Only when in crop mode.
-            touchAction: cropMode ? 'none' : 'auto',
+            // with native gestures. Only enable when this page is actually
+            // croppable (cropMode + has image + has pageId).
+            touchAction: cropMode && imageUrl && pageId ? 'none' : 'auto',
             WebkitUserSelect: 'none',
             WebkitTouchCallout: 'none',
             userSelect: 'none',
           }}
         >
           {!imageUrl && (
-            <p className="text-sm text-muted-foreground pointer-events-none">
-              Page {pageNumber} not captured
-            </p>
+            <>
+              <p className="text-sm font-medium text-muted-foreground pointer-events-none">
+                Page {pageNumber} not uploaded
+              </p>
+              <p className="text-[11px] text-muted-foreground/70 pointer-events-none max-w-[220px]">
+                Upload this page in Settings → Content tab, then return here to crop it.
+              </p>
+            </>
           )}
         </div>
 

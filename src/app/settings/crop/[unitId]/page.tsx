@@ -184,7 +184,7 @@ export default function UnitCropPage() {
             )}
           </div>
           <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
-            v8 · {unitPages?.length ?? 0}p
+            v9 · {unitPages?.length ?? 0}p
           </span>
           <Button
             variant={cropMode ? 'default' : 'outline'}
