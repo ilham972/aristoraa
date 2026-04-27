@@ -15,7 +15,7 @@ import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
 import { SubQuestionInline } from '@/components/sub-question-inline';
-import type { SubQuestionsMap } from '@/lib/sub-questions';
+import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
 import { ConceptsUnitDrawer } from '@/components/settings/concepts-unit-drawer';
 
 type Layer = 'exercises' | 'pages' | 'details' | 'concepts';
@@ -150,6 +150,21 @@ export function DataEntryTab() {
     for (const r of cropRows || []) {
       if (!r.linkedExerciseId) continue;
       m.set(r.linkedExerciseId, (m.get(r.linkedExerciseId) || 0) + 1);
+    }
+    return m;
+  }, [cropRows]);
+
+  // Per-exercise: question-key → list of cropIds. Used by ExerciseCard to
+  // render the at-a-glance dots row and the expanded capture grid, and to
+  // deep-link into the crop route flashing the right rect.
+  type CropRef = { _id: Id<'questionBank'>; key: string };
+  const cropsByExerciseId = useMemo(() => {
+    const m = new Map<string, CropRef[]>();
+    for (const r of cropRows || []) {
+      if (!r.linkedExerciseId || !r.linkedQuestionKey) continue;
+      const arr = m.get(r.linkedExerciseId) || [];
+      arr.push({ _id: r._id, key: r.linkedQuestionKey });
+      m.set(r.linkedExerciseId, arr);
     }
     return m;
   }, [cropRows]);
@@ -430,6 +445,7 @@ export function DataEntryTab() {
                     <ExerciseCard
                       item={item}
                       cropCount={cropCountByExerciseId.get(item._id) || 0}
+                      cropRefs={cropsByExerciseId.get(item._id) || []}
                       expandedSubQId={expandedSubQId}
                       onToggleSubQ={() =>
                         setExpandedSubQId(prev => (prev === item._id ? null : item._id))
@@ -442,6 +458,16 @@ export function DataEntryTab() {
                       onCrop={() =>
                         router.push(
                           `/settings/crop/${detailUnit.id}?exerciseId=${item._id}`,
+                        )
+                      }
+                      onJumpToCrop={(cropId) =>
+                        router.push(
+                          `/settings/crop/${detailUnit.id}?exerciseId=${item._id}&flash=${cropId}`,
+                        )
+                      }
+                      onJumpToKey={(key) =>
+                        router.push(
+                          `/settings/crop/${detailUnit.id}?exerciseId=${item._id}&key=${encodeURIComponent(key)}`,
                         )
                       }
                       onSaveSubQ={async (subQ) => {
@@ -701,19 +727,24 @@ function AddTheoryButton({ onClick }: { onClick: () => void }) {
 }
 
 // ─── Exercise card (Details view) ────────────────
-// Two-row layout, generous touch targets. Top row = identity (name, Rev
-// badge, page range, delete). Bottom row = data-entry actions (qCount input,
-// sub-Q toggle, crop button) — each with its own count badge so the user
-// sees at a glance what's been captured.
+// Three-row layout, generous touch targets:
+//   Row 1 = identity (name, Rev badge, page range, delete)
+//   Row 2 = data-entry actions (qCount, sub-Q toggle, crop button)
+//   Row 3 = capture-status dots, one per main-Q (filled = ≥1 crop saved)
+// Tapping a dot deep-links into the crop route — flashing the matching rect
+// if there is one, or pre-selecting that key if there isn't.
 function ExerciseCard({
   item,
   cropCount,
+  cropRefs,
   expandedSubQId,
   onToggleSubQ,
   onCountBlur,
   onPageBlur,
   onDelete,
   onCrop,
+  onJumpToCrop,
+  onJumpToKey,
   onSaveSubQ,
 }: {
   item: {
@@ -725,18 +756,44 @@ function ExerciseCard({
     subQuestions?: SubQuestionsMap;
   };
   cropCount: number;
+  cropRefs: { _id: Id<'questionBank'>; key: string }[];
   expandedSubQId: Id<'exercises'> | null;
   onToggleSubQ: () => void;
   onCountBlur: (value: string) => void;
   onPageBlur: (startVal: string, endVal: string) => void;
   onDelete: () => void;
   onCrop: () => void;
+  onJumpToCrop: (cropId: Id<'questionBank'>) => void;
+  onJumpToKey: (key: string) => void;
   onSaveSubQ: (subQ: SubQuestionsMap | null) => Promise<void>;
 }) {
   const isExpanded = expandedSubQId === item._id;
   const hasSubQ = !!item.subQuestions;
   const subQNum = hasSubQ ? Object.keys(item.subQuestions!).length : 0;
   const isReview = item.name.endsWith('.0');
+
+  // Group crops by their question key for quick lookup. Multiple crops may
+  // share a key (e.g. stem text + figure for the same sub-part) — we only
+  // need the first one for the deep-link.
+  const cropsByKey = useMemo(() => {
+    const m = new Map<string, Id<'questionBank'>>();
+    for (const c of cropRefs) {
+      if (!m.has(c.key)) m.set(c.key, c._id);
+    }
+    return m;
+  }, [cropRefs]);
+
+  // Does main question `q` have at least one crop (stem OR any sub-part)?
+  // Returns the first crop id encountered so dots can flash-link directly.
+  const firstCropForMainQ = (q: number): Id<'questionBank'> | null => {
+    const stem = cropsByKey.get(String(q));
+    if (stem) return stem;
+    const prefix = `${q}.`;
+    for (const [k, id] of cropsByKey) {
+      if (k.startsWith(prefix)) return id;
+    }
+    return null;
+  };
 
   return (
     <Card className="border-border/50 my-1">
@@ -856,13 +913,56 @@ function ExerciseCard({
           </button>
         </div>
 
-        {/* ── Expandable sub-question editor ── */}
+        {/* ── Row 3: capture-status dots ── */}
+        {item.questionCount > 0 && (
+          <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t border-border/30">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-1">
+              Captured
+            </span>
+            {Array.from({ length: item.questionCount }, (_, i) => i + 1).map(
+              (q) => {
+                const firstId = firstCropForMainQ(q);
+                const filled = !!firstId;
+                return (
+                  <button
+                    key={q}
+                    onClick={() => {
+                      if (firstId) onJumpToCrop(firstId);
+                      else onJumpToKey(String(q));
+                    }}
+                    title={`Q${q}${filled ? ' — view crop' : ' — start crop'}`}
+                    className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-muted/70 active:scale-90 transition-all"
+                  >
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full transition-colors ${
+                        filled
+                          ? 'bg-emerald-500'
+                          : 'border border-muted-foreground/40'
+                      }`}
+                    />
+                  </button>
+                );
+              },
+            )}
+          </div>
+        )}
+
+        {/* ── Expandable sub-question editor + capture grid ── */}
         {isExpanded && item.questionCount > 0 && (
-          <SubQuestionInline
-            questionCount={item.questionCount}
-            subQuestions={item.subQuestions ?? null}
-            onSave={onSaveSubQ}
-          />
+          <>
+            <SubQuestionInline
+              questionCount={item.questionCount}
+              subQuestions={item.subQuestions ?? null}
+              onSave={onSaveSubQ}
+            />
+            <CaptureGrid
+              questionCount={item.questionCount}
+              subQuestions={item.subQuestions}
+              cropsByKey={cropsByKey}
+              onJumpToCrop={onJumpToCrop}
+              onJumpToKey={onJumpToKey}
+            />
+          </>
         )}
       </CardContent>
     </Card>
@@ -937,6 +1037,85 @@ function ExercisePickerBody({
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Capture status grid (in expanded ExerciseCard) ────────────
+// One row per main question: a stem cell plus a cell for each sub-part.
+// Each cell is filled emerald if at least one crop has been saved with that
+// key, otherwise an empty bordered box. Tapping a filled cell jumps to the
+// crop view and flashes the rect; tapping an empty cell jumps with that
+// key pre-selected so the user lands ready to draw it.
+function CaptureGrid({
+  questionCount,
+  subQuestions,
+  cropsByKey,
+  onJumpToCrop,
+  onJumpToKey,
+}: {
+  questionCount: number;
+  subQuestions: SubQuestionsMap | undefined;
+  cropsByKey: Map<string, Id<'questionBank'>>;
+  onJumpToCrop: (cropId: Id<'questionBank'>) => void;
+  onJumpToKey: (key: string) => void;
+}) {
+  const cell = (key: string, label: string) => {
+    const cropId = cropsByKey.get(key);
+    const filled = !!cropId;
+    return (
+      <button
+        key={key}
+        onClick={() =>
+          cropId ? onJumpToCrop(cropId) : onJumpToKey(key)
+        }
+        title={`${key}${filled ? ' — view crop' : ' — start crop'}`}
+        className={`min-w-[34px] h-7 px-2 rounded-md text-[10px] font-mono font-bold transition-all active:scale-95
+          ${filled
+            ? 'bg-emerald-500 text-white hover:bg-emerald-500/90'
+            : 'bg-card border border-dashed border-muted-foreground/40 text-muted-foreground hover:border-primary/50 hover:text-foreground'}`}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="bg-muted/30 rounded-lg p-2 mt-2 border border-border/40 space-y-1">
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 px-1">
+        Capture status — tap to view / start
+      </p>
+      <div className="space-y-1 max-h-[40vh] overflow-y-auto no-scrollbar">
+        {Array.from({ length: questionCount }, (_, i) => {
+          const q = i + 1;
+          const sub = subQuestions?.[String(q)];
+          const hasSubs = !!sub && sub.count > 1;
+          return (
+            <div
+              key={q}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-card border border-border/30"
+            >
+              <span className="text-[11px] font-mono font-semibold text-foreground min-w-[28px]">
+                Q{q}
+              </span>
+              {hasSubs
+                ? cell(String(q), 'stem')
+                : cell(String(q), 'whole')}
+              {hasSubs && (
+                <>
+                  <span className="text-[10px] text-muted-foreground/50">
+                    ·
+                  </span>
+                  {Array.from({ length: sub.count }, (_, s) => {
+                    const label = getSubLabel(s, sub.type);
+                    return cell(`${q}.${label}`, label);
+                  })}
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

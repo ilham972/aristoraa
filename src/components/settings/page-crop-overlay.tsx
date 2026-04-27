@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useMutation } from 'convex/react';
-import { X, Link2 } from 'lucide-react';
+import { X, Link2, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,6 +52,13 @@ interface Props {
   // Caption rendered above each crop. Defaults to a "Ex.X Q.Y" derived from
   // unitExercises; per-exercise mode passes only the question key.
   cropLabelFor?: (crop: QuestionBankRow) => string;
+  // If provided, an icon button is shown on the page that opens this page in
+  // the full-screen zoom view. Parent route owns the actual zoom modal.
+  onZoom?: (pageId: Id<'textbookPages'>, naturalAspect: number | null) => void;
+  // If set and matches one of `crops`, that rect briefly pulses yellow so
+  // the user can see exactly which crop a deep-link from the Details capture
+  // grid pointed at.
+  flashCropId?: Id<'questionBank'> | null;
 }
 
 const MIN_CROP_SIZE = 0.03; // 3% of image in either dimension
@@ -67,6 +74,8 @@ export function PageCropOverlay({
   onCropTap,
   selectedCropId,
   cropLabelFor,
+  onZoom,
+  flashCropId,
 }: Props) {
   const createMut = useMutation(api.questionBank.create);
   const removeMut = useMutation(api.questionBank.remove);
@@ -95,36 +104,6 @@ export function PageCropOverlay({
   // image context-menu (long-press save/share), which only fires on real <img>
   // elements. A hidden preloader <img> reports the natural aspect once loaded.
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
-
-  // ─── Mobile-only on-screen diagnostic ──────────────────────────────────
-  // The user has no Mac/USB to see iOS console logs. This panel tells us
-  // in one screenshot whether: (a) the effect actually attached listeners,
-  // (b) touchstart/move/end are firing, (c) the captureRef has non-zero
-  // bounds, (d) the computed point is non-null. Remove once crop is
-  // confirmed working on device.
-  const [diag, setDiag] = useState({
-    attached: false,
-    ts: 0,
-    tm: 0,
-    te: 0,
-    cm: 0,
-    rectW: 0,
-    rectH: 0,
-    lastX: -1,
-    lastY: -1,
-    note: '',
-  });
-
-  // Forward EVERY diag update to the route header via window CustomEvent.
-  // No early-return — we want the user to see L:ON / rect / counters right
-  // after mount so they know the overlay is alive even before they touch.
-  // Multiple pages all dispatch into the same bus; the most recent dispatch
-  // wins, which means the user sees the *last-touched* page's counters.
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent('cropdiag', {
-      detail: { page: pageNumber, hasPageId: !!pageId, ...diag },
-    }));
-  }, [diag, pageNumber, pageId]);
 
   const exById = useMemo(() => {
     const m: Record<string, UnitExercise> = {};
@@ -200,40 +179,26 @@ export function PageCropOverlay({
 
     // ── Touch (mobile) ─────────────────────────────
     const onTouchStart = (e: TouchEvent) => {
-      const r = el.getBoundingClientRect();
       const t = e.touches[0];
-      // Diag FIRST — if this counter never increments on screen, the
-      // listener isn't being reached at all (most likely cause of the bug).
-      setDiag((d) => ({
-        ...d,
-        ts: d.ts + 1,
-        rectW: r.width,
-        rectH: r.height,
-        note: !t ? 'no touches[0]' : r.width === 0 || r.height === 0 ? 'rect 0' : '',
-      }));
       if (!t) return;
       const p = toPoint(t.clientX, t.clientY);
       if (!p) return;
       dragRef.current = { startX: p.x, startY: p.y, touchId: t.identifier };
       setDraggingPreview({ startX: p.x, startY: p.y, endX: p.x, endY: p.y });
-      setDiag((d) => ({ ...d, lastX: p.x, lastY: p.y }));
       e.preventDefault();
     };
     const onTouchMove = (e: TouchEvent) => {
       const d = dragRef.current;
-      setDiag((s) => ({ ...s, tm: s.tm + 1 }));
       if (!d) return;
       const t = Array.from(e.touches).find((x) => x.identifier === d.touchId) || e.touches[0];
       if (!t) return;
       const p = toPoint(t.clientX, t.clientY);
       if (!p) return;
       setDraggingPreview({ startX: d.startX, startY: d.startY, endX: p.x, endY: p.y });
-      setDiag((s) => ({ ...s, lastX: p.x, lastY: p.y }));
       e.preventDefault();
     };
     const onTouchEnd = (e: TouchEvent) => {
       const d = dragRef.current;
-      setDiag((s) => ({ ...s, te: s.te + 1 }));
       if (!d) return;
       const t = Array.from(e.changedTouches).find((x) => x.identifier === d.touchId) || e.changedTouches[0];
       const p = t ? toPoint(t.clientX, t.clientY) : null;
@@ -275,13 +240,7 @@ export function PageCropOverlay({
     // Android Chrome's long-press image menu (save/share/copy) is fired via
     // the `contextmenu` event, NOT via touchstart's default. preventDefault
     // on touchstart does not block it. We must also block contextmenu.
-    // Also count it so we can see in the diagnostic whether contextmenu
-    // even reaches our listener (if cm:0 but the menu still appears, the
-    // long-press is not hitting captureRef at all).
-    const onContextMenu = (e: Event) => {
-      setDiag((d) => ({ ...d, cm: d.cm + 1 }));
-      e.preventDefault();
-    };
+    const onContextMenu = (e: Event) => e.preventDefault();
 
     el.addEventListener('touchstart', onTouchStart, { passive: false });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -289,7 +248,6 @@ export function PageCropOverlay({
     el.addEventListener('touchcancel', onTouchCancel);
     el.addEventListener('mousedown', onMouseDown);
     el.addEventListener('contextmenu', onContextMenu);
-    setDiag((d) => ({ ...d, attached: true }));
 
     return () => {
       el.removeEventListener('touchstart', onTouchStart);
@@ -300,7 +258,6 @@ export function PageCropOverlay({
       el.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      setDiag((d) => ({ ...d, attached: false }));
     };
   }, [cropMode, pageId, imageUrl]);
 
@@ -319,7 +276,7 @@ export function PageCropOverlay({
     : null;
 
   return (
-    <div className="relative">
+    <div className="relative" data-page-id={pageId ?? undefined}>
       {/* Page number label */}
       <div className="absolute top-2 left-2 z-20 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50 pointer-events-none">
         p.{pageNumber}
@@ -328,25 +285,23 @@ export function PageCropOverlay({
         )}
       </div>
 
-      {/* Crop count chip */}
-      {crops.length > 0 && (
-        <div className="absolute top-2 right-2 z-20 bg-primary/90 text-primary-foreground rounded-full px-2 py-0.5 text-[10px] font-bold pointer-events-none">
-          {crops.length}
-        </div>
-      )}
-
-      {/* DIAGNOSTIC — temporary, remove once iOS crop is verified working */}
-      {cropMode && (
-        <div
-          className="absolute top-9 left-2 z-40 bg-black/85 text-white text-[9px] font-mono px-1.5 py-1 rounded pointer-events-none leading-tight space-y-0.5"
-          style={{ maxWidth: 180 }}
-        >
-          <div>L:{diag.attached ? 'ON' : 'OFF'} ts:{diag.ts} tm:{diag.tm} te:{diag.te}</div>
-          <div>rect:{Math.round(diag.rectW)}x{Math.round(diag.rectH)}</div>
-          <div>last:{diag.lastX.toFixed(2)},{diag.lastY.toFixed(2)}</div>
-          {diag.note && <div className="text-amber-300">{diag.note}</div>}
-        </div>
-      )}
+      {/* Top-right controls: zoom button + crop count chip */}
+      <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
+        {onZoom && imageUrl && pageId && (
+          <button
+            onClick={() => onZoom(pageId, naturalAspect)}
+            className="w-8 h-8 rounded-lg bg-background/85 border border-border/60 backdrop-blur-sm flex items-center justify-center hover:bg-background active:scale-95 transition-all shadow-sm"
+            aria-label="Zoom into page"
+          >
+            <Maximize2 className="w-4 h-4 text-foreground" />
+          </button>
+        )}
+        {crops.length > 0 && (
+          <div className="bg-primary/90 text-primary-foreground rounded-full px-2 py-0.5 text-[10px] font-bold pointer-events-none">
+            {crops.length}
+          </div>
+        )}
+      </div>
 
       <div
         ref={containerRef}
@@ -427,6 +382,7 @@ export function PageCropOverlay({
               linkedExercise={c.linkedExerciseId ? exById[c.linkedExerciseId] : undefined}
               cropMode={cropMode}
               isSelected={selectedCropId === c._id}
+              isFlash={flashCropId === c._id}
               labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
               onEdit={() => {
                 if (onCropTap) onCropTap(c._id);
@@ -499,6 +455,7 @@ function CropRect({
   linkedExercise,
   cropMode,
   isSelected,
+  isFlash,
   labelOverride,
   onEdit,
   onDelete,
@@ -507,6 +464,7 @@ function CropRect({
   linkedExercise?: UnitExercise;
   cropMode: boolean;
   isSelected?: boolean;
+  isFlash?: boolean;
   labelOverride?: string;
   onEdit: () => void;
   onDelete: () => void;
@@ -517,13 +475,15 @@ function CropRect({
     ? `${linkedExercise.name}${crop.linkedQuestionKey ? ` Q${crop.linkedQuestionKey}` : ''}`
     : 'unlinked';
   const label = labelOverride ?? defaultLabel;
-  // Selected (in fast-mode re-keying) wins over linked/unlinked color so
-  // the user can see exactly which crop they're editing.
-  const colorClasses = isSelected
-    ? 'border-2 border-sky-400 bg-sky-400/20 hover:bg-sky-400/30 ring-2 ring-sky-400/40'
-    : isLinked
-      ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
-      : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20';
+  // Flash > Selected > Linked/Unlinked color, so a deep-link arrival is
+  // unambiguous even if the crop is also linked.
+  const colorClasses = isFlash
+    ? 'border-2 border-yellow-400 bg-yellow-400/30 ring-4 ring-yellow-400/50 animate-pulse'
+    : isSelected
+      ? 'border-2 border-sky-400 bg-sky-400/20 hover:bg-sky-400/30 ring-2 ring-sky-400/40'
+      : isLinked
+        ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
+        : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20';
 
   return (
     <div
@@ -548,11 +508,13 @@ function CropRect({
       {/* Label chip at top-left */}
       <div
         className={`absolute top-0 left-0 -translate-y-full mb-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
-          isSelected
-            ? 'bg-sky-500 text-white'
-            : isLinked
-              ? 'bg-emerald-500 text-white'
-              : 'bg-amber-500 text-white'
+          isFlash
+            ? 'bg-yellow-400 text-black'
+            : isSelected
+              ? 'bg-sky-500 text-white'
+              : isLinked
+                ? 'bg-emerald-500 text-white'
+                : 'bg-amber-500 text-white'
         }`}
         style={{ transform: 'translateY(-100%)' }}
       >

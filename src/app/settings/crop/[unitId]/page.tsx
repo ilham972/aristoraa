@@ -3,19 +3,20 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Scissors, X } from 'lucide-react';
+import { ChevronLeft, Scissors } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { findUnit, extractUnitNumber } from '@/lib/curriculum-data';
 import { PageCropOverlay } from '@/components/settings/page-crop-overlay';
+import { CropPillHeader } from '@/components/settings/crop-pill-header';
+import { ZoomedPageView } from '@/components/settings/zoomed-page-view';
 import {
   generateCropKeys,
-  parseCropKey,
   resumeCropKey,
   nextCropKey,
 } from '@/lib/crop-keys';
-import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
+import type { SubQuestionsMap } from '@/lib/sub-questions';
 import { toast } from 'sonner';
 
 type CropBox = { x: number; y: number; w: number; h: number };
@@ -48,6 +49,14 @@ export default function UnitCropPage() {
   const exerciseIdParam = searchParams.get('exerciseId');
   const exerciseId = exerciseIdParam as Id<'exercises'> | null;
   const isFastMode = !!exerciseId;
+  // Optional URL params: ?key=2.a pre-selects that key in fast-mode;
+  // ?flash=<cropId> scrolls to and briefly highlights the named crop
+  // (used by the Details-tab dots / capture grid for deep-linking).
+  const keyParam = searchParams.get('key');
+  const flashParamRaw = searchParams.get('flash');
+  const flashCropId = flashParamRaw
+    ? (flashParamRaw as Id<'questionBank'>)
+    : null;
 
   const [cropMode, setCropMode] = useState(true);
 
@@ -198,6 +207,13 @@ export default function UnitCropPage() {
   // currentKey is the union: the user's choice wins once they make one,
   // otherwise we fall back to the resume hint. No effect needed.
   const [userKey, setUserKey] = useState<string | null>(null);
+  // If `?key=` is in the URL it wins over the resume hint — the user
+  // arrived from a specific slot in the Details capture grid.
+  const initialKeyFromUrl = useMemo<string | null>(() => {
+    if (!isFastMode || !keyParam) return null;
+    if (allKeys.length === 0) return null;
+    return allKeys.includes(keyParam) ? keyParam : null;
+  }, [isFastMode, keyParam, allKeys]);
   const resumedKey = useMemo<string | null>(() => {
     if (!isFastMode) return null;
     if (!exercise) return null;
@@ -205,11 +221,21 @@ export default function UnitCropPage() {
     if (allKeys.length === 0) return null;
     return resumeCropKey(allKeys, existingKeysForExercise);
   }, [isFastMode, exercise, pageCrops, allKeys, existingKeysForExercise]);
-  const currentKey = userKey ?? resumedKey;
+  const currentKey = userKey ?? initialKeyFromUrl ?? resumedKey;
 
   const [selectedCropId, setSelectedCropId] = useState<
     Id<'questionBank'> | null
   >(null);
+
+  // Full-screen zoom view state. When a pageId is set we render the modal
+  // ZoomedPageView over the scrolling list; the modal owns its own pinch /
+  // pan / crop gesture handling.
+  const [zoomState, setZoomState] = useState<{
+    pageId: Id<'textbookPages'>;
+    pageNumber: number;
+    imageUrl: string;
+    naturalAspect: number | null;
+  } | null>(null);
 
   // ─── Mutations for fast-mode save / re-key ────────────────────
   const createMut = useMutation(api.questionBank.create);
@@ -281,6 +307,46 @@ export default function UnitCropPage() {
     [],
   );
 
+  // ─── Flash-on-arrival ────────────────────────────────────────
+  // Initialised from `?flash=`. Cleared after ~2.5s so the pulse stops.
+  // Kept in state (not derived from the URL) so we can drop it without
+  // forcing a navigation that would also clobber `?key=` and `?exerciseId=`.
+  const [liveFlashCropId, setLiveFlashCropId] = useState<Id<'questionBank'> | null>(
+    flashCropId,
+  );
+  useEffect(() => {
+    setLiveFlashCropId(flashCropId);
+  }, [flashCropId]);
+  useEffect(() => {
+    if (!liveFlashCropId) return;
+    const t = window.setTimeout(() => setLiveFlashCropId(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [liveFlashCropId]);
+
+  // Once pages and crops are loaded, scroll the matching crop into view.
+  // This overrides the saved-scroll restore further down — flash arrival is
+  // a deliberate jump, not a restore.
+  const didFlashScroll = useRef(false);
+  useEffect(() => {
+    if (didFlashScroll.current) return;
+    if (!flashCropId) return;
+    if (!pageCrops || !unitPages) return;
+    const crop = pageCrops.find((c) => c._id === flashCropId);
+    if (!crop?.textbookPageId) {
+      didFlashScroll.current = true;
+      return;
+    }
+    didFlashScroll.current = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-page-id="${crop.textbookPageId}"]`,
+        );
+        el?.scrollIntoView({ behavior: 'auto', block: 'center' });
+      });
+    });
+  }, [flashCropId, pageCrops, unitPages]);
+
   // ─── Scroll-position persistence ──────────────────────────────
   // Keyed by unitId + exerciseId so unit-level "see all" and per-exercise
   // views each remember their own scroll positions independently.
@@ -306,10 +372,16 @@ export default function UnitCropPage() {
   }, [scrollKey]);
 
   // Restore once pages have rendered. We wait for unitPages to resolve so
-  // the document is tall enough to actually scroll to.
+  // the document is tall enough to actually scroll to. If a `?flash=` was
+  // requested, that effect handles scrolling instead — skip the restore so
+  // we don't fight it.
   const didRestoreScroll = useRef(false);
   useEffect(() => {
     if (didRestoreScroll.current) return;
+    if (flashCropId) {
+      didRestoreScroll.current = true;
+      return;
+    }
     if (!unitPages || unitPages.length === 0) return;
     if (typeof window === 'undefined') return;
     const raw = window.sessionStorage.getItem(scrollKey);
@@ -327,7 +399,7 @@ export default function UnitCropPage() {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => window.scrollTo(0, y));
     });
-  }, [unitPages, scrollKey]);
+  }, [unitPages, scrollKey, flashCropId]);
 
   // ── Render ───────────────────────────────────────────────
   if (!unitInfo) {
@@ -397,7 +469,7 @@ export default function UnitCropPage() {
 
         {/* Fast-mode pill header — main-Q grid + sub-letter pills */}
         {isFastMode && cropMode && exercise && allKeys.length > 0 && (
-          <PillHeader
+          <CropPillHeader
             exercise={exercise}
             currentKey={currentKey}
             selectedCropId={selectedCropId}
@@ -461,6 +533,18 @@ export default function UnitCropPage() {
                     onCropTap={isFastMode ? handleCropTap : undefined}
                     selectedCropId={isFastMode ? selectedCropId : null}
                     cropLabelFor={isFastMode ? cropLabelFor : undefined}
+                    flashCropId={liveFlashCropId}
+                    onZoom={
+                      pageId && pg.url
+                        ? (id, na) =>
+                            setZoomState({
+                              pageId: id,
+                              pageNumber: pg.pageNumber,
+                              imageUrl: pg.url!,
+                              naturalAspect: na,
+                            })
+                        : undefined
+                    }
                   />
                 );
               })}
@@ -468,174 +552,42 @@ export default function UnitCropPage() {
           </>
         )}
       </div>
+
+      {/* Full-screen zoom view — mounted on top when the user taps a
+          page's zoom icon. Crops save through the same fast-mode handlers
+          so cropping inside the zoom view is identical to the inline view. */}
+      {zoomState && (
+        <ZoomedPageView
+          pageId={zoomState.pageId}
+          pageNumber={zoomState.pageNumber}
+          imageUrl={zoomState.imageUrl}
+          naturalAspect={zoomState.naturalAspect ?? undefined}
+          crops={cropsByPageFiltered.get(zoomState.pageId) || []}
+          cropLabelFor={isFastMode ? cropLabelFor : undefined}
+          selectedCropId={isFastMode ? selectedCropId : null}
+          flashCropId={liveFlashCropId}
+          onClose={() => setZoomState(null)}
+          onDrawComplete={
+            isFastMode
+              ? (box) => handleFastDraw(zoomState.pageId, box)
+              : undefined
+          }
+          onCropTap={isFastMode ? handleCropTap : undefined}
+          pillHeader={
+            isFastMode && exercise && allKeys.length > 0 ? (
+              <CropPillHeader
+                exercise={exercise}
+                currentKey={currentKey}
+                selectedCropId={selectedCropId}
+                existingKeys={existingKeysForExercise}
+                onPickKey={handlePillTap}
+                onCancelSelection={() => setSelectedCropId(null)}
+              />
+            ) : undefined
+          }
+        />
+      )}
     </div>
   );
 }
 
-// ─── Pill header ────────────────────────────────────────────
-// Two-row picker: first row = main-Q numbers, second row = sub-letters of
-// the currently-selected main-Q (or just "Stem" if it has no sub-parts).
-// Bigger touch targets, current target highlighted, existing-cropped keys
-// shown with a small dot so the user knows what's already done.
-
-function PillHeader({
-  exercise,
-  currentKey,
-  selectedCropId,
-  existingKeys,
-  onPickKey,
-  onCancelSelection,
-}: {
-  exercise: {
-    _id: Id<'exercises'>;
-    questionCount: number;
-    subQuestions?: SubQuestionsMap;
-  };
-  currentKey: string | null;
-  selectedCropId: Id<'questionBank'> | null;
-  existingKeys: string[];
-  onPickKey: (key: string) => void;
-  onCancelSelection: () => void;
-}) {
-  const parsed = currentKey ? parseCropKey(currentKey) : null;
-  const activeMainQ = parsed?.mainQ ?? 0;
-  const subDef = exercise.subQuestions?.[String(activeMainQ)];
-  const hasSubs = !!subDef && subDef.count > 1;
-  const existingSet = useMemo(() => new Set(existingKeys), [existingKeys]);
-
-  const mainBtn = (q: number) => {
-    const isActive = activeMainQ === q;
-    const stemKey = String(q);
-    const stemDone = existingSet.has(stemKey);
-    return (
-      <button
-        key={q}
-        onClick={() => onPickKey(stemKey)}
-        className={`relative h-9 min-w-[36px] px-2 rounded-lg text-sm font-mono font-bold transition-all active:scale-95 ${
-          isActive
-            ? 'bg-primary text-primary-foreground shadow-sm'
-            : 'bg-muted text-foreground hover:bg-muted/70'
-        }`}
-      >
-        {q}
-        {stemDone && (
-          <span
-            className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full ${
-              isActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
-            }`}
-          />
-        )}
-      </button>
-    );
-  };
-
-  const subBtn = (label: string, key: string) => {
-    const isActive = currentKey === key;
-    const done = existingSet.has(key);
-    return (
-      <button
-        key={key}
-        onClick={() => onPickKey(key)}
-        className={`relative h-8 min-w-[34px] px-2 rounded-lg text-xs font-mono font-semibold transition-all active:scale-95 ${
-          isActive
-            ? 'bg-primary text-primary-foreground shadow-sm'
-            : 'bg-muted text-foreground hover:bg-muted/70'
-        }`}
-      >
-        {label}
-        {done && (
-          <span
-            className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
-              isActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
-            }`}
-          />
-        )}
-      </button>
-    );
-  };
-
-  const stemKey = String(activeMainQ);
-  const stemActive = currentKey === stemKey;
-  const stemDone = existingSet.has(stemKey);
-
-  return (
-    <div className="max-w-lg mx-auto px-3 pb-2.5 space-y-1.5">
-      {/* Status strip — what the next draw will create / re-key */}
-      <div
-        className={`flex items-center gap-2 text-[11px] rounded-md px-2 py-1 ${
-          selectedCropId
-            ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
-            : 'bg-primary/10 text-primary border border-primary/30'
-        }`}
-      >
-        {selectedCropId ? (
-          <>
-            <span className="font-medium">Re-key selected →</span>
-            <span className="font-mono font-bold">
-              {currentKey ?? '—'}
-            </span>
-            <span className="opacity-60">tap a pill to re-link</span>
-            <button
-              onClick={onCancelSelection}
-              className="ml-auto w-5 h-5 rounded flex items-center justify-center hover:bg-sky-500/20"
-              aria-label="Cancel selection"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="font-medium">Cropping →</span>
-            <span className="font-mono font-bold text-base">
-              {currentKey ?? '—'}
-            </span>
-            <span className="opacity-60 ml-auto">drag on a page</span>
-          </>
-        )}
-      </div>
-
-      {/* Main-Q row */}
-      <div className="flex flex-wrap gap-1">
-        {Array.from({ length: exercise.questionCount }, (_, i) => i + 1).map(
-          mainBtn,
-        )}
-      </div>
-
-      {/* Sub-letter row (or just Stem) */}
-      <div className="flex flex-wrap gap-1 items-center">
-        <button
-          onClick={() => onPickKey(stemKey)}
-          disabled={!activeMainQ}
-          className={`relative h-8 px-2.5 rounded-lg text-xs font-semibold transition-all active:scale-95 ${
-            !activeMainQ
-              ? 'bg-muted/40 text-muted-foreground/50 cursor-not-allowed'
-              : stemActive
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'bg-muted text-foreground hover:bg-muted/70'
-          }`}
-        >
-          {hasSubs ? 'Stem' : 'Whole'}
-          {stemDone && activeMainQ > 0 && (
-            <span
-              className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
-                stemActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
-              }`}
-            />
-          )}
-        </button>
-        {hasSubs && (
-          <>
-            <span className="text-[10px] text-muted-foreground/60 mx-0.5">
-              ·
-            </span>
-            {Array.from({ length: subDef.count }, (_, i) => {
-              const label = getSubLabel(i, subDef.type);
-              const key = `${activeMainQ}.${label}`;
-              return subBtn(label, key);
-            })}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
