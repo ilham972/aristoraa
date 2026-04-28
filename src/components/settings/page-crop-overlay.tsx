@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useMutation } from 'convex/react';
-import { X, Link2, Maximize2 } from 'lucide-react';
+import { X, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -291,44 +291,18 @@ export function PageCropOverlay({
       }
     : null;
 
+  // Local refs to props that are no longer rendered to keep the page
+  // lightweight — the badges/buttons they fed have been removed. Reading
+  // them once silences unused-var lint without changing the public Props
+  // shape (callers still pass these).
+  void editingMode;
+  void deleteMode;
+  void drawMode;
+  void onZoom;
+  void pageNumber;
+
   return (
     <div className="relative" data-page-id={pageId ?? undefined}>
-      {/* Page number label */}
-      <div className="absolute top-2 left-2 z-20 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50 pointer-events-none">
-        p.{pageNumber}
-        {editingMode && (
-          <span
-            className={`ml-1.5 text-[10px] font-bold uppercase ${
-              deleteMode
-                ? 'text-destructive'
-                : drawMode
-                  ? 'text-primary'
-                  : 'text-foreground/70'
-            }`}
-          >
-            {tool}
-          </span>
-        )}
-      </div>
-
-      {/* Top-right controls: zoom button + crop count chip */}
-      <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
-        {onZoom && imageUrl && pageId && (
-          <button
-            onClick={() => onZoom(pageId, naturalAspect)}
-            className="w-8 h-8 rounded-lg bg-background/85 border border-border/60 backdrop-blur-sm flex items-center justify-center hover:bg-background active:scale-95 transition-all shadow-sm"
-            aria-label="Zoom into page"
-          >
-            <Maximize2 className="w-4 h-4 text-foreground" />
-          </button>
-        )}
-        {crops.length > 0 && (
-          <div className="bg-primary/90 text-primary-foreground rounded-full px-2 py-0.5 text-[10px] font-bold pointer-events-none">
-            {crops.length}
-          </div>
-        )}
-      </div>
-
       <div
         ref={containerRef}
         className="relative select-none"

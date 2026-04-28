@@ -80,8 +80,6 @@ export function ZoomedPageView({
   // tool that isn't "crop" — drawing requires a dedicated 1-finger gesture,
   // everything else lets the user navigate the zoomed image freely.
   const drawMode = tool === 'crop';
-  const resizeMode = tool === 'resize';
-  const deleteMode = tool === 'delete';
 
   // Load natural aspect if not provided.
   const [loadedAspect, setLoadedAspect] = useState<number | null>(null);
@@ -645,20 +643,7 @@ export function ZoomedPageView({
           </div>
         )}
 
-        {/* Mode hint at bottom — adapts to whichever tool is active. */}
-        {canCrop && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-background/90 border border-border/60 text-[11px] text-muted-foreground pointer-events-none whitespace-nowrap">
-            {drawMode ? (
-              <>1-finger draws crop · 2-finger pinch</>
-            ) : resizeMode ? (
-              <>tap a rect, then drag a corner handle</>
-            ) : deleteMode ? (
-              <>tap a rect&apos;s red <span className="text-destructive font-semibold">×</span> to delete it</>
-            ) : (
-              <>1-finger pan · 2-finger pinch</>
-            )}
-          </div>
-        )}
+        {/* Bottom hint removed — keep the zoom view chromeless. */}
       </div>
 
       {/* hidden — pageId unused in render but keeps type safe / for future */}

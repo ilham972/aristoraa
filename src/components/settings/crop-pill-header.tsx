@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo } from 'react';
-import { X } from 'lucide-react';
 import { parseCropKey } from '@/lib/crop-keys';
 import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
 import type { Id } from '@/lib/convex';
@@ -94,42 +93,14 @@ export function CropPillHeader({
   const stemActive = currentKey === stemKey;
   const stemDone = existingSet.has(stemKey);
 
+  // Status strip removed — keep this header lean. The currently-selected
+  // pill (highlighted via `currentKey`) and the sky-blue dot on a re-key
+  // selection already convey the same info without an extra banner.
+  void selectedCropId;
+  void onCancelSelection;
+
   return (
     <div className="max-w-lg mx-auto px-3 pb-2.5 space-y-1.5">
-      {/* Status strip — what the next draw will create / re-key */}
-      <div
-        className={`flex items-center gap-2 text-[11px] rounded-md px-2 py-1 ${
-          selectedCropId
-            ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
-            : 'bg-primary/10 text-primary border border-primary/30'
-        }`}
-      >
-        {selectedCropId ? (
-          <>
-            <span className="font-medium">Re-key selected →</span>
-            <span className="font-mono font-bold">
-              {currentKey ?? '—'}
-            </span>
-            <span className="opacity-60">tap a pill to re-link</span>
-            <button
-              onClick={onCancelSelection}
-              className="ml-auto w-5 h-5 rounded flex items-center justify-center hover:bg-sky-500/20"
-              aria-label="Cancel selection"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="font-medium">Cropping →</span>
-            <span className="font-mono font-bold text-base">
-              {currentKey ?? '—'}
-            </span>
-            <span className="opacity-60 ml-auto">drag on a page</span>
-          </>
-        )}
-      </div>
-
       {/* Main-Q row */}
       <div className="flex flex-wrap gap-1">
         {Array.from({ length: exercise.questionCount }, (_, i) => i + 1).map(

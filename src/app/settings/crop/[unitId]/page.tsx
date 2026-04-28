@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Scissors } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { findUnit, extractUnitNumber } from '@/lib/curriculum-data';
@@ -571,16 +571,6 @@ export default function UnitCropPage() {
           </div>
         ) : (
           <>
-            {!isFastMode && tool === 'crop' && (
-              <div className="mb-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 text-xs text-primary flex items-start gap-2">
-                <Scissors className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span>
-                  Drag across a question to crop it. Tap a saved crop to link
-                  it to an exercise.
-                </span>
-              </div>
-            )}
-
             <div className="space-y-3">
               {unitPages.map((pg) => {
                 const pageId =
