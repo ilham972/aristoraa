@@ -26,6 +26,8 @@ interface Props {
   onClose: () => void;
   onDrawComplete?: (box: CropBox) => void;
   onCropTap?: (cropId: Id<'questionBank'>) => void;
+  // Called on drag-release of a resize handle on the selected crop.
+  onCropResize?: (cropId: Id<'questionBank'>, box: CropBox) => void;
   // Optional pill header rendered below the toolbar (fast-mode only).
   pillHeader?: React.ReactNode;
 }
@@ -52,6 +54,7 @@ export function ZoomedPageView({
   onClose,
   onDrawComplete,
   onCropTap,
+  onCropResize,
   pillHeader,
 }: Props) {
   const canCrop = !!onDrawComplete;
@@ -184,6 +187,12 @@ export function ZoomedPageView({
       Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 
     const onTouchStart = (e: TouchEvent) => {
+      // Resize handles inside selected crops are descendants of this
+      // container; native ancestor listeners fire during bubble *before*
+      // React's delegated stopPropagation can run, so without this bail-out
+      // a handle tap would also start a pan/crop gesture on the page.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-resize-handle]')) return;
       const r = rectOf();
       const tr = transformRef.current;
       if (e.touches.length === 2) {
@@ -380,6 +389,9 @@ export function ZoomedPageView({
     if (!el) return;
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
+      // Same ancestor-listener bail-out as the touch path.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-resize-handle]')) return;
       const r = el.getBoundingClientRect();
       const sx = e.clientX - r.left;
       const sy = e.clientY - r.top;
@@ -595,7 +607,14 @@ export function ZoomedPageView({
                     isSelected={selectedCropId === c._id}
                     isFlash={flashCropId === c._id}
                     invScale={1 / scale}
+                    screenToNormRef={screenToNormRef}
+                    containerRef={containerRef}
                     onTap={() => onCropTap?.(c._id)}
+                    onResize={
+                      onCropResize
+                        ? (box) => onCropResize(c._id, box)
+                        : undefined
+                    }
                   />
                 ),
             )}
@@ -646,16 +665,35 @@ function CropRectZ({
   isSelected,
   isFlash,
   invScale,
+  screenToNormRef,
+  containerRef,
   onTap,
+  onResize,
 }: {
   crop: QuestionBankRow;
   label: string;
   isSelected: boolean;
   isFlash: boolean;
   invScale: number;
+  screenToNormRef: React.RefObject<
+    ((sx: number, sy: number) => { x: number; y: number } | null) | null
+  >;
+  containerRef: React.RefObject<HTMLDivElement | null>;
   onTap: () => void;
+  onResize?: (box: CropBox) => void;
 }) {
-  const b = crop.cropBox!;
+  const savedBox = crop.cropBox!;
+  // Optimistic resize override, tagged with the savedBox values it was
+  // applied against. Once the server echoes a different savedBox the tag
+  // mismatches and the override is discarded — no setState-in-effect.
+  const savedKey = `${savedBox.x},${savedBox.y},${savedBox.w},${savedBox.h}`;
+  const [override, setOverride] = useState<
+    { savedKey: string; box: CropBox } | null
+  >(null);
+  const localBox =
+    override && override.savedKey === savedKey ? override.box : null;
+  const b = localBox ?? savedBox;
+
   const isLinked = !!crop.linkedExerciseId;
   const baseColor = isFlash
     ? 'bg-yellow-400/30'
@@ -671,6 +709,79 @@ function CropRectZ({
       : isLinked
         ? '#10b981'
         : '#f59e0b';
+
+  const startResize = (handle: HandleKindZ) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const startBox = { ...b };
+    const startSavedKey = savedKey;
+
+    const computeBox = (cx: number, cy: number): CropBox => {
+      const rect = container.getBoundingClientRect();
+      const sx = cx - rect.left;
+      const sy = cy - rect.top;
+      const norm = screenToNormRef.current?.(sx, sy);
+      if (!norm) return startBox;
+      const right = startBox.x + startBox.w;
+      const bottom = startBox.y + startBox.h;
+      let { x, y, w, h } = startBox;
+      if (handle === 'tl') {
+        x = Math.min(norm.x, right - RESIZE_MIN_DIM);
+        y = Math.min(norm.y, bottom - RESIZE_MIN_DIM);
+        w = right - x;
+        h = bottom - y;
+      } else if (handle === 'tr') {
+        const newRight = Math.max(norm.x, startBox.x + RESIZE_MIN_DIM);
+        y = Math.min(norm.y, bottom - RESIZE_MIN_DIM);
+        w = newRight - startBox.x;
+        h = bottom - y;
+      } else if (handle === 'bl') {
+        x = Math.min(norm.x, right - RESIZE_MIN_DIM);
+        const newBottom = Math.max(norm.y, startBox.y + RESIZE_MIN_DIM);
+        w = right - x;
+        h = newBottom - startBox.y;
+      } else {
+        const newRight = Math.max(norm.x, startBox.x + RESIZE_MIN_DIM);
+        const newBottom = Math.max(norm.y, startBox.y + RESIZE_MIN_DIM);
+        w = newRight - startBox.x;
+        h = newBottom - startBox.y;
+      }
+      return { x, y, w, h };
+    };
+
+    let lastBox = startBox;
+    const onMove = (cx: number, cy: number) => {
+      lastBox = computeBox(cx, cy);
+      setOverride({ savedKey: startSavedKey, box: lastBox });
+    };
+    const onEnd = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+      if (onResize) onResize(lastBox);
+    };
+    const onMouseMove = (e: MouseEvent) => onMove(e.clientX, e.clientY);
+    const onMouseUp = () => onEnd();
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      onMove(t.clientX, t.clientY);
+      e.preventDefault();
+    };
+    const onTouchEnd = () => onEnd();
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
+  };
+
+  // Counter-scaled handle size — keeps a constant visual footprint at any
+  // zoom level (the parent transform would otherwise scale these too).
+  const handleScale = invScale;
 
   return (
     <div
@@ -718,6 +829,49 @@ function CropRectZ({
       >
         {label}
       </div>
+
+      {/* Resize handles (only when selected and onResize wired) */}
+      {isSelected &&
+        onResize &&
+        HANDLE_KINDS_Z.map((h) => {
+          const isTop = h === 'tl' || h === 'tr';
+          const isLeft = h === 'tl' || h === 'bl';
+          // 16-CSS-px target counter-scaled to fight the parent transform.
+          const sizePx = 16 * handleScale;
+          const offset = -sizePx / 2;
+          return (
+            <div
+              key={h}
+              role="button"
+              aria-label={`Resize ${h}`}
+              data-resize-handle="1"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                startResize(h);
+              }}
+              onTouchStart={(e) => {
+                e.stopPropagation();
+                startResize(h);
+              }}
+              className="absolute bg-sky-400 border border-white shadow-sm rounded-sm"
+              style={{
+                left: isLeft ? offset : undefined,
+                right: !isLeft ? offset : undefined,
+                top: isTop ? offset : undefined,
+                bottom: !isTop ? offset : undefined,
+                width: sizePx,
+                height: sizePx,
+                cursor: h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
+                touchAction: 'none',
+              }}
+            />
+          );
+        })}
     </div>
   );
 }
+
+const HANDLE_KINDS_Z = ['tl', 'tr', 'bl', 'br'] as const;
+type HandleKindZ = (typeof HANDLE_KINDS_Z)[number];
+const RESIZE_MIN_DIM = 0.02;

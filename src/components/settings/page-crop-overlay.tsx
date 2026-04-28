@@ -384,9 +384,18 @@ export function PageCropOverlay({
               isSelected={selectedCropId === c._id}
               isFlash={flashCropId === c._id}
               labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
+              parentRef={captureRef}
               onEdit={() => {
                 if (onCropTap) onCropTap(c._id);
                 else setEditCrop(c);
+              }}
+              onResize={async (newBox) => {
+                try {
+                  await updateMut({ id: c._id, cropBox: newBox });
+                } catch (err) {
+                  console.error(err);
+                  toast.error('Could not resize');
+                }
               }}
               onDelete={async () => {
                 if (!confirm('Delete this crop?')) return;
@@ -449,6 +458,14 @@ export function PageCropOverlay({
 }
 
 // ─── A rendered crop rectangle overlay ───
+// When `isSelected` and we're in cropMode, four corner handles appear so
+// the user can drag a corner to resize the rect. During drag we keep an
+// optimistic `localBox` so the rect tracks the finger smoothly; on release
+// we commit via `onResize` and clear the override on the next prop sync.
+
+const HANDLE_KINDS = ['tl', 'tr', 'bl', 'br'] as const;
+type HandleKind = (typeof HANDLE_KINDS)[number];
+const RESIZE_MIN_DIM = 0.02; // 2% of image — keep the box from collapsing
 
 function CropRect({
   crop,
@@ -457,7 +474,9 @@ function CropRect({
   isSelected,
   isFlash,
   labelOverride,
+  parentRef,
   onEdit,
+  onResize,
   onDelete,
 }: {
   crop: QuestionBankRow;
@@ -466,17 +485,29 @@ function CropRect({
   isSelected?: boolean;
   isFlash?: boolean;
   labelOverride?: string;
+  parentRef?: React.RefObject<HTMLDivElement | null>;
   onEdit: () => void;
+  onResize?: (box: CropBox) => void | Promise<void>;
   onDelete: () => void;
 }) {
-  const b = crop.cropBox!;
+  const savedBox = crop.cropBox!;
+  // Optimistic resize override. We tag the override with the savedBox values
+  // it was last applied against; once the server echoes back a different
+  // savedBox, the tag mismatches and the override is naturally discarded —
+  // no setState-in-effect needed.
+  const savedKey = `${savedBox.x},${savedBox.y},${savedBox.w},${savedBox.h}`;
+  const [override, setOverride] = useState<
+    { savedKey: string; box: CropBox } | null
+  >(null);
+  const localBox =
+    override && override.savedKey === savedKey ? override.box : null;
+  const b = localBox ?? savedBox;
+
   const isLinked = !!crop.linkedExerciseId;
   const defaultLabel = isLinked && linkedExercise
     ? `${linkedExercise.name}${crop.linkedQuestionKey ? ` Q${crop.linkedQuestionKey}` : ''}`
     : 'unlinked';
   const label = labelOverride ?? defaultLabel;
-  // Flash > Selected > Linked/Unlinked color, so a deep-link arrival is
-  // unambiguous even if the crop is also linked.
   const colorClasses = isFlash
     ? 'border-2 border-yellow-400 bg-yellow-400/30 ring-4 ring-yellow-400/50 animate-pulse'
     : isSelected
@@ -484,6 +515,78 @@ function CropRect({
       : isLinked
         ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
         : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20';
+
+  const startResize = (handle: HandleKind) => {
+    const parent = parentRef?.current;
+    if (!parent) return;
+    const startBox = { ...b };
+    const startSavedKey = savedKey;
+
+    const computeBox = (cx: number, cy: number): CropBox => {
+      const rect = parent.getBoundingClientRect();
+      const nx = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
+      const ny = Math.max(0, Math.min(1, (cy - rect.top) / rect.height));
+      const right = startBox.x + startBox.w;
+      const bottom = startBox.y + startBox.h;
+      let { x, y, w, h } = startBox;
+      if (handle === 'tl') {
+        x = Math.min(nx, right - RESIZE_MIN_DIM);
+        y = Math.min(ny, bottom - RESIZE_MIN_DIM);
+        w = right - x;
+        h = bottom - y;
+      } else if (handle === 'tr') {
+        const newRight = Math.max(nx, startBox.x + RESIZE_MIN_DIM);
+        y = Math.min(ny, bottom - RESIZE_MIN_DIM);
+        w = newRight - startBox.x;
+        h = bottom - y;
+      } else if (handle === 'bl') {
+        x = Math.min(nx, right - RESIZE_MIN_DIM);
+        const newBottom = Math.max(ny, startBox.y + RESIZE_MIN_DIM);
+        w = right - x;
+        h = newBottom - startBox.y;
+      } else {
+        const newRight = Math.max(nx, startBox.x + RESIZE_MIN_DIM);
+        const newBottom = Math.max(ny, startBox.y + RESIZE_MIN_DIM);
+        w = newRight - startBox.x;
+        h = newBottom - startBox.y;
+      }
+      return { x, y, w, h };
+    };
+
+    let lastBox = startBox;
+    const onMove = (cx: number, cy: number) => {
+      lastBox = computeBox(cx, cy);
+      setOverride({ savedKey: startSavedKey, box: lastBox });
+    };
+    const onEnd = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+      if (onResize) onResize(lastBox);
+      // Override is automatically discarded once the saved box echoes back
+      // (savedKey changes → override.savedKey mismatch → falls back to
+      // savedBox in the render).
+    };
+    const onMouseMove = (e: MouseEvent) => onMove(e.clientX, e.clientY);
+    const onMouseUp = () => onEnd();
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      onMove(t.clientX, t.clientY);
+      e.preventDefault();
+    };
+    const onTouchEnd = () => onEnd();
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
+  };
+
+  const showHandles = cropMode && isSelected;
 
   return (
     <div
@@ -532,6 +635,38 @@ function CropRect({
           <X className="w-3 h-3" />
         </button>
       )}
+
+      {/* Resize handles (only when selected) */}
+      {showHandles && HANDLE_KINDS.map((h) => {
+        const isTop = h === 'tl' || h === 'tr';
+        const isLeft = h === 'tl' || h === 'bl';
+        return (
+          <div
+            key={h}
+            role="button"
+            aria-label={`Resize ${h}`}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              startResize(h);
+            }}
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              startResize(h);
+            }}
+            className="absolute w-4 h-4 rounded-sm bg-sky-400 border border-white shadow-sm cursor-nwse-resize"
+            style={{
+              left: isLeft ? -8 : undefined,
+              right: !isLeft ? -8 : undefined,
+              top: isTop ? -8 : undefined,
+              bottom: !isTop ? -8 : undefined,
+              cursor:
+                h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
+              touchAction: 'none',
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

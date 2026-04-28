@@ -573,6 +573,14 @@ export default function UnitCropPage() {
               : undefined
           }
           onCropTap={isFastMode ? handleCropTap : undefined}
+          onCropResize={async (cropId, box) => {
+            try {
+              await updateMut({ id: cropId, cropBox: box });
+            } catch (err) {
+              console.error(err);
+              toast.error('Could not resize');
+            }
+          }}
           pillHeader={
             isFastMode && exercise && allKeys.length > 0 ? (
               <CropPillHeader

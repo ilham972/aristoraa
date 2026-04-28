@@ -783,18 +783,6 @@ function ExerciseCard({
     return m;
   }, [cropRefs]);
 
-  // Does main question `q` have at least one crop (stem OR any sub-part)?
-  // Returns the first crop id encountered so dots can flash-link directly.
-  const firstCropForMainQ = (q: number): Id<'questionBank'> | null => {
-    const stem = cropsByKey.get(String(q));
-    if (stem) return stem;
-    const prefix = `${q}.`;
-    for (const [k, id] of cropsByKey) {
-      if (k.startsWith(prefix)) return id;
-    }
-    return null;
-  };
-
   return (
     <Card className="border-border/50 my-1">
       <CardContent className="p-3">
@@ -913,37 +901,68 @@ function ExerciseCard({
           </button>
         </div>
 
-        {/* ── Row 3: capture-status dots ── */}
+        {/* ── Row 3: capture-status dots — one per scoreable key ──
+            • Whole question (no sub-parts):  small filled square
+            • Stem of multi-part question:    small filled rectangle
+            • Each sub-part:                  small filled circle
+            Outline-only = not yet captured. Tap = jump to that crop or
+            pre-select that key in the crop view. */}
         {item.questionCount > 0 && (
-          <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t border-border/30">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2 pt-2 border-t border-border/30">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mr-1">
               Captured
             </span>
-            {Array.from({ length: item.questionCount }, (_, i) => i + 1).map(
-              (q) => {
-                const firstId = firstCropForMainQ(q);
-                const filled = !!firstId;
-                return (
-                  <button
-                    key={q}
-                    onClick={() => {
-                      if (firstId) onJumpToCrop(firstId);
-                      else onJumpToKey(String(q));
-                    }}
-                    title={`Q${q}${filled ? ' — view crop' : ' — start crop'}`}
-                    className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-muted/70 active:scale-90 transition-all"
-                  >
-                    <span
-                      className={`w-2.5 h-2.5 rounded-full transition-colors ${
-                        filled
-                          ? 'bg-emerald-500'
-                          : 'border border-muted-foreground/40'
-                      }`}
+            {Array.from({ length: item.questionCount }, (_, i) => {
+              const q = i + 1;
+              const sub = item.subQuestions?.[String(q)];
+              const hasSubs = !!sub && sub.count > 1;
+              return (
+                <div key={q} className="flex items-center gap-0.5">
+                  {hasSubs ? (
+                    <>
+                      <CaptureDot
+                        kind="stem"
+                        filled={!!cropsByKey.get(String(q))}
+                        onPress={() => {
+                          const id = cropsByKey.get(String(q));
+                          if (id) onJumpToCrop(id);
+                          else onJumpToKey(String(q));
+                        }}
+                        labelKey={String(q)}
+                      />
+                      {Array.from({ length: sub.count }, (_, s) => {
+                        const label = getSubLabel(s, sub.type);
+                        const key = `${q}.${label}`;
+                        return (
+                          <CaptureDot
+                            key={key}
+                            kind="sub"
+                            filled={!!cropsByKey.get(key)}
+                            onPress={() => {
+                              const id = cropsByKey.get(key);
+                              if (id) onJumpToCrop(id);
+                              else onJumpToKey(key);
+                            }}
+                            labelKey={key}
+                          />
+                        );
+                      })}
+                    </>
+                  ) : (
+                    <CaptureDot
+                      kind="whole"
+                      filled={!!cropsByKey.get(String(q))}
+                      onPress={() => {
+                        const id = cropsByKey.get(String(q));
+                        if (id) onJumpToCrop(id);
+                        else onJumpToKey(String(q));
+                      }}
+                      labelKey={String(q)}
                     />
-                  </button>
-                );
-              },
-            )}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -1039,6 +1058,59 @@ function ExercisePickerBody({
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── A single capture-status dot (collapsed-card row 3) ────────
+// Shape encodes the kind of slot so the row is scannable without text
+// labels: a square = whole question, a horizontal rectangle = stem of a
+// multi-part question, a circle = a sub-part. Filled emerald = at least
+// one crop saved with that key, outlined = nothing saved yet.
+function CaptureDot({
+  kind,
+  filled,
+  onPress,
+  labelKey,
+}: {
+  kind: 'whole' | 'stem' | 'sub';
+  filled: boolean;
+  onPress: () => void;
+  labelKey: string;
+}) {
+  let shape: React.ReactNode;
+  if (kind === 'whole') {
+    shape = (
+      <span
+        className={`w-2.5 h-2.5 rounded-[2px] transition-colors ${
+          filled ? 'bg-emerald-500' : 'border border-muted-foreground/40'
+        }`}
+      />
+    );
+  } else if (kind === 'stem') {
+    shape = (
+      <span
+        className={`w-3.5 h-1.5 rounded-[1.5px] transition-colors ${
+          filled ? 'bg-emerald-500' : 'border border-muted-foreground/40'
+        }`}
+      />
+    );
+  } else {
+    shape = (
+      <span
+        className={`w-2 h-2 rounded-full transition-colors ${
+          filled ? 'bg-emerald-500' : 'border border-muted-foreground/40'
+        }`}
+      />
+    );
+  }
+  return (
+    <button
+      onClick={onPress}
+      title={`${labelKey}${filled ? ' — view crop' : ' — start crop'}`}
+      className="w-5 h-5 rounded-md flex items-center justify-center hover:bg-muted/70 active:scale-90 transition-all"
+    >
+      {shape}
+    </button>
   );
 }
 
