@@ -30,167 +30,9 @@ Each module contains units organized by Grade (6 through 11) and by Term (1st, 2
 
 ## Curriculum Data
 
-The full curriculum is provided as a JSON structure. Below is the complete data for all 6 modules. This JSON must be embedded in the app as the base curriculum structure. The teacher will then add exercises (with question counts) under each unit through the Curriculum Management page.
+The full curriculum is provided as a JSON structure. on this file( but don't read this right now because those are already embedded as JSON  in the app as the base curriculum structure) - C:\Users\Ilham\aaa projects\math-tracker\curriculum context.md, you can see complete data for all 6 modules.The teacher will then add exercises (with question counts) under each unit through the Curriculum Management page.
 
-### Module 1: Numbers & Arithmetic (எண்கள் / எண்கணிதம்) — Monday
 
-**Grade 6:**
-- 1st Term: 2. இடப் பெறுமானம், 3. முழு எண்களில் கணிதச் செய்கைகள், 6. மதிப்பிடலும் மட்டந்தட்டலும்
-- 2nd Term: 9. பின்னங்கள், 11. காரணிகளும் மடங்குகளும், 13. தசமங்கள், 14. எண் வகைகளும் எண் கோலங்களும்
-- 3rd Term: 21. விகிதம், 24. சுட்டிகள்
-
-**Grade 7:**
-- 1st Term: 3. முழு எண்களில் கணிதச் செய்கைகள், 4. காரணிகளும் மடங்குகளும், 5. சுட்டிகள், 8. திசைகொண்ட எண்கள்
-- 2nd Term: 10. பின்னங்கள், 11. தசமங்கள்
-- 3rd Term: 21. விகிதம், 22. சதவீதம்
-
-**Grade 8:**
-- 1st Term: 1. எண் கோலங்கள், 4. திசைகொண்ட எண்கள், 7. காரணிகள், 8. வர்க்கமூலம், 10. சுட்டிகள்
-- 2nd Term: 13. பின்னங்கள், 14. பின்னங்கள், 15. தசமஎண், 16. விகிதம், 18. சதவீதம்
-
-**Grade 9:**
-- 1st Term: 1. எண் கோலங்கள், 2. துவித எண்கள், 3. பின்னங்கள், 4. சதவீதம்
-- 2nd Term: 10. நேர் விகிதசமன், 11. கணி கருவி, 12. சுட்டிகள், 13. மட்டந்தட்டலும் விஞ்ஞானமுறைக் குறிப்பீடும்
-
-**Grade 10:**
-- 1st Term: 2. வர்க்கமூலம், 3. பின்னங்கள், 10. நேர்மாறு விகிதசமன்
-- 2nd Term: 14. சதவீதம், 19. மடக்கை I, 20. மடக்கை II, 22. வீதம்
-
-**Grade 11:**
-- 1st Term: 1. மெய்யெண்கள், 2. சுட்டிகளும் மடக்கைகளும் I, 3. சுட்டிகளும் மடக்கைகளும் II
-- 2nd Term: 09. சதவீதம், 10. பங்குகள்
-
-### Module 2: Algebra, Graphs & Matrices (அட்சரகணிதம், வரைபுகள், தாயங்கள்) — Tuesday
-
-**Grade 6:**
-- 1st Term: 5. எண் கோடு
-- 3rd Term: 18. அட்சரகணிதக் குறியீடுகள், 19. அட்சரகணிதக் கோவைகள் உருவாக்கலும் பிரதியிடுதலும்
-
-**Grade 7:**
-- 2nd Term: 12. அட்சரகணிதக் கோவைகள், 15. சமன்பாடுகளும் சூத்திரங்களும்
-- 3rd Term: 23. தெக்காட்டின் தளம்
-
-**Grade 8:**
-- 1st Term: 5. அட்சரகணிதக் கோவைகள்
-- 2nd Term: 17. சமன்பாடுகள்
-- 3rd Term: 25. எண்கோடு, தெக்காட்டின் தளம், 29. சமனிலிகள்
-
-**Grade 9:**
-- 1st Term: 5. அட்சரகணிதக் கோவைகள், 6. அட்சரகணிதக் கோவைகளின் காரணிகள்
-- 2nd Term: 15. சமன்பாடுகள், 17. சூத்திரங்கள், 20. வரைபுகள்
-- 3rd Term: 21. சமனிலிகள், 26. அட்சரகணிதப் பின்னங்கள்
-
-**Grade 10:**
-- 1st Term: 4. ஈருறுப்புக் கோவைகள், 7. இருபடிக் கோவைகளின் காரணிகள், 12. அட்சரகணிதக் கோவைகளின் பொது மடங்குகளுட் சிறியது
-- 2nd Term: 13. அட்சரகணிதப் பின்னங்கள், 15. சமன்பாடுகள், 21. வரைபுகள், 23. சூத்திரங்கள்
-- 3rd Term: 24. அட்சரகணிதச் சமனிலிகள், 25. கூட்டல் விருத்தி
-
-**Grade 11:**
-- 1st Term: 6. ஈருறுப்புக் கோவைகள், 7. அட்சரகணிதப் பின்னங்கள்
-- 2nd Term: 12. வரைபுகள், 13. சமன்பாடுகள், 16. பெருக்கல் விருத்தி
-- 3rd Term: 19. தாயங்கள், 20. சமனிலிகள்
-
-### Module 3: Geometry & Constructions (கேத்திரகணிதமும் அமைப்புகளும்) — Wednesday
-
-**Grade 6:**
-- 1st Term: 1. வட்டங்கள், 7. கோணங்கள், 8. திசைகள்
-- 2nd Term: 10. தெரிதல், 12. நேர்கோட்டுத் தளவுருவங்கள், 17. திண்மங்கள்
-
-**Grade 7:**
-- 1st Term: 1. இருபக்கச் சமச்சீர், 7. சமாந்தர நேர்கோடுகள், 9. கோணங்கள்
-- 2nd Term: 14. நேர்கோட்டுத் தளவுருவங்கள், 18. வட்டங்கள்
-- 3rd Term: 24. தளவுருவங்களை அமைத்தல், 25. திண்மங்கள், 27. அளவிடைப் படங்கள், 28. தெசலாக்கம்
-
-**Grade 8:**
-- 1st Term: 3. கோணம், 6. திண்மங்கள்
-- 2nd Term: 11. சமச்சீர், 12. முக்கோணிகள்
-- 3rd Term: 23. வட்டம், 24. திசைகோள், 26. ஒழுக்குகளும் அமைப்புகளும், 28. அளவிடைப்படம்
-
-**Grade 9:**
-- 1st Term: 7. வெளிப்படையுண்மைகள், 8. நேர்கோடுகள், சமாந்தரக்கோடுகள் தொடர்பான கோணங்கள்
-- 2nd Term: 14. ஒழுக்குகளும் அமைப்புகளும், 16. முக்கோணியொன்றின் கோணங்கள், 18. வட்டமொன்றின் பரிதி, 19. பைதகரசின் தொடர்பு
-- 3rd Term: 25. பல்கோணிகளின் கோணங்கள், 27. அளவிடைப் படங்கள்
-
-**Grade 10:**
-- 1st Term: 5. முக்கோணிகளின் ஒருங்கிசைவு, 8. முக்கோணிகள் I, 9. முக்கோணிகள் II
-- 2nd Term: 16. இணைகரங்கள் I, 17. இணைகரங்கள் II
-- 3rd Term: 27. வட்டத்தின் நாண்கள், 28. அமைப்புகள், 31. வட்டத்தின் கோணங்கள், 32. அளவிடைப் படம்
-
-**Grade 11:**
-- 2nd Term: 11. நடுப்புள்ளித் தேற்றம், 14. சமகோண முக்கோணிகள்
-- 3rd Term: 17. பைதகரஸ் தேற்றம், 18. திரிகோணகணிதம், 21. வட்ட நாற்பக்கல், 22. தொடலிகள், 23. அமைப்புகள்
-
-### Module 4: Measurements (அளவீடுகள்) — Thursday
-
-**Grade 6:**
-- 1st Term: 4. காலம்
-- 2nd Term: 15. நீளம், 16. திரவ அளவீடு
-- 3rd Term: 20. திணிவு, 25. பரப்பளவு
-
-**Grade 7:**
-- 1st Term: 6. காலம்
-- 2nd Term: 13. திணிவு, 16. நீளம், 17. பரப்பளவு, 19. கனவளவு, 20. திரவ அளவீடு
-
-**Grade 8:**
-- 1st Term: 2. சுற்றளவு, 9. திணிவு
-- 2nd Term: 20. பரப்பளவு, 21. காலம்
-- 3rd Term: 22. கனவளவு, கொள்ளளவு
-
-**Grade 9:**
-- 1st Term: 9. திரவ அளவீடு
-- 3rd Term: 23. பரப்பளவு
-
-**Grade 10:**
-- 1st Term: 1. சுற்றளவு, 6. பரப்பளவு
-- 3rd Term: 29. மேற்பரப்பளவும் கனவளவும்
-
-**Grade 11:**
-- 1st Term: 4. திண்மங்களின் மேற்பரப்பின் பரப்பளவு, 5. திண்மங்களின் கனவளவு, 8. சமாந்தரக் கோடுகளுக்கிடையில் உள்ள தளவுருவங்களின் பரப்பளவு
-
-### Module 5: Statistics (புள்ளியியல்) — Friday
-
-**Grade 6:**
-- 3rd Term: 22. தரவுகளைச் சேகரித்தலும் வகைப்படுத்தலும், 23. தரவுகளுக்கு விளக்கம் கூறல்
-
-**Grade 7:**
-- 3rd Term: 26. தரவுகளை வகைப்படுத்தலும் விளக்கம் கூறலும்
-
-**Grade 8:**
-- 3rd Term: 27. தரவுகளை வகைப்படுத்தலும் மைய நாட்ட அளவைகளும்
-
-**Grade 9:**
-- 3rd Term: 28. தரவுகளை வகைப்படுத்தலும் விளக்கம் கூறலும்
-
-**Grade 10:**
-- 1st Term: 11. தரவுகளை வகைப்படுத்தல்
-- 3rd Term: 26. எண் பரம்பல்
-
-**Grade 11:**
-- 2nd Term: 15. தரவுகளை வகைப்படுத்தலும் விளக்கம் கூறலும்
-
-### Module 6: Sets & Probability (தொடைகள் & நிகழ்தகவு) — Saturday
-
-**Grade 6:** (no units)
-
-**Grade 7:**
-- 1st Term: 2. தொடைகள்
-- 3rd Term: 29. நிகழ்வொன்றின் தகுதகவு
-
-**Grade 8:**
-- 2nd Term: 19. தொடைகள்
-- 3rd Term: 30. நிகழ்தகவு
-
-**Grade 9:**
-- 3rd Term: 22. தொடைகள், 24. நிகழ்தகவு
-
-**Grade 10:**
-- 2nd Term: 18. தொடைகள்
-- 3rd Term: 30. நிகழ்தகவு
-
-**Grade 11:**
-- 3rd Term: 24. தொடைகள், 25. நிகழ்தகவு
-
----
 
 ## Scoring System
 
@@ -241,18 +83,14 @@ Each student record contains:
 - A group typically has 8–10 students but the app should not enforce a hard limit
 - The teacher can move students between groups at any time
 - Groups are used ONLY for scheduling/organizing — they do NOT affect the leaderboard
-- **The leaderboard ranks students by their school grade** — all Grade 8 students across ALL groups compete together on the same leaderboard
-
+- **The leaderboard ranks students by their school grade** — all Grade 8 students across ALL groups compete together on the same leaderboard, and second leaderboard is for the student who connect with specif center it's like francise so, student can see not only his center leaderboard but also all over the world leaderboard 
 ---
 
 ## App Pages & Features
 
-### 1. Dashboard / Home
+### 1. Scoring Page
 
-The landing page showing a quick overview:
-- Today's day and module (e.g., "Monday — M1: Numbers & Arithmetic")
-- Quick-access buttons: Enter Scores, View Leaderboard, Student List, Curriculum
-- Summary stats: total students, total entries today, which students have data entered today vs. not yet
+
 
 ### 2. Student Management Page
 
@@ -274,7 +112,9 @@ This is where the teacher builds out the exercise details for each unit. The bas
 - The full curriculum tree is browsable, showing which units have exercises added and which are still empty
 - Unit names are displayed in Tamil. All other text (module names, grade labels, term labels, navigation, buttons) is in English.
 
-### 4. Score Entry Page (Phone-Optimized — This is the Most Critical Page)
+below score entry page commented because so many things changed now. 
+
+<!-- ### 4. Score Entry Page (Phone-Optimized — This is the Most Critical Page)
 
 This is the page the teacher uses most frequently, on a phone, during or after class. It must be fast and ergonomic for mobile use.
 
@@ -306,7 +146,7 @@ This is the page the teacher uses most frequently, on a phone, during or after c
 **Important behaviors:**
 - A student can have multiple exercise entries in a single day (they might finish Ex 3.1 and start Ex 3.2)
 - The daily point counter is cumulative across ALL exercises done that day — the Nth correct answer across all exercises earns N × 5 points
-- The teacher can edit a previously entered score (in case of mistakes) — this should recalculate points
+- The teacher can edit a previously entered score (in case of mistakes) — this should recalculate points -->
 
 ### 5. Student Progress View
 
@@ -407,11 +247,11 @@ Store these as separate JSON keys:
 
 ## Summary of Key Design Decisions
 
-1. **Leaderboard is per school grade**, not per group — all Grade 8 students across all groups compete together
+1. **Leaderboard is per school grade**, not per group — all Grade 8 students across all groups compete together and also second leader board is for the center
 2. **No difficulty adjustment** — a Grade 8 student doing Grade 6 exercises earns the same points as one doing Grade 9 exercises. The teacher controls pacing, so this is fair.
 3. **Score resets daily** — fresh race every class day, promoting consistency
 4. **Scoring formula: Nth correct answer = N × 5 points** — progressive but not exponentially extreme
 5. **Only correct answers earn points** — prevents careless rushing
 6. **Groups are flexible organizational labels** — students can be moved freely, groups don't affect scoring or leaderboard
 7. **Each student has independent progress paths** through all 6 modules — a student might be on Grade 7 in algebra but Grade 6 in geometry
-8. **Exercises are manually added** to the curriculum by the teacher — the app comes with the unit structure pre-loaded, exercises are added over time as classes happen
+8. **Exercises are manually added** to the curriculum by the teacher — the app comes with the unit structure pre-loaded, exercises are added over time as classes happen(almost added for grade 10 and 11)

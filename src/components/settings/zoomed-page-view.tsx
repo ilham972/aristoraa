@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
-import { X, Move, Scissors, Maximize2 } from 'lucide-react';
+import { X, Maximize2 } from 'lucide-react';
 import type { Id } from '@/lib/convex';
+import { CropToolToolbar, type CropTool } from './crop-tool-toolbar';
 
 type CropBox = { x: number; y: number; w: number; h: number };
 
@@ -23,11 +24,22 @@ interface Props {
   cropLabelFor?: (crop: QuestionBankRow) => string;
   selectedCropId?: Id<'questionBank'> | null;
   flashCropId?: Id<'questionBank'> | null;
+  // Active tool from the parent's shared toolbar. Each value works
+  // independently:
+  //   adjust → 1-finger pan, no crop interaction.
+  //   crop   → 1-finger draws a new crop rect.
+  //   resize → tap rects to select; corner handles resize the selected one.
+  //            1-finger pan still works on the empty area.
+  //   delete → red X on every rect; tap an X to delete.
+  tool: CropTool;
+  onToolChange: (t: CropTool) => void;
   onClose: () => void;
   onDrawComplete?: (box: CropBox) => void;
   onCropTap?: (cropId: Id<'questionBank'>) => void;
   // Called on drag-release of a resize handle on the selected crop.
   onCropResize?: (cropId: Id<'questionBank'>, box: CropBox) => void;
+  // Called when the user taps the red X on a crop while in Delete mode.
+  onCropDelete?: (cropId: Id<'questionBank'>) => void;
   // Optional pill header rendered below the toolbar (fast-mode only).
   pillHeader?: React.ReactNode;
 }
@@ -36,12 +48,15 @@ const MIN_CROP_SIZE = 0.02; // 2% of image — slightly more permissive at zoom
 const MAX_SCALE = 8;
 const MIN_SCALE = 1;
 
-// Full-screen page viewer with pinch-zoom + pan, separate from cropping.
-// Two modes:
-//   - 'adjust': 1-finger pan, 2-finger pinch+pan. No cropping.
-//   - 'crop':   1-finger draws a crop in normalised image space; 2-finger
-//               still pinches+pans so the user can keep adjusting.
-// Default is 'adjust' so the user zooms into position before cropping.
+// Full-screen page viewer with pinch-zoom + pan. Behaviour is dictated by
+// the `tool` prop (the same 4-mode toolbar the parent renders for the
+// inline view), so a single source of truth controls both surfaces:
+//   adjust  → 1-finger pan, 2-finger pinch+pan. No cropping.
+//   crop    → 1-finger draws in normalised image space; 2-finger still
+//             pinches+pans so the user can keep adjusting.
+//   resize  → 1-finger pan; tap a rect to select; corner handles resize.
+//   delete  → 1-finger pan; tap a rect's red X to delete.
+// 2-finger pinch always works regardless of tool.
 export function ZoomedPageView({
   pageId,
   pageNumber,
@@ -51,14 +66,22 @@ export function ZoomedPageView({
   cropLabelFor,
   selectedCropId,
   flashCropId,
+  tool,
+  onToolChange,
   onClose,
   onDrawComplete,
   onCropTap,
   onCropResize,
+  onCropDelete,
   pillHeader,
 }: Props) {
   const canCrop = !!onDrawComplete;
-  const [mode, setMode] = useState<'adjust' | 'crop'>('adjust');
+  // Convenience flags from the active tool. The pan-default catches every
+  // tool that isn't "crop" — drawing requires a dedicated 1-finger gesture,
+  // everything else lets the user navigate the zoomed image freely.
+  const drawMode = tool === 'crop';
+  const resizeMode = tool === 'resize';
+  const deleteMode = tool === 'delete';
 
   // Load natural aspect if not provided.
   const [loadedAspect, setLoadedAspect] = useState<number | null>(null);
@@ -219,7 +242,7 @@ export function ZoomedPageView({
       const t = e.touches[0];
       const sx = t.clientX - r.left;
       const sy = t.clientY - r.top;
-      if (mode === 'crop' && canCrop) {
+      if (drawMode && canCrop) {
         const norm = screenToNormRef.current?.(sx, sy);
         if (!norm) return;
         gestureRef.current = {
@@ -347,7 +370,7 @@ export function ZoomedPageView({
       el.removeEventListener('touchcancel', onTouchCancel);
       el.removeEventListener('contextmenu', onContextMenu);
     };
-  }, [mode, canCrop, onDrawComplete, cropPreview]);
+  }, [drawMode, canCrop, onDrawComplete, cropPreview]);
 
   // ─── Mouse fallback (desktop) ─────────────────────────────────
   // Wheel zoom; click+drag pans (adjust mode) or draws crop (crop mode).
@@ -395,7 +418,7 @@ export function ZoomedPageView({
       const r = el.getBoundingClientRect();
       const sx = e.clientX - r.left;
       const sy = e.clientY - r.top;
-      if (mode === 'crop' && canCrop) {
+      if (drawMode && canCrop) {
         const norm = screenToNormRef.current?.(sx, sy);
         if (!norm) return;
         mouseStartRef.current = {
@@ -464,7 +487,7 @@ export function ZoomedPageView({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [mode, canCrop, tx, ty, onDrawComplete, cropPreview]);
+  }, [drawMode, canCrop, tx, ty, onDrawComplete, cropPreview]);
 
   // ─── Body scroll lock while open ──────────────────────────────
   useEffect(() => {
@@ -526,35 +549,16 @@ export function ZoomedPageView({
           <Maximize2 className="w-3.5 h-3.5" />
           Fit
         </button>
-        {canCrop && (
-          <div className="flex bg-muted rounded-lg p-0.5 shrink-0">
-            <button
-              onClick={() => setMode('adjust')}
-              className={`h-8 px-2.5 rounded-md text-xs font-medium flex items-center gap-1 transition-all ${
-                mode === 'adjust'
-                  ? 'bg-card text-foreground shadow-sm'
-                  : 'text-muted-foreground'
-              }`}
-              aria-label="Adjust mode"
-            >
-              <Move className="w-3.5 h-3.5" />
-              Adjust
-            </button>
-            <button
-              onClick={() => setMode('crop')}
-              className={`h-8 px-2.5 rounded-md text-xs font-medium flex items-center gap-1 transition-all ${
-                mode === 'crop'
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground'
-              }`}
-              aria-label="Crop mode"
-            >
-              <Scissors className="w-3.5 h-3.5" />
-              Crop
-            </button>
-          </div>
-        )}
       </div>
+
+      {/* Tool toolbar — same 4-mode selector the parent renders inline. We
+          mirror it inside the zoom view so the user can swap tools without
+          closing the modal. */}
+      {canCrop && (
+        <div className="shrink-0 px-3 py-2 border-b border-border/50 bg-background flex justify-center">
+          <CropToolToolbar tool={tool} onChange={onToolChange} />
+        </div>
+      )}
 
       {/* Pill header (fast mode) */}
       {pillHeader && (
@@ -572,7 +576,7 @@ export function ZoomedPageView({
           WebkitUserSelect: 'none',
           WebkitTouchCallout: 'none',
           cursor:
-            mode === 'crop' && canCrop
+            drawMode && canCrop
               ? 'crosshair'
               : scale > 1
                 ? 'grab'
@@ -607,6 +611,7 @@ export function ZoomedPageView({
                     isSelected={selectedCropId === c._id}
                     isFlash={flashCropId === c._id}
                     invScale={1 / scale}
+                    tool={tool}
                     screenToNormRef={screenToNormRef}
                     containerRef={containerRef}
                     onTap={() => onCropTap?.(c._id)}
@@ -614,6 +619,9 @@ export function ZoomedPageView({
                       onCropResize
                         ? (box) => onCropResize(c._id, box)
                         : undefined
+                    }
+                    onDelete={
+                      onCropDelete ? () => onCropDelete(c._id) : undefined
                     }
                   />
                 ),
@@ -637,13 +645,17 @@ export function ZoomedPageView({
           </div>
         )}
 
-        {/* Mode hint at bottom */}
+        {/* Mode hint at bottom — adapts to whichever tool is active. */}
         {canCrop && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-background/90 border border-border/60 text-[11px] text-muted-foreground pointer-events-none whitespace-nowrap">
-            {mode === 'adjust' ? (
-              <>1-finger pan · 2-finger pinch — switch to <span className="font-semibold text-primary">Crop</span> when ready</>
+            {drawMode ? (
+              <>1-finger draws crop · 2-finger pinch</>
+            ) : resizeMode ? (
+              <>tap a rect, then drag a corner handle</>
+            ) : deleteMode ? (
+              <>tap a rect&apos;s red <span className="text-destructive font-semibold">×</span> to delete it</>
             ) : (
-              <>1-finger draws crop · 2-finger pinch to keep adjusting</>
+              <>1-finger pan · 2-finger pinch</>
             )}
           </div>
         )}
@@ -665,23 +677,35 @@ function CropRectZ({
   isSelected,
   isFlash,
   invScale,
+  tool,
   screenToNormRef,
   containerRef,
   onTap,
   onResize,
+  onDelete,
 }: {
   crop: QuestionBankRow;
   label: string;
   isSelected: boolean;
   isFlash: boolean;
   invScale: number;
+  tool: CropTool;
   screenToNormRef: React.RefObject<
     ((sx: number, sy: number) => { x: number; y: number } | null) | null
   >;
   containerRef: React.RefObject<HTMLDivElement | null>;
   onTap: () => void;
   onResize?: (box: CropBox) => void;
+  onDelete?: () => void;
 }) {
+  // Per-tool interactivity:
+  //   - resize: show handles on the selected rect, body-tap selects.
+  //   - delete: show the red X badge.
+  //   - adjust/crop: rect is purely visual (pointer-events:none) so the
+  //                  parent's pan/draw gesture can capture freely.
+  const showHandles = tool === 'resize' && isSelected;
+  const showDeleteX = tool === 'delete';
+  const interactive = tool === 'resize' || tool === 'delete';
   const savedBox = crop.cropBox!;
   // Optimistic resize override, tagged with the savedBox values it was
   // applied against. Once the server echoes a different savedBox the tag
@@ -798,13 +822,18 @@ function CropRectZ({
         // most browsers, so we use a thicker outline as a fallback.
         outline: `${2 * invScale}px solid ${borderColor}`,
         outlineOffset: 0,
+        // Only intercept events in tool modes that act on rects directly.
+        // In adjust/crop mode the rect must be inert so the parent's pan
+        // or draw gesture can capture without being eaten by stopPropagation.
+        pointerEvents: interactive ? 'auto' : 'none',
       }}
       onClick={(e) => {
+        if (tool !== 'resize') return;
         e.stopPropagation();
         onTap();
       }}
-      onTouchStart={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
+      onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
       <div
         className={`absolute font-bold whitespace-nowrap ${
@@ -830,8 +859,44 @@ function CropRectZ({
         {label}
       </div>
 
+      {/* Delete X (only in Delete mode). Counter-scaled so the visual
+          target stays roughly 22 CSS px regardless of zoom. The tag is
+          marked data-resize-handle so the container's gesture-bail-out
+          treats it like a handle — tapping the X must not start a pan. */}
+      {showDeleteX && onDelete && (
+        <button
+          data-resize-handle="1"
+          aria-label="Delete crop"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          onTouchStart={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+          className="absolute rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow-md ring-2 ring-background"
+          style={{
+            // 22 CSS-px target counter-scaled to fight the parent transform.
+            width: 22 * invScale,
+            height: 22 * invScale,
+            top: -11 * invScale,
+            right: -11 * invScale,
+            touchAction: 'none',
+          }}
+        >
+          <X
+            style={{
+              width: 14 * invScale,
+              height: 14 * invScale,
+            }}
+          />
+        </button>
+      )}
+
       {/* Resize handles (only when selected and onResize wired) */}
-      {isSelected &&
+      {showHandles &&
         onResize &&
         HANDLE_KINDS_Z.map((h) => {
           const isTop = h === 'tl' || h === 'tr';

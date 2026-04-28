@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
+import type { CropTool } from './crop-tool-toolbar';
 
 type CropBox = { x: number; y: number; w: number; h: number };
 
@@ -33,7 +34,13 @@ interface Props {
   pageId: Id<'textbookPages'> | null;
   pageNumber: number;
   imageUrl: string | null;
-  cropMode: boolean;
+  // Active tool from the parent's 4-mode toolbar. Each mode behaves
+  // independently — we no longer have a single "crop mode" boolean.
+  //   adjust → page scrolls normally; crops shown but non-interactive.
+  //   crop   → 1-finger drag draws a new crop rect; existing crops inert.
+  //   resize → tap a crop to select; corner handles resize the selected one.
+  //   delete → red X on every crop; tapping X removes that crop.
+  tool: CropTool;
   crops: QuestionBankRow[];
   unitExercises: UnitExercise[];
   // ── Fast-mode (per-exercise) ──
@@ -67,7 +74,7 @@ export function PageCropOverlay({
   pageId,
   pageNumber,
   imageUrl,
-  cropMode,
+  tool,
   crops,
   unitExercises,
   onDrawComplete,
@@ -77,6 +84,13 @@ export function PageCropOverlay({
   onZoom,
   flashCropId,
 }: Props) {
+  // Convenience flags derived from the active tool. `resizeMode` is gated
+  // per-rect inside CropRect, not here.
+  const drawMode = tool === 'crop';
+  const deleteMode = tool === 'delete';
+  // "Anything but adjust" still shows the page-mode badge / dashed-vs-solid
+  // border affordance so the user sees the page is in an editing mode.
+  const editingMode = tool !== 'adjust';
   const createMut = useMutation(api.questionBank.create);
   const removeMut = useMutation(api.questionBank.remove);
   const updateMut = useMutation(api.questionBank.update);
@@ -119,10 +133,12 @@ export function PageCropOverlay({
   //      the image gesture recogniser kept stealing the touch.
   //   2. Native addEventListener with { passive: false } lets us preventDefault
   //      on touchstart and touchmove, which iOS respects.
-  // Effect deps are only [cropMode, pageId] — createMutRef stays stable so
-  // the effect doesn't tear down listeners mid-gesture.
+  // Effect deps are only [drawMode, pageId, imageUrl] — createMutRef stays
+  // stable so the effect doesn't tear down listeners mid-gesture. Listeners
+  // attach only in `crop` tool mode; in adjust/resize/delete we want the page
+  // to scroll normally with no gesture capture.
   useEffect(() => {
-    if (!cropMode) return;
+    if (!drawMode) return;
     // Listener attaches whenever there's an image to crop. We don't gate on
     // pageId here: if the convex backend hasn't been redeployed (so pageId
     // isn't returned from getPagesInRange), the listener still attaches and
@@ -259,14 +275,14 @@ export function PageCropOverlay({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [cropMode, pageId, imageUrl]);
+  }, [drawMode, pageId, imageUrl]);
 
-  // Preview is gated by cropMode — when crop mode is off, the preview is
+  // Preview is gated by drawMode — when the tool isn't "crop", the preview is
   // always hidden, even if draggingPreview state still holds the last drag
-  // coordinates from before the mode toggled. The next touchstart in a
+  // coordinates from before the tool changed. The next touchstart in a
   // future crop session overwrites it, so no explicit reset effect is needed
   // (which would trigger the react-hooks/set-state-in-effect lint).
-  const preview = cropMode && draggingPreview
+  const preview = drawMode && draggingPreview
     ? {
         x: Math.min(draggingPreview.startX, draggingPreview.endX),
         y: Math.min(draggingPreview.startY, draggingPreview.endY),
@@ -280,8 +296,18 @@ export function PageCropOverlay({
       {/* Page number label */}
       <div className="absolute top-2 left-2 z-20 bg-background/80 backdrop-blur-sm rounded-md px-2 py-0.5 text-xs font-mono border border-border/50 pointer-events-none">
         p.{pageNumber}
-        {cropMode && (
-          <span className="ml-1.5 text-[10px] text-primary font-bold">CROP</span>
+        {editingMode && (
+          <span
+            className={`ml-1.5 text-[10px] font-bold uppercase ${
+              deleteMode
+                ? 'text-destructive'
+                : drawMode
+                  ? 'text-primary'
+                  : 'text-foreground/70'
+            }`}
+          >
+            {tool}
+          </span>
         )}
       </div>
 
@@ -340,9 +366,11 @@ export function PageCropOverlay({
           role={imageUrl ? 'img' : undefined}
           aria-label={imageUrl ? `Page ${pageNumber}` : undefined}
           className={`w-full rounded-lg border block ${
-            cropMode && imageUrl && pageId
+            drawMode && imageUrl && pageId
               ? 'cursor-crosshair border-border'
-              : 'border-dashed border-muted-foreground/30'
+              : editingMode
+                ? 'border-border'
+                : 'border-dashed border-muted-foreground/30'
           } ${!imageUrl ? 'bg-muted/40 flex flex-col items-center justify-center gap-2 text-center px-4' : 'border-border'}`}
           style={{
             backgroundImage: imageUrl ? `url("${imageUrl}")` : undefined,
@@ -352,9 +380,9 @@ export function PageCropOverlay({
               imageUrl && naturalAspect ? `${naturalAspect}` : '3 / 4',
             // touch-action: none disables browser scroll/zoom on this element
             // so our touchmove listener gets all the events without competing
-            // with native gestures. Only enable when this page is actually
-            // croppable (cropMode + has image + has pageId).
-            touchAction: cropMode && imageUrl && pageId ? 'none' : 'auto',
+            // with native gestures. Only enable when actively drawing — in
+            // adjust/resize/delete we want the page to scroll normally.
+            touchAction: drawMode && imageUrl && pageId ? 'none' : 'auto',
             WebkitUserSelect: 'none',
             WebkitTouchCallout: 'none',
             userSelect: 'none',
@@ -373,14 +401,14 @@ export function PageCropOverlay({
         </div>
 
         {/* Existing crops — rendered AFTER the capture layer so they are
-            on top and receive their own taps. */}
+            on top and receive their own taps when the active tool allows it. */}
         {crops.map((c) => (
           c.cropBox && (
             <CropRect
               key={c._id}
               crop={c}
               linkedExercise={c.linkedExerciseId ? exById[c.linkedExerciseId] : undefined}
-              cropMode={cropMode}
+              tool={tool}
               isSelected={selectedCropId === c._id}
               isFlash={flashCropId === c._id}
               labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
@@ -458,7 +486,7 @@ export function PageCropOverlay({
 }
 
 // ─── A rendered crop rectangle overlay ───
-// When `isSelected` and we're in cropMode, four corner handles appear so
+// When `isSelected` and the active tool is `resize`, four corner handles appear so
 // the user can drag a corner to resize the rect. During drag we keep an
 // optimistic `localBox` so the rect tracks the finger smoothly; on release
 // we commit via `onResize` and clear the override on the next prop sync.
@@ -470,7 +498,7 @@ const RESIZE_MIN_DIM = 0.02; // 2% of image — keep the box from collapsing
 function CropRect({
   crop,
   linkedExercise,
-  cropMode,
+  tool,
   isSelected,
   isFlash,
   labelOverride,
@@ -481,7 +509,7 @@ function CropRect({
 }: {
   crop: QuestionBankRow;
   linkedExercise?: UnitExercise;
-  cropMode: boolean;
+  tool: CropTool;
   isSelected?: boolean;
   isFlash?: boolean;
   labelOverride?: string;
@@ -490,6 +518,14 @@ function CropRect({
   onResize?: (box: CropBox) => void | Promise<void>;
   onDelete: () => void;
 }) {
+  // Per-tool interactivity:
+  //   - resize/delete:  pointer events ON, taps reach the rect.
+  //   - adjust/crop:    pointer events OFF, the rect is purely visual so
+  //                     scrolling and drawing pass through unimpeded.
+  const interactive = tool === 'resize' || tool === 'delete';
+  const showHandles = tool === 'resize' && !!isSelected;
+  const showDeleteX = tool === 'delete';
+  const editingMode = tool !== 'adjust';
   const savedBox = crop.cropBox!;
   // Optimistic resize override. We tag the override with the savedBox values
   // it was last applied against; once the server echoes back a different
@@ -586,13 +622,13 @@ function CropRect({
     window.addEventListener('touchcancel', onTouchEnd);
   };
 
-  const showHandles = cropMode && isSelected;
-
   return (
     <div
       data-crop-rect="1"
       className={`absolute rounded-sm transition-colors z-30 ${colorClasses} ${
-        cropMode ? 'pointer-events-auto' : 'pointer-events-none opacity-60'
+        interactive
+          ? 'pointer-events-auto'
+          : `pointer-events-none ${editingMode ? '' : 'opacity-60'}`
       }`}
       style={{
         left: `${b.x * 100}%`,
@@ -601,12 +637,15 @@ function CropRect({
         height: `${b.h * 100}%`,
       }}
       onClick={(e) => {
-        if (!cropMode) return;
+        // Only Resize mode treats a tap on the body as "select for editing".
+        // Delete mode handles its action via the dedicated X button so a
+        // misfired body-tap doesn't accidentally remove a crop.
+        if (tool !== 'resize') return;
         e.stopPropagation();
         onEdit();
       }}
-      onTouchStart={(e) => { if (cropMode) e.stopPropagation(); }}
-      onMouseDown={(e) => { if (cropMode) e.stopPropagation(); }}
+      onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
+      onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
       {/* Label chip at top-left */}
       <div
@@ -624,15 +663,15 @@ function CropRect({
         {label}
       </div>
 
-      {/* Delete button at top-right (only in crop mode) */}
-      {cropMode && (
+      {/* Delete button at top-right — only visible in Delete mode. */}
+      {showDeleteX && (
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow-sm hover:scale-110 transition-transform"
+          className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow-sm hover:scale-110 transition-transform"
           aria-label="Delete crop"
         >
-          <X className="w-3 h-3" />
+          <X className="w-3.5 h-3.5" />
         </button>
       )}
 

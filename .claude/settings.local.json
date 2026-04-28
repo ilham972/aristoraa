@@ -3,7 +3,30 @@
     "allow": [
       "Bash(cd:*)",
       "Read(//c/Users/Ilham/aaa projects/math-tracker/**)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(df:*)",
+      "Bash(npx next:*)",
+      "Bash(npx vercel:*)",
+      "Bash(gh api:*)",
+      "Bash(npm ls:*)",
+      "WebFetch(domain:admin.aristora.org)",
+      "Bash(npm info:*)",
+      "Bash(npx shadcn@latest add drawer)",
+      "Bash(CONVEX_DEPLOYMENT=prod:rapid-loris-309 npx convex run seed:seedGrade11Term1 --prod)",
+      "Bash(npm run:*)",
+      "Bash(find /c/Users/Ilham/aaa projects/math-tracker/src -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
+      "Bash(npx eslint:*)",
+      "Bash(python -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\(''bin:'', p.get\\(''bin''\\)\\); print\\(''name:'', p.get\\(''name''\\)\\); print\\(''version:'', p.get\\(''version''\\)\\)\")",
+      "Bash(node --version)",
+      "Bash(python -c \":*)",
+      "Bash(node \"C:/Users/Ilham/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/install.cjs\")",
+      "Bash(wmic logicaldisk get caption,freespace,size)",
+      "Bash(node \"C:/Users/Ilham/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs\" --version)",
+      "Bash(node \"C:/Users/Ilham/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/cli.js\" --version)",
+      "Bash(tee /tmp/tsc.log)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

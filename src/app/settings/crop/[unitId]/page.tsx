@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import { ChevronLeft, Scissors } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { findUnit, extractUnitNumber } from '@/lib/curriculum-data';
 import { PageCropOverlay } from '@/components/settings/page-crop-overlay';
 import { CropPillHeader } from '@/components/settings/crop-pill-header';
 import { ZoomedPageView } from '@/components/settings/zoomed-page-view';
+import {
+  CropToolToolbar,
+  type CropTool,
+} from '@/components/settings/crop-tool-toolbar';
 import {
   generateCropKeys,
   resumeCropKey,
@@ -58,17 +61,26 @@ export default function UnitCropPage() {
     ? (flashParamRaw as Id<'questionBank'>)
     : null;
 
-  const [cropMode, setCropMode] = useState(true);
+  // Active editing tool. The page boots in `crop` so the user lands ready
+  // to draw the next question — the most common entry point. Switching to
+  // `adjust` lets them scroll without capturing gestures; `resize` and
+  // `delete` operate on existing crops independently.
+  const [tool, setTool] = useState<CropTool>('crop');
+  // The block-the-Android-context-menu listener was previously gated on
+  // `cropMode`. We now block whenever the tool is anything but `adjust`,
+  // since drawing/resizing/deleting all involve direct touch on the image
+  // and a long-press save/share menu would steal the gesture.
+  const editingMode = tool !== 'adjust';
 
   // Document-level contextmenu blocker. Android Chrome shows a long-press
   // image menu via the contextmenu event — preventing it at the document
   // catches it no matter which element gets the touch.
   useEffect(() => {
-    if (!cropMode) return;
+    if (!editingMode) return;
     const onCtx = (e: Event) => e.preventDefault();
     document.addEventListener('contextmenu', onCtx);
     return () => document.removeEventListener('contextmenu', onCtx);
-  }, [cropMode]);
+  }, [editingMode]);
 
   const textbooks = useQuery(api.textbooks.list);
   const allUnitMeta = useQuery(api.unitMetadata.list);
@@ -240,6 +252,13 @@ export default function UnitCropPage() {
   // ─── Mutations for fast-mode save / re-key ────────────────────
   const createMut = useMutation(api.questionBank.create);
   const updateMut = useMutation(api.questionBank.update);
+  const removeMut = useMutation(api.questionBank.remove);
+
+  // Most-recently-touched crop (drawn or tapped). Used so when the user
+  // switches into Resize mode without explicitly tapping a rect, we can
+  // pre-select whatever they last interacted with — the friction-removing
+  // flow they asked for.
+  const lastTouchedCropIdRef = useRef<Id<'questionBank'> | null>(null);
 
   const handleFastDraw = useCallback(
     async (pageId: Id<'textbookPages'>, box: CropBox) => {
@@ -249,13 +268,14 @@ export default function UnitCropPage() {
         return;
       }
       try {
-        await createMut({
+        const newId = await createMut({
           source: 'textbook',
           textbookPageId: pageId,
           cropBox: box,
           linkedExerciseId: exerciseId,
           linkedQuestionKey: currentKey,
         });
+        lastTouchedCropIdRef.current = newId as Id<'questionBank'>;
         // Drawing always exits any re-key selection.
         setSelectedCropId(null);
         const next = nextCropKey(currentKey, allKeys);
@@ -273,9 +293,57 @@ export default function UnitCropPage() {
       const c = (pageCrops || []).find((x) => x._id === cropId);
       if (!c) return;
       setSelectedCropId(cropId);
+      lastTouchedCropIdRef.current = cropId;
       if (c.linkedQuestionKey) setUserKey(c.linkedQuestionKey);
     },
     [pageCrops],
+  );
+
+  // Tool-change handler: switching into Resize mode auto-selects whichever
+  // crop was last drawn or tapped, so the user gets handles immediately
+  // without a separate select-step. Other transitions are pure mode swaps.
+  const handleToolChange = useCallback(
+    (next: CropTool) => {
+      setTool(next);
+      if (next === 'resize') {
+        // Default to the last-touched crop if nothing is currently selected
+        // and that crop still exists in the live list (it may have been
+        // deleted before we get here).
+        setSelectedCropId((cur) => {
+          if (cur) return cur;
+          const fallback = lastTouchedCropIdRef.current;
+          if (!fallback) return null;
+          const stillExists = (pageCrops || []).some(
+            (c) => c._id === fallback,
+          );
+          return stillExists ? fallback : null;
+        });
+      } else if (next === 'crop' || next === 'adjust') {
+        // Leaving select-style modes: clear the highlight so the next
+        // pill-tap doesn't accidentally re-key a previously-selected crop.
+        setSelectedCropId(null);
+      }
+    },
+    [pageCrops],
+  );
+
+  // Shared delete handler — used by the zoom view's red X. The inline
+  // overlay already runs its own delete via the X button it renders.
+  const handleCropDelete = useCallback(
+    async (cropId: Id<'questionBank'>) => {
+      if (!confirm('Delete this crop?')) return;
+      try {
+        await removeMut({ id: cropId });
+        setSelectedCropId((cur) => (cur === cropId ? null : cur));
+        if (lastTouchedCropIdRef.current === cropId) {
+          lastTouchedCropIdRef.current = null;
+        }
+      } catch (err) {
+        console.error(err);
+        toast.error('Could not delete');
+      }
+    },
+    [removeMut],
   );
 
   const handlePillTap = useCallback(
@@ -455,20 +523,23 @@ export default function UnitCropPage() {
               </p>
             )}
           </div>
-          <Button
-            variant={cropMode ? 'default' : 'outline'}
-            size="sm"
-            className="gap-1.5 shrink-0"
-            onClick={() => setCropMode((m) => !m)}
-            disabled={pageStart == null || pageEnd == null}
-          >
-            <Scissors className="w-3.5 h-3.5" />
-            {cropMode ? 'Done' : 'Crop'}
-          </Button>
         </div>
 
-        {/* Fast-mode pill header — main-Q grid + sub-letter pills */}
-        {isFastMode && cropMode && exercise && allKeys.length > 0 && (
+        {/* Tool toolbar — 4 independent modes (Adjust / Crop / Resize /
+            Delete). Always visible so the user can swap tools without
+            entering or leaving a single "crop mode". */}
+        <div className="max-w-lg mx-auto px-3 pb-2 flex justify-center">
+          <CropToolToolbar
+            tool={tool}
+            onChange={handleToolChange}
+            disabled={pageStart == null || pageEnd == null}
+          />
+        </div>
+
+        {/* Fast-mode pill header — main-Q grid + sub-letter pills. Only
+            relevant when actively editing crops; in pure Adjust mode we
+            drop it to give the page more vertical room. */}
+        {isFastMode && editingMode && exercise && allKeys.length > 0 && (
           <CropPillHeader
             exercise={exercise}
             currentKey={currentKey}
@@ -500,7 +571,7 @@ export default function UnitCropPage() {
           </div>
         ) : (
           <>
-            {!isFastMode && cropMode && (
+            {!isFastMode && tool === 'crop' && (
               <div className="mb-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30 text-xs text-primary flex items-start gap-2">
                 <Scissors className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 <span>
@@ -520,7 +591,7 @@ export default function UnitCropPage() {
                     pageId={pageId}
                     pageNumber={pg.pageNumber}
                     imageUrl={pg.url}
-                    cropMode={cropMode}
+                    tool={tool}
                     crops={
                       pageId ? cropsByPageFiltered.get(pageId) || [] : []
                     }
@@ -566,6 +637,8 @@ export default function UnitCropPage() {
           cropLabelFor={isFastMode ? cropLabelFor : undefined}
           selectedCropId={isFastMode ? selectedCropId : null}
           flashCropId={liveFlashCropId}
+          tool={tool}
+          onToolChange={handleToolChange}
           onClose={() => setZoomState(null)}
           onDrawComplete={
             isFastMode
@@ -581,8 +654,9 @@ export default function UnitCropPage() {
               toast.error('Could not resize');
             }
           }}
+          onCropDelete={handleCropDelete}
           pillHeader={
-            isFastMode && exercise && allKeys.length > 0 ? (
+            isFastMode && editingMode && exercise && allKeys.length > 0 ? (
               <CropPillHeader
                 exercise={exercise}
                 currentKey={currentKey}

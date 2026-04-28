@@ -1,0 +1,204 @@
+🏭 Aristora Math Tuition — The Factory Model
+Your Situation (Honest Truth)
+You're right about several things:
+
+Licensing won't work easily in Sri Lanka — other teachers think "bulk class" mentality
+Finding a multi-talented teacher who can teach, market, and use tech is nearly impossible
+At LKR 250/student/hour with 8 students, you're capped at LKR 2,000/hour
+But you're wrong about one thing — this IS a real idea. You just need to think like McDonald's, not like a solo tutor.
+
+McDonald's doesn't hire master chefs. They hire normal people and put them in a system where each person does ONE simple thing. Your app is that system.
+
+The Core Insight: Break "Teaching" Into Simple Jobs
+Right now, you do everything:
+
+Teach new theory
+Give exercises
+Walk around clearing doubts
+Correct student work
+Enter scores into the app
+Track progress & decide what comes next
+No single hire can replace you. But 3 cheap hires can each do ONE piece.
+
+🔧 The 4 Roles (The Machine)
+Role 1: 🧠 Lead Teacher (YOU)
+Position: Front of the class / moves between groups
+What you do:
+
+Teach new theory to small groups (5-8 students who are at the same level)
+Handle HARD doubts that assistants can't solve
+Decide each student's curriculum path (the app helps with this)
+Quality check — make sure assistants are marking correctly
+Why only you: This needs deep math knowledge + curriculum judgment
+
+Role 2: ✅ Correction Officer (Undergraduate, FIXED at a desk)
+Position: Sits at a "Correction Desk" — students come to this desk
+What they do:
+
+Students finish an exercise → bring their book to this desk
+Checks answers against the answer key (you prepare these in advance)
+Marks ✓ or ✗ on each question
+Enters results into the app (tap correct/wrong on the phone — your app makes this easy!)
+Says "go back and fix Q3, Q7" — student goes back to their seat
+Why an undergraduate can do this:
+
+They just compare answers to an answer key — no teaching skill needed
+Your app's score entry page is designed for exactly this (tap grid of ✓/✗)
+Any math undergraduate can verify answers
+Pay: LKR 200-300/hour (part-time university student)
+
+Role 3: 🚶 Floor Monitor (Undergraduate, WALKS around)
+Position: Walks between student desks
+What they do:
+
+Helps with SIMPLE doubts ("Which formula for area of triangle?", "How do I simplify this fraction?")
+Keeps students focused (prevents chatting, sleeping, phone use)
+If a student is truly stuck → raises hand → YOU come to that student
+Distributes exercise sheets/books
+Manages the "queue" — tells students "take your book to the correction desk"
+Why an undergraduate can do this:
+
+Simple doubts only need Grade 11 level math knowledge
+Any university math/engineering student knows this
+They're not teaching theory — just giving small hints
+Pay: LKR 200-300/hour (part-time university student)
+
+Role 4: 📱 App Operator (Can be combined with Correction Officer)
+Position: At the correction desk or a separate phone
+What they do:
+
+Enter all scores into the app as students get corrected
+Generate and share leaderboard images to WhatsApp at end of class
+Update student progress positions
+Handle attendance marking
+TIP
+
+In the beginning, combine this with the Correction Officer role. One person corrects AND enters scores. Your app is phone-optimized, so this is fast — they correct the book, then immediately tap results into the app.
+
+📐 The Classroom Layout
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│   ┌─────────────┐          ┌──────────────────┐         │
+│   │  WHITEBOARD  │          │  CORRECTION DESK │         │
+│   │  (You teach  │          │  (Undergraduate  │         │
+│   │   theory to  │          │   sits here,     │         │
+│   │   a small    │          │   checks work,   │         │
+│   │   group)     │          │   enters scores) │         │
+│   └─────────────┘          └──────────────────┘         │
+│                                                         │
+│   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐     │
+│   │ S │ │ S │ │ S │ │ S │ │ S │ │ S │ │ S │ │ S │     │
+│   └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └───┘     │
+│   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐     │
+│   │ S │ │ S │ │ S │ │ S │ │ S │ │ S │ │ S │ │ S │     │
+│   └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └───┘     │
+│   ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐                 │
+│   │ S │ │ S │ │ S │ │ S │ │ S │ │ S │   🚶 Floor       │
+│   └───┘ └───┘ └───┘ └───┘ └───┘ └───┘   Monitor walks  │
+│                                          around here    │
+│         S = Student doing exercises                     │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+⏱️ How a 1-Hour Class Flows
+Time	You (Lead Teacher)	Correction Officer	Floor Monitor
+0-5 min	Welcome, quick announcements. Students open books at their current exercise.	Ready at desk	Distribute sheets if needed
+5-20 min	Teach new theory to Group A (5-8 students who need it). Others work on exercises.	Students from yesterday bring pending corrections. Start checking & entering scores.	Walk around. Help simple doubts. Keep students focused.
+20-35 min	Move to Group B (if needed) or walk around handling hard doubts.	Steady stream — students finish exercises, come to desk, get checked.	Continue walking. Send stuck students to you.
+35-50 min	Handle hard doubts. Check progress. Decide who moves to next exercise.	Peak time — most students finishing exercises now. Enter scores fast.	Manage "queue" at correction desk if crowded.
+50-55 min	Quick review of who did well today.	Enter final scores.	Help students pack up.
+55-60 min	Motivational close. Announce top scorers (from app).	Generate leaderboard image → share to WhatsApp.	—
+💰 The Financial Model
+Scenario 1: 20 Students (Minimum Viable Scale)
+Item	Amount
+Revenue: 20 students × LKR 250/hr	LKR 5,000/hr
+Correction Officer (undergraduate)	-LKR 300/hr
+Floor Monitor (undergraduate)	-LKR 300/hr
+Your take-home	LKR 4,400/hr
+vs. current (8 students, solo)	2.2× improvement
+Scenario 2: 30 Students (Sweet Spot) ⭐
+Item	Amount
+Revenue: 30 students × LKR 250/hr	LKR 7,500/hr
+Correction Officer (undergraduate)	-LKR 300/hr
+Floor Monitor (undergraduate)	-LKR 300/hr
+Your take-home	LKR 6,900/hr
+vs. current	3.45× improvement
+Scenario 3: 30 Students × 3 Batches/Day (The Machine)
+Item	Per Day
+Revenue: LKR 7,500 × 3 batches × 2 hours	LKR 45,000/day
+2 assistants × LKR 300 × 6 hours	-LKR 3,600/day
+Your daily take-home	LKR 41,400/day
+Monthly (26 days)	LKR 10,76,400/month
+vs. current (LKR 2,000 × 2hr × 26 days)	10× improvement
+IMPORTANT
+
+You go from ~LKR 1,04,000/month to ~LKR 10,76,400/month — same you, same subjects, same price per student.
+The only change: more students per room + 2 cheap assistants.
+
+🎯 Capacity Limits — How Many Students Per Setup?
+Students	You + Assistants Needed	Works?
+8	You alone	✅ Current model
+15	You + 1 Correction Officer	✅ Tight but doable
+20-25	You + 1 Correction + 1 Floor Monitor	✅ Ideal starting point
+30	You + 1 Correction + 1 Floor Monitor	✅ Sweet spot
+35-40	You + 2 Correction + 1 Floor Monitor	⚠️ Needs bigger room
+40+	You + 2 Correction + 2 Floor	❌ Quality drops — don't go here
+CAUTION
+
+Don't go above 30-35 students per batch. Quality drops, noise increases, and your competitive advantage (personalized progress tracking) disappears. Better to add another batch (time slot) than to overcrowd one.
+
+🍔 The McDonald's Path (How to Franchise LATER)
+Phase 1: Prove the Machine (Month 1-6)
+Run YOUR center with 20-30 students per batch
+Train 2 undergraduates in the correction/monitoring system
+Build a track record of results (your app generates this data automatically!)
+Document everything — how to run a class, answer keys, procedures
+Phase 2: Second Location (Month 6-12)
+Open a second center in a nearby town
+YOU visit 2-3 times/week to teach theory (the hard part)
+Your TRAINED assistant runs correction + monitoring the other days
+Students do exercises the days you're not there — they don't need new theory every day
+Phase 3: The Real Franchise (Year 2+)
+Now you have something important: proof that it works without you being there every day.
+
+The franchise package becomes:
+
+✅ The app (student tracking, scoring, leaderboards)
+✅ Complete curriculum with answer keys
+✅ The "factory" operations manual (how to set up the room, the roles, the flow)
+✅ Theory teaching videos (you record these ONCE, reuse forever)
+✅ WhatsApp marketing templates (leaderboard images)
+A franchise owner needs to be only a decent math teacher — not a genius. Because:
+
+The curriculum tells them WHAT to teach
+The answer keys mean undergrads can do correction
+The app handles all tracking and scoring
+The leaderboard images handle marketing
+Your videos can supplement their teaching
+🔑 What Makes This Work (Why It's NOT Just a Factory)
+Feature	Your Advantage
+The App	No competitor has this. Parents see real-time progress. Leaderboards create competition.
+Progressive Scoring	Students are self-motivated. Less work for the teacher to keep them engaged.
+Each Student's Own Path	Grade 8 student doing Grade 6 algebra is normal in your system. No one feels "behind."
+WhatsApp Leaderboards	Free marketing. Parents share these. Other parents ask "what tuition is this?"
+Systemized Correction	Undergrads can do it. No need for expensive teachers.
+✅ Your Immediate Next Steps
+This week: Find 2 university undergraduate students (math/engineering). Offer LKR 300/hr part-time.
+This week: Prepare answer keys for your most-used exercises (so corrections become mechanical).
+Next week: Set up the correction desk in your classroom. Start with 12-15 students instead of 8.
+Month 1: Grow to 20 students per batch. Run 2 batches/day.
+Month 2-3: Grow to 25-30 students. Add a 3rd batch if demand exists.
+Month 3+: Start documenting your process. Record theory teaching videos. Think about a second location.
+💬 Final Words
+"This feels like a factory"
+
+Yes — and that's exactly the point. McDonald's is a burger factory. But customers don't feel like they're in a factory — they feel like they're getting fast, consistent service.
+
+Your students won't feel like they're in a factory either. They'll feel:
+
+Engaged — because the scoring system gamifies learning
+Seen — because the app tracks their individual progress
+Competitive — because the leaderboard makes them want to do more
+Supported — because there's always someone available to help (you + 2 assistants vs. just you stretched thin over 8 students)
+The "factory" is what happens behind the scenes. The experience is what the student feels. Your app makes the factory feel personal.
+
+This is a real idea. This works in Sri Lanka. Start with 20 students next week
