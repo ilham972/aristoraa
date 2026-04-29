@@ -135,6 +135,29 @@ export default function UnitCropPage() {
         }
       : 'skip',
   );
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!isFastMode) return;
+    if (!unitPages || unitPages.length === 0) return;
+    if (
+      selectedPageNumber != null &&
+      unitPages.some((p) => p.pageNumber === selectedPageNumber)
+    ) {
+      return;
+    }
+    setSelectedPageNumber(unitPages[0].pageNumber);
+  }, [isFastMode, unitPages, selectedPageNumber]);
+
+  const selectedFastPage = useMemo(() => {
+    if (!isFastMode || !unitPages || unitPages.length === 0) return null;
+    return (
+      unitPages.find((p) => p.pageNumber === selectedPageNumber) ??
+      unitPages[0]
+    );
+  }, [isFastMode, unitPages, selectedPageNumber]);
 
   const pageIdsForQuery = useMemo<Id<'textbookPages'>[]>(
     () =>
@@ -385,9 +408,8 @@ export default function UnitCropPage() {
     return () => window.clearTimeout(t);
   }, [liveFlashCropId]);
 
-  // Once pages and crops are loaded, scroll the matching crop into view.
-  // This overrides the saved-scroll restore further down — flash arrival is
-  // a deliberate jump, not a restore.
+  // Once pages and crops are loaded, reveal the matching crop. Fast mode
+  // swaps to that page; unit mode keeps the older scroll-to-rect behaviour.
   const didFlashScroll = useRef(false);
   useEffect(() => {
     if (didFlashScroll.current) return;
@@ -399,6 +421,15 @@ export default function UnitCropPage() {
       return;
     }
     didFlashScroll.current = true;
+    if (isFastMode) {
+      const page = unitPages.find(
+        (p) =>
+          (p as { pageId?: Id<'textbookPages'> | null }).pageId ===
+          crop.textbookPageId,
+      );
+      if (page) setSelectedPageNumber(page.pageNumber);
+      return;
+    }
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const el = document.querySelector(
@@ -407,7 +438,7 @@ export default function UnitCropPage() {
         el?.scrollIntoView({ behavior: 'auto', block: 'center' });
       });
     });
-  }, [flashCropId, pageCrops, unitPages]);
+  }, [flashCropId, pageCrops, unitPages, isFastMode]);
 
   // ─── Scroll-position persistence ──────────────────────────────
   // Keyed by unitId + exerciseId so unit-level "see all" and per-exercise
@@ -415,6 +446,7 @@ export default function UnitCropPage() {
   const scrollKey = `crop.scroll.${unitId}.${exerciseIdParam ?? 'all'}`;
   // Save on scroll, debounced via rAF.
   useEffect(() => {
+    if (isFastMode) return;
     if (typeof window === 'undefined') return;
     let pending = false;
     const onScroll = () => {
@@ -431,7 +463,7 @@ export default function UnitCropPage() {
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
-  }, [scrollKey]);
+  }, [scrollKey, isFastMode]);
 
   // Restore once pages have rendered. We wait for unitPages to resolve so
   // the document is tall enough to actually scroll to. If a `?flash=` was
@@ -439,6 +471,7 @@ export default function UnitCropPage() {
   // we don't fight it.
   const didRestoreScroll = useRef(false);
   useEffect(() => {
+    if (isFastMode) return;
     if (didRestoreScroll.current) return;
     if (flashCropId) {
       didRestoreScroll.current = true;
@@ -461,7 +494,7 @@ export default function UnitCropPage() {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => window.scrollTo(0, y));
     });
-  }, [unitPages, scrollKey, flashCropId]);
+  }, [unitPages, scrollKey, flashCropId, isFastMode]);
 
   // ── Render ───────────────────────────────────────────────
   if (!unitInfo) {
@@ -564,45 +597,112 @@ export default function UnitCropPage() {
           </div>
         ) : (
           <>
-            <div className="space-y-3">
-              {unitPages.map((pg) => {
-                const pageId =
-                  (pg as { pageId?: Id<'textbookPages'> | null }).pageId ?? null;
-                return (
-                  <PageCropOverlay
-                    key={pageId ?? `np-${pg.pageNumber}`}
-                    pageId={pageId}
-                    pageNumber={pg.pageNumber}
-                    imageUrl={pg.url}
-                    tool={tool}
-                    crops={
-                      pageId ? cropsByPageFiltered.get(pageId) || [] : []
-                    }
-                    unitExercises={unitExercises}
-                    onDrawComplete={
-                      isFastMode && pageId
-                        ? (box) => handleFastDraw(pageId, box)
-                        : undefined
-                    }
-                    onCropTap={isFastMode ? handleCropTap : undefined}
-                    selectedCropId={isFastMode ? selectedCropId : null}
-                    cropLabelFor={isFastMode ? cropLabelFor : undefined}
-                    flashCropId={liveFlashCropId}
-                    onZoom={
-                      pageId && pg.url
-                        ? (id, na) =>
-                            setZoomState({
-                              pageId: id,
-                              pageNumber: pg.pageNumber,
-                              imageUrl: pg.url!,
-                              naturalAspect: na,
-                            })
-                        : undefined
-                    }
-                  />
-                );
-              })}
-            </div>
+            {isFastMode && selectedFastPage ? (
+              <div className="space-y-2">
+                {(() => {
+                  const pageId =
+                    (
+                      selectedFastPage as {
+                        pageId?: Id<'textbookPages'> | null;
+                      }
+                    ).pageId ?? null;
+                  return (
+                    <PageCropOverlay
+                      key={pageId ?? `np-${selectedFastPage.pageNumber}`}
+                      pageId={pageId}
+                      pageNumber={selectedFastPage.pageNumber}
+                      imageUrl={selectedFastPage.url}
+                      tool={tool}
+                      crops={pageId ? cropsByPageFiltered.get(pageId) || [] : []}
+                      unitExercises={unitExercises}
+                      onDrawComplete={
+                        pageId ? (box) => handleFastDraw(pageId, box) : undefined
+                      }
+                      onCropTap={handleCropTap}
+                      selectedCropId={selectedCropId}
+                      cropLabelFor={cropLabelFor}
+                      flashCropId={liveFlashCropId}
+                      onZoom={
+                        pageId && selectedFastPage.url
+                          ? (id, na) =>
+                              setZoomState({
+                                pageId: id,
+                                pageNumber: selectedFastPage.pageNumber,
+                                imageUrl: selectedFastPage.url!,
+                                naturalAspect: na,
+                              })
+                          : undefined
+                      }
+                    />
+                  );
+                })()}
+                <div className="flex justify-center">
+                  <div
+                    className="flex bg-muted rounded-lg p-0.5 gap-0.5"
+                    aria-label="Page selector"
+                  >
+                    {unitPages.map((pg) => {
+                      const active =
+                        pg.pageNumber === selectedFastPage.pageNumber;
+                      return (
+                        <button
+                          key={pg.pageNumber}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPageNumber(pg.pageNumber);
+                            setSelectedCropId(null);
+                          }}
+                          className={`h-8 min-w-[46px] px-2.5 rounded-md text-[11px] font-semibold transition-all active:scale-95 ${
+                            active
+                              ? 'bg-primary text-primary-foreground shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-background/70'
+                          }`}
+                          aria-current={active ? 'page' : undefined}
+                          aria-label={`Page ${pg.pageNumber}`}
+                        >
+                          p. {pg.pageNumber}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {unitPages.map((pg) => {
+                  const pageId =
+                    (pg as { pageId?: Id<'textbookPages'> | null }).pageId ??
+                    null;
+                  return (
+                    <PageCropOverlay
+                      key={pageId ?? `np-${pg.pageNumber}`}
+                      pageId={pageId}
+                      pageNumber={pg.pageNumber}
+                      imageUrl={pg.url}
+                      tool={tool}
+                      crops={pageId ? cropsByPageFiltered.get(pageId) || [] : []}
+                      unitExercises={unitExercises}
+                      onDrawComplete={undefined}
+                      onCropTap={undefined}
+                      selectedCropId={null}
+                      cropLabelFor={undefined}
+                      flashCropId={liveFlashCropId}
+                      onZoom={
+                        pageId && pg.url
+                          ? (id, na) =>
+                              setZoomState({
+                                pageId: id,
+                                pageNumber: pg.pageNumber,
+                                imageUrl: pg.url!,
+                                naturalAspect: na,
+                              })
+                          : undefined
+                      }
+                    />
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </div>
