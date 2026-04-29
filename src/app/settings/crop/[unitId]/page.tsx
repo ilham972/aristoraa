@@ -267,9 +267,15 @@ export default function UnitCropPage() {
   } | null>(null);
 
   // ─── Mutations for fast-mode save / re-key ────────────────────
-  const createMut = useMutation(api.questionBank.create);
   const updateMut = useMutation(api.questionBank.update);
   const removeMut = useMutation(api.questionBank.remove);
+  // Strict 1:1 (exercise, key) → crop. Server enforces by overwriting any
+  // existing crop at that key on draw, and by deleting duplicates on
+  // re-key. The legacy create/update path could produce duplicates
+  // (different pages, race conditions) — these mutations make that
+  // structurally impossible.
+  const upsertForKeyMut = useMutation(api.questionBank.upsertForExerciseKey);
+  const rekeyMut = useMutation(api.questionBank.rekeyToExerciseKey);
 
   // Most-recently-touched crop (drawn or tapped). Used so when the user
   // switches into Resize mode without explicitly tapping a rect, we can
@@ -285,14 +291,16 @@ export default function UnitCropPage() {
         return;
       }
       try {
-        const newId = await createMut({
-          source: 'textbook',
-          textbookPageId: pageId,
-          cropBox: box,
+        // 1:1 invariant — server overwrites any existing crop at this
+        // (exercise, key) and removes duplicates so re-drawing a question
+        // simply replaces the old box.
+        const id = await upsertForKeyMut({
           linkedExerciseId: exerciseId,
           linkedQuestionKey: currentKey,
+          textbookPageId: pageId,
+          cropBox: box,
         });
-        lastTouchedCropIdRef.current = newId as Id<'questionBank'>;
+        lastTouchedCropIdRef.current = id as Id<'questionBank'>;
         // Drawing always exits any re-key selection.
         setSelectedCropId(null);
         const next = nextCropKey(currentKey, allKeys);
@@ -302,7 +310,7 @@ export default function UnitCropPage() {
         toast.error('Could not save crop');
       }
     },
-    [isFastMode, exerciseId, currentKey, allKeys, createMut],
+    [isFastMode, exerciseId, currentKey, allKeys, upsertForKeyMut],
   );
 
   const handleCropTap = useCallback(
@@ -365,9 +373,11 @@ export default function UnitCropPage() {
   const handlePillTap = useCallback(
     async (key: string) => {
       if (selectedCropId && exerciseId) {
-        // Re-key the selected crop in place.
+        // Re-key the selected crop in place. Server-side, any other crop
+        // already at the target (exercise, key) is deleted to keep the
+        // 1:1 invariant.
         try {
-          await updateMut({
+          await rekeyMut({
             id: selectedCropId,
             linkedExerciseId: exerciseId,
             linkedQuestionKey: key,
@@ -382,7 +392,7 @@ export default function UnitCropPage() {
         setUserKey(key);
       }
     },
-    [selectedCropId, exerciseId, updateMut],
+    [selectedCropId, exerciseId, rekeyMut],
   );
 
   const cropLabelFor = useCallback(

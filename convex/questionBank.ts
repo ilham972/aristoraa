@@ -95,6 +95,83 @@ export const create = mutation({
   },
 });
 
+// Strict 1:1 between (linkedExerciseId, linkedQuestionKey) and a crop. The
+// fast-mode crop UI calls this whenever the user draws — if a crop already
+// exists at that key it's overwritten in place; any duplicates from before
+// this invariant existed are deleted on the same call so the data heals as
+// the user re-cuts each question. Always returns the surviving crop's id.
+export const upsertForExerciseKey = mutation({
+  args: {
+    linkedExerciseId: v.id("exercises"),
+    linkedQuestionKey: v.string(),
+    textbookPageId: v.id("textbookPages"),
+    cropBox: cropBoxValidator,
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db
+      .query("questionBank")
+      .withIndex("by_linked_exercise", (q) =>
+        q.eq("linkedExerciseId", args.linkedExerciseId),
+      )
+      .filter((q) =>
+        q.eq(q.field("linkedQuestionKey"), args.linkedQuestionKey),
+      )
+      .collect();
+    if (existing.length === 0) {
+      return await ctx.db.insert("questionBank", {
+        source: "textbook",
+        textbookPageId: args.textbookPageId,
+        cropBox: args.cropBox,
+        linkedExerciseId: args.linkedExerciseId,
+        linkedQuestionKey: args.linkedQuestionKey,
+        createdAt: Date.now(),
+      });
+    }
+    // Keep the first row, overwrite its box + page; delete any duplicates.
+    const [keep, ...dupes] = existing;
+    await ctx.db.patch(keep._id, {
+      cropBox: args.cropBox,
+      textbookPageId: args.textbookPageId,
+    });
+    for (const d of dupes) await ctx.db.delete(d._id);
+    return keep._id;
+  },
+});
+
+// Re-key the given crop to (exerciseId, questionKey), deleting any other
+// crop already at that key so the 1:1 invariant survives a re-key. Used by
+// the pill-header re-key flow when the user has selected a crop and taps a
+// different question pill.
+export const rekeyToExerciseKey = mutation({
+  args: {
+    id: v.id("questionBank"),
+    linkedExerciseId: v.id("exercises"),
+    linkedQuestionKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db
+      .query("questionBank")
+      .withIndex("by_linked_exercise", (q) =>
+        q.eq("linkedExerciseId", args.linkedExerciseId),
+      )
+      .filter((q) =>
+        q.eq(q.field("linkedQuestionKey"), args.linkedQuestionKey),
+      )
+      .collect();
+    for (const e of existing) {
+      if (e._id !== args.id) await ctx.db.delete(e._id);
+    }
+    await ctx.db.patch(args.id, {
+      linkedExerciseId: args.linkedExerciseId,
+      linkedQuestionKey: args.linkedQuestionKey,
+    });
+  },
+});
+
 export const update = mutation({
   args: {
     id: v.id("questionBank"),
