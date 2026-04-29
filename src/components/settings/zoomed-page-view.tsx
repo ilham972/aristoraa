@@ -26,11 +26,10 @@ interface Props {
   flashCropId?: Id<'questionBank'> | null;
   // Active tool from the parent's shared toolbar. Each value works
   // independently:
-  //   adjust → 1-finger pan, no crop interaction.
   //   crop   → 1-finger draws a new crop rect.
   //   resize → tap rects to select; corner handles resize the selected one.
-  //            1-finger pan still works on the empty area.
   //   delete → red X on every rect; tap an X to delete.
+  //   all    → 2-finger pinch / pan adjusts the page view.
   tool: CropTool;
   onToolChange: (t: CropTool) => void;
   onClose: () => void;
@@ -51,11 +50,9 @@ const MIN_SCALE = 1;
 // Full-screen page viewer with pinch-zoom + pan. Behaviour is dictated by
 // the `tool` prop (the same 4-mode toolbar the parent renders for the
 // inline view), so a single source of truth controls both surfaces:
-//   adjust  → 1-finger pan, 2-finger pinch+pan. No cropping.
-//   crop    → 1-finger draws in normalised image space; 2-finger still
-//             pinches+pans so the user can keep adjusting.
-//   resize  → 1-finger pan; tap a rect to select; corner handles resize.
-//   delete  → 1-finger pan; tap a rect's red X to delete.
+//   crop    → 1-finger draws in normalised image space.
+//   resize  → tap a rect to select; corner handles resize.
+//   delete  → tap a rect's red X to delete.
 // 2-finger pinch always works regardless of tool.
 export function ZoomedPageView({
   pageId,
@@ -371,7 +368,7 @@ export function ZoomedPageView({
   }, [drawMode, canCrop, onDrawComplete, cropPreview]);
 
   // ─── Mouse fallback (desktop) ─────────────────────────────────
-  // Wheel zoom; click+drag pans (adjust mode) or draws crop (crop mode).
+  // Wheel zoom; click+drag draws crop in crop mode and pans otherwise.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -686,8 +683,8 @@ function CropRectZ({
   // Per-tool interactivity:
   //   - resize: show handles on the selected rect, body-tap selects.
   //   - delete: show the red X badge.
-  //   - adjust/crop: rect is purely visual (pointer-events:none) so the
-  //                  parent's pan/draw gesture can capture freely.
+  //   - crop: rect is purely visual (pointer-events:none) so the parent's
+  //           draw gesture can capture freely.
   const showHandles = tool === 'resize' && isSelected;
   const showDeleteX = tool === 'delete';
   const interactive = tool === 'resize' || tool === 'delete';
@@ -808,8 +805,8 @@ function CropRectZ({
         outline: `${2 * invScale}px solid ${borderColor}`,
         outlineOffset: 0,
         // Only intercept events in tool modes that act on rects directly.
-        // In adjust/crop mode the rect must be inert so the parent's pan
-        // or draw gesture can capture without being eaten by stopPropagation.
+        // In crop mode the rect must be inert so the parent's draw gesture
+        // can capture without being eaten by stopPropagation.
         pointerEvents: interactive ? 'auto' : 'none',
       }}
       onClick={(e) => {

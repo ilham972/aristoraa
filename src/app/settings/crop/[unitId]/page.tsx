@@ -62,25 +62,19 @@ export default function UnitCropPage() {
     : null;
 
   // Active editing tool. The page boots in `crop` so the user lands ready
-  // to draw the next question — the most common entry point. Switching to
-  // `adjust` lets them scroll without capturing gestures; `resize` and
-  // `delete` operate on existing crops independently.
+  // to draw the next question — the most common entry point. Two-finger
+  // pinch / pan works in every tool, while `resize` and `delete` operate on
+  // existing crops independently.
   const [tool, setTool] = useState<CropTool>('crop');
-  // The block-the-Android-context-menu listener was previously gated on
-  // `cropMode`. We now block whenever the tool is anything but `adjust`,
-  // since drawing/resizing/deleting all involve direct touch on the image
-  // and a long-press save/share menu would steal the gesture.
-  const editingMode = tool !== 'adjust';
 
   // Document-level contextmenu blocker. Android Chrome shows a long-press
   // image menu via the contextmenu event — preventing it at the document
   // catches it no matter which element gets the touch.
   useEffect(() => {
-    if (!editingMode) return;
     const onCtx = (e: Event) => e.preventDefault();
     document.addEventListener('contextmenu', onCtx);
     return () => document.removeEventListener('contextmenu', onCtx);
-  }, [editingMode]);
+  }, []);
 
   const textbooks = useQuery(api.textbooks.list);
   const allUnitMeta = useQuery(api.unitMetadata.list);
@@ -318,7 +312,7 @@ export default function UnitCropPage() {
           );
           return stillExists ? fallback : null;
         });
-      } else if (next === 'crop' || next === 'adjust') {
+      } else if (next === 'crop') {
         // Leaving select-style modes: clear the highlight so the next
         // pill-tap doesn't accidentally re-key a previously-selected crop.
         setSelectedCropId(null);
@@ -525,8 +519,9 @@ export default function UnitCropPage() {
           </div>
         </div>
 
-        {/* Tool toolbar — 4 independent modes (Adjust / Crop / Resize /
-            Delete). Always visible so the user can swap tools without
+        {/* Tool toolbar — independent Crop / Resize / Delete modes.
+            Two-finger zoom works in all of them, so no separate Adjust tool
+            is needed. Always visible so the user can swap tools without
             entering or leaving a single "crop mode". */}
         <div className="max-w-lg mx-auto px-3 pb-2 flex justify-center">
           <CropToolToolbar
@@ -536,10 +531,8 @@ export default function UnitCropPage() {
           />
         </div>
 
-        {/* Fast-mode pill header — main-Q grid + sub-letter pills. Only
-            relevant when actively editing crops; in pure Adjust mode we
-            drop it to give the page more vertical room. */}
-        {isFastMode && editingMode && exercise && allKeys.length > 0 && (
+        {/* Fast-mode pill header — main-Q grid + sub-letter pills. */}
+        {isFastMode && exercise && allKeys.length > 0 && (
           <CropPillHeader
             exercise={exercise}
             currentKey={currentKey}
@@ -646,7 +639,7 @@ export default function UnitCropPage() {
           }}
           onCropDelete={handleCropDelete}
           pillHeader={
-            isFastMode && editingMode && exercise && allKeys.length > 0 ? (
+            isFastMode && exercise && allKeys.length > 0 ? (
               <CropPillHeader
                 exercise={exercise}
                 currentKey={currentKey}
@@ -662,4 +655,3 @@ export default function UnitCropPage() {
     </div>
   );
 }
-

@@ -36,10 +36,10 @@ interface Props {
   imageUrl: string | null;
   // Active tool from the parent's 4-mode toolbar. Each mode behaves
   // independently — we no longer have a single "crop mode" boolean.
-  //   adjust → page scrolls normally; crops shown but non-interactive.
   //   crop   → 1-finger drag draws a new crop rect; existing crops inert.
   //   resize → tap a crop to select; corner handles resize the selected one.
   //   delete → red X on every crop; tapping X removes that crop.
+  //   all    → 2-finger pinch / pan adjusts the page view.
   tool: CropTool;
   crops: QuestionBankRow[];
   unitExercises: UnitExercise[];
@@ -90,9 +90,6 @@ export function PageCropOverlay({
   // per-rect inside CropRect, not here.
   const drawMode = tool === 'crop';
   const deleteMode = tool === 'delete';
-  // "Anything but adjust" still shows the page-mode badge / dashed-vs-solid
-  // border affordance so the user sees the page is in an editing mode.
-  const editingMode = tool !== 'adjust';
   const createMut = useMutation(api.questionBank.create);
   const removeMut = useMutation(api.questionBank.remove);
   const updateMut = useMutation(api.questionBank.update);
@@ -121,9 +118,9 @@ export function PageCropOverlay({
   // elements. A hidden preloader <img> reports the natural aspect once loaded.
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
 
-  // Per-page pinch-zoom state. Adjust mode is the only mode that changes
-  // this transform, but Crop / Resize / Delete render the same transform so
-  // the carefully-positioned zoom view persists while editing.
+  // Per-page pinch-zoom state. Two-finger gestures can change this transform
+  // in every tool, and the image / crop rects render through the same layer
+  // so the user's zoomed position persists while editing.
   const [zoomState, setZoomState] = useState({ scale: 1, tx: 0, ty: 0 });
   const zoom = zoomState;
   const isZoomed = zoom.scale > 1.001;
@@ -148,8 +145,7 @@ export function PageCropOverlay({
   //      on touchstart and touchmove, which iOS respects.
   // Effect deps are only [drawMode, pageId, imageUrl] — createMutRef stays
   // stable so the effect doesn't tear down listeners mid-gesture. Listeners
-  // attach only in `crop` tool mode; in adjust/resize/delete we want the page
-  // to scroll normally with no gesture capture.
+  // attach only in `crop` tool mode; resize/delete use their own rect controls.
   useEffect(() => {
     if (!drawMode) return;
     // Listener attaches whenever there's an image to crop. We don't gate on
@@ -208,6 +204,11 @@ export function PageCropOverlay({
 
     // ── Touch (mobile) ─────────────────────────────
     const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        dragRef.current = null;
+        setDraggingPreview(null);
+        return;
+      }
       const t = e.touches[0];
       if (!t) return;
       const p = toPoint(t.clientX, t.clientY);
@@ -219,6 +220,11 @@ export function PageCropOverlay({
     const onTouchMove = (e: TouchEvent) => {
       const d = dragRef.current;
       if (!d) return;
+      if (e.touches.length !== 1) {
+        dragRef.current = null;
+        setDraggingPreview(null);
+        return;
+      }
       const t = Array.from(e.touches).find((x) => x.identifier === d.touchId) || e.touches[0];
       if (!t) return;
       const p = toPoint(t.clientX, t.clientY);
@@ -290,18 +296,15 @@ export function PageCropOverlay({
     };
   }, [drawMode, pageId, imageUrl]);
 
-  // ── Pinch + pan inside Adjust ─────────────────────────────────
+  // ── Two-finger pinch + pan in every tool ───────────────────────
   // Listener attached to the outer container (not captureRef) so a 2-finger
   // gesture is captured regardless of which child the fingers land on, and
-  // the existing draw listener on captureRef stays untouched.
+  // the existing draw / resize / delete listeners stay untouched.
   //
-  // touch-action on the container is `pan-y` in adjust mode, which lets the
-  // browser keep handling 1-finger vertical scroll of the page list while
-  // we intercept 2-finger pinches and (when zoomed) 1-finger pans. At
-  // scale=1 we never preventDefault on a 1-finger touch so the list scrolls
-  // through this page as if the listener weren't there.
+  // In editing tools, 1-finger gestures remain reserved for the active tool.
+  // Panning a zoomed page is still possible with a two-finger drag because
+  // the pinch center changes even when the finger distance stays the same.
   useEffect(() => {
-    if (tool !== 'adjust') return;
     const el = containerRef.current;
     if (!el) return;
 
@@ -315,13 +318,6 @@ export function PageCropOverlay({
           startCenterX: number;
           startCenterY: number;
           startScale: number;
-          startTx: number;
-          startTy: number;
-        }
-      | {
-          type: 'pan';
-          startSX: number;
-          startSY: number;
           startTx: number;
           startTy: number;
         }
@@ -364,19 +360,7 @@ export function PageCropOverlay({
         e.preventDefault();
         return;
       }
-      if (e.touches.length === 1 && tr.scale > 1.001) {
-        const t = e.touches[0];
-        g = {
-          type: 'pan',
-          startSX: t.clientX - r.left,
-          startSY: t.clientY - r.top,
-          startTx: tr.tx,
-          startTy: tr.ty,
-        };
-        e.preventDefault();
-      }
-      // Otherwise (1 finger at scale=1) leave the gesture to the browser
-      // so the page list scrolls vertically.
+      // Otherwise leave 1-finger gestures to the active tool / browser.
     };
 
     const onTouchMove = (e: TouchEvent) => {
@@ -399,39 +383,10 @@ export function PageCropOverlay({
         e.preventDefault();
         return;
       }
-      if (g.type === 'pan' && e.touches.length === 1) {
-        const pan = g;
-        const t = e.touches[0];
-        const sx = t.clientX - r.left;
-        const sy = t.clientY - r.top;
-        setZoomState((prev) =>
-          clamp({
-            scale: prev.scale,
-            tx: pan.startTx + (sx - pan.startSX),
-            ty: pan.startTy + (sy - pan.startSY),
-          }),
-        );
-        e.preventDefault();
-      }
     };
 
     const onTouchEnd = (e: TouchEvent) => {
       if (!g) return;
-      // Lifting one finger of a pinch with one still down — convert to a
-      // 1-finger pan so the gesture flows uninterrupted (matches native
-      // iOS pinch+pan behaviour on Photos / Maps).
-      if (g.type === 'pinch' && e.touches.length === 1) {
-        const r = el.getBoundingClientRect();
-        const t = e.touches[0];
-        g = {
-          type: 'pan',
-          startSX: t.clientX - r.left,
-          startSY: t.clientY - r.top,
-          startTx: zoomRef.current.tx,
-          startTy: zoomRef.current.ty,
-        };
-        return;
-      }
       if (e.touches.length === 0) g = null;
     };
 
@@ -449,7 +404,7 @@ export function PageCropOverlay({
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('touchcancel', onTouchCancel);
     };
-  }, [tool]);
+  }, []);
 
   // Preview is gated by drawMode — when the tool isn't "crop", the preview is
   // always hidden, even if draggingPreview state still holds the last drag
@@ -469,7 +424,6 @@ export function PageCropOverlay({
   // lightweight — the badges/buttons they fed have been removed. Reading
   // them once silences unused-var lint without changing the public Props
   // shape (callers still pass these).
-  void editingMode;
   void deleteMode;
   void drawMode;
   void onZoom;
@@ -484,22 +438,19 @@ export function PageCropOverlay({
             ? 'bg-muted/40 border-border'
             : drawMode && pageId
               ? 'cursor-crosshair border-border'
-              : editingMode
-                ? 'border-border'
-                : 'border-dashed border-muted-foreground/30'
+              : 'border-border'
         }`}
         style={{
           aspectRatio:
             imageUrl && naturalAspect ? `${naturalAspect}` : '3 / 4',
           // Per-tool native-gesture policy:
-          //   crop   → none (1-finger draws; block native scroll/zoom)
-          //   adjust → pan-y (browser still scrolls the list with 1 finger;
-          //                   our JS captures 2-finger pinch and zoomed-pan)
-          //   resize/delete → auto (taps + native scroll fall through)
+          //   crop   → none (1-finger draws; our JS captures 2-finger zoom)
+          //   others → pan-y (1-finger vertical scroll can pass through;
+          //                   our JS captures 2-finger zoom)
           touchAction:
             drawMode && imageUrl && pageId
               ? 'none'
-              : tool === 'adjust' && imageUrl
+              : imageUrl
                 ? 'pan-y'
                 : 'auto',
           WebkitUserSelect: 'none',
@@ -693,12 +644,11 @@ function CropRect({
 }) {
   // Per-tool interactivity:
   //   - resize/delete:  pointer events ON, taps reach the rect.
-  //   - adjust/crop:    pointer events OFF, the rect is purely visual so
+  //   - crop:           pointer events OFF, the rect is purely visual so
   //                     scrolling and drawing pass through unimpeded.
   const interactive = tool === 'resize' || tool === 'delete';
   const showHandles = tool === 'resize' && !!isSelected;
   const showDeleteX = tool === 'delete';
-  const editingMode = tool !== 'adjust';
   const savedBox = crop.cropBox!;
   // Optimistic resize override. We tag the override with the savedBox values
   // it was last applied against; once the server echoes back a different
@@ -801,7 +751,7 @@ function CropRect({
       className={`absolute rounded-sm transition-colors z-30 ${colorClasses} ${
         interactive
           ? 'pointer-events-auto'
-          : `pointer-events-none ${editingMode ? '' : 'opacity-60'}`
+          : 'pointer-events-none'
       }`}
       style={{
         left: `${b.x * 100}%`,

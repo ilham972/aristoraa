@@ -1,8 +1,8 @@
 'use client';
 
-import { Move, Scissors, Maximize2, Trash2 } from 'lucide-react';
+import { Scissors, Maximize2, Trash2, type LucideIcon } from 'lucide-react';
 
-export type CropTool = 'adjust' | 'crop' | 'resize' | 'delete';
+export type CropTool = 'crop' | 'resize' | 'delete';
 
 interface Props {
   tool: CropTool;
@@ -17,12 +17,11 @@ interface Props {
 const ITEMS: Array<{
   id: CropTool;
   label: string;
-  Icon: typeof Move;
+  Icon: LucideIcon;
   // Visual flavour for the active state — Crop wears the primary colour,
-  // Delete wears destructive, Adjust/Resize stay neutral.
+  // Delete wears destructive, Resize stays neutral.
   flavour: 'neutral' | 'primary' | 'danger';
 }> = [
-  { id: 'adjust', label: 'Adjust', Icon: Move, flavour: 'neutral' },
   { id: 'crop', label: 'Crop', Icon: Scissors, flavour: 'primary' },
   { id: 'resize', label: 'Resize', Icon: Maximize2, flavour: 'neutral' },
   { id: 'delete', label: 'Delete', Icon: Trash2, flavour: 'danger' },
