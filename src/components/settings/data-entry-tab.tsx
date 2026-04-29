@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Plus, Trash2, Scissors, List, BookOpen } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Scissors, List, Pencil } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,6 +49,7 @@ export function DataEntryTab() {
   const trimMutation = useMutation(api.exercises.trimToCount);
   const setUnitPagesMutation = useMutation(api.unitMetadata.setPages);
   const addConceptMutation = useMutation(api.exercises.addConcept);
+  const renameConceptMutation = useMutation(api.exercises.renameConcept);
   const updateQcMutation = useMutation(api.exercises.updateQuestionCount);
   const updatePageMutation = useMutation(api.exercises.updatePageNumber);
   const removeExMutation = useMutation(api.exercises.remove);
@@ -88,6 +89,9 @@ export function DataEntryTab() {
   const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
+  // When set, the concept dialog is in rename-mode for this concept row;
+  // saving calls renameConcept instead of addConcept and the title flips.
+  const [editingConceptId, setEditingConceptId] = useState<Id<'exercises'> | null>(null);
 
   // === Sub-question inline expansion ===
   const [expandedSubQId, setExpandedSubQId] = useState<Id<'exercises'> | null>(null);
@@ -285,10 +289,16 @@ export function DataEntryTab() {
 
   const handleSaveConcept = async () => {
     if (!conceptName.trim() || !detailUnit) return;
-    await addConceptMutation({ unitId: detailUnit.id, name: conceptName.trim(), afterOrder: conceptAfterOrder });
+    if (editingConceptId) {
+      await renameConceptMutation({ id: editingConceptId, name: conceptName.trim() });
+      toast.success('Renamed');
+    } else {
+      await addConceptMutation({ unitId: detailUnit.id, name: conceptName.trim(), afterOrder: conceptAfterOrder });
+      toast.success('Concept added');
+    }
     setConceptDialogOpen(false);
     setConceptName('');
-    toast.success('Concept added');
+    setEditingConceptId(null);
   };
 
   const handleCountBlur = async (id: Id<'exercises'>, current: number, value: string) => {
@@ -391,7 +401,17 @@ export function DataEntryTab() {
                 <div key={item._id}>
                   {isConcept ? (
                     <div className="flex items-center gap-2 py-2 px-3 bg-accent/50 rounded-lg my-0.5">
-                      <BookOpen className="w-4 h-4 text-primary shrink-0" />
+                      <button
+                        onClick={() => {
+                          setEditingConceptId(item._id);
+                          setConceptName(item.name);
+                          setConceptDialogOpen(true);
+                        }}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-primary/10 text-primary transition-colors shrink-0"
+                        aria-label="Edit name"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
                       <span className="text-sm font-medium text-primary flex-1 min-w-0 truncate">
                         {item.name}
                       </span>
@@ -497,11 +517,24 @@ export function DataEntryTab() {
           </div>
         )}
 
-        {/* Concept dialog */}
-        <Dialog open={conceptDialogOpen} onOpenChange={setConceptDialogOpen}>
+        {/* Concept dialog — used for both Add and Edit; mode switches on
+            `editingConceptId`. Closing always resets so the next opening
+            from a fresh "Add" entry doesn't carry over the previous edit. */}
+        <Dialog
+          open={conceptDialogOpen}
+          onOpenChange={(o) => {
+            setConceptDialogOpen(o);
+            if (!o) {
+              setConceptName('');
+              setEditingConceptId(null);
+            }
+          }}
+        >
           <DialogContent className="max-w-sm mx-auto">
             <DialogHeader>
-              <DialogTitle>Add Concept</DialogTitle>
+              <DialogTitle>
+                {editingConceptId ? 'Edit Concept' : 'Add Concept'}
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               <Input
@@ -510,8 +543,12 @@ export function DataEntryTab() {
                 placeholder="Concept / Theory name"
                 autoFocus
               />
-              <Button onClick={handleSaveConcept} className="w-full rounded-xl">
-                Add Concept
+              <Button
+                onClick={handleSaveConcept}
+                className="w-full rounded-xl"
+                disabled={!conceptName.trim()}
+              >
+                {editingConceptId ? 'Save' : 'Add Concept'}
               </Button>
             </div>
           </DialogContent>

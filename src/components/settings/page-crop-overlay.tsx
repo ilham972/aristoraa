@@ -69,6 +69,8 @@ interface Props {
 }
 
 const MIN_CROP_SIZE = 0.03; // 3% of image in either dimension
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 5;
 
 export function PageCropOverlay({
   pageId,
@@ -118,6 +120,20 @@ export function PageCropOverlay({
   // image context-menu (long-press save/share), which only fires on real <img>
   // elements. A hidden preloader <img> reports the natural aspect once loaded.
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
+
+  // Per-page pinch-zoom state. Held only while the user is in adjust mode;
+  // when the tool flips to anything else we *derive* an identity transform
+  // for rendering so the existing crop / resize math (which reads
+  // captureRef.getBoundingClientRect) sees an un-transformed image. Keeping
+  // the raw state around means switching back to adjust restores the
+  // previous zoom — friction-free if the user toggles tools mid-inspection.
+  const [zoomState, setZoomState] = useState({ scale: 1, tx: 0, ty: 0 });
+  const zoom = tool === 'adjust' ? zoomState : { scale: 1, tx: 0, ty: 0 };
+  const isZoomed = zoom.scale > 1.001;
+  // Live mirror so the gesture handlers can snapshot the current transform
+  // without forcing the listener-attaching effect to re-bind on every tick.
+  const zoomRef = useRef(zoomState);
+  useEffect(() => { zoomRef.current = zoomState; }, [zoomState]);
 
   const exById = useMemo(() => {
     const m: Record<string, UnitExercise> = {};
@@ -277,6 +293,167 @@ export function PageCropOverlay({
     };
   }, [drawMode, pageId, imageUrl]);
 
+  // ── Pinch + pan inside Adjust ─────────────────────────────────
+  // Listener attached to the outer container (not captureRef) so a 2-finger
+  // gesture is captured regardless of which child the fingers land on, and
+  // the existing draw listener on captureRef stays untouched.
+  //
+  // touch-action on the container is `pan-y` in adjust mode, which lets the
+  // browser keep handling 1-finger vertical scroll of the page list while
+  // we intercept 2-finger pinches and (when zoomed) 1-finger pans. At
+  // scale=1 we never preventDefault on a 1-finger touch so the list scrolls
+  // through this page as if the listener weren't there.
+  useEffect(() => {
+    if (tool !== 'adjust') return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const distance = (a: Touch, b: Touch) =>
+      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    type Gesture =
+      | {
+          type: 'pinch';
+          startDist: number;
+          startCenterX: number;
+          startCenterY: number;
+          startScale: number;
+          startTx: number;
+          startTy: number;
+        }
+      | {
+          type: 'pan';
+          startSX: number;
+          startSY: number;
+          startTx: number;
+          startTy: number;
+        }
+      | null;
+    let g: Gesture = null;
+
+    // Keep the image edges flush with the container so the user can't pan
+    // the page off-screen and into a black void. Snaps back to the fit
+    // rect when scale rounds back to 1.
+    const clamp = (z: { scale: number; tx: number; ty: number }) => {
+      if (z.scale <= 1.001) return { scale: 1, tx: 0, ty: 0 };
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      const minTx = w - w * z.scale;
+      const minTy = h - h * z.scale;
+      return {
+        scale: z.scale,
+        tx: Math.max(minTx, Math.min(0, z.tx)),
+        ty: Math.max(minTy, Math.min(0, z.ty)),
+      };
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      const r = el.getBoundingClientRect();
+      const tr = zoomRef.current;
+      if (e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const cx = (t1.clientX + t2.clientX) / 2 - r.left;
+        const cy = (t1.clientY + t2.clientY) / 2 - r.top;
+        g = {
+          type: 'pinch',
+          startDist: distance(t1, t2),
+          startCenterX: cx,
+          startCenterY: cy,
+          startScale: tr.scale,
+          startTx: tr.tx,
+          startTy: tr.ty,
+        };
+        e.preventDefault();
+        return;
+      }
+      if (e.touches.length === 1 && tr.scale > 1.001) {
+        const t = e.touches[0];
+        g = {
+          type: 'pan',
+          startSX: t.clientX - r.left,
+          startSY: t.clientY - r.top,
+          startTx: tr.tx,
+          startTy: tr.ty,
+        };
+        e.preventDefault();
+      }
+      // Otherwise (1 finger at scale=1) leave the gesture to the browser
+      // so the page list scrolls vertically.
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!g) return;
+      const r = el.getBoundingClientRect();
+      if (g.type === 'pinch' && e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const newDist = distance(t1, t2);
+        if (newDist === 0) return;
+        const cx = (t1.clientX + t2.clientX) / 2 - r.left;
+        const cy = (t1.clientY + t2.clientY) / 2 - r.top;
+        const ratio = newDist / g.startDist;
+        let newScale = g.startScale * ratio;
+        newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
+        const k = newScale / g.startScale;
+        const newTx = cx - (g.startCenterX - g.startTx) * k;
+        const newTy = cy - (g.startCenterY - g.startTy) * k;
+        setZoomState(clamp({ scale: newScale, tx: newTx, ty: newTy }));
+        e.preventDefault();
+        return;
+      }
+      if (g.type === 'pan' && e.touches.length === 1) {
+        const pan = g;
+        const t = e.touches[0];
+        const sx = t.clientX - r.left;
+        const sy = t.clientY - r.top;
+        setZoomState((prev) =>
+          clamp({
+            scale: prev.scale,
+            tx: pan.startTx + (sx - pan.startSX),
+            ty: pan.startTy + (sy - pan.startSY),
+          }),
+        );
+        e.preventDefault();
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!g) return;
+      // Lifting one finger of a pinch with one still down — convert to a
+      // 1-finger pan so the gesture flows uninterrupted (matches native
+      // iOS pinch+pan behaviour on Photos / Maps).
+      if (g.type === 'pinch' && e.touches.length === 1) {
+        const r = el.getBoundingClientRect();
+        const t = e.touches[0];
+        g = {
+          type: 'pan',
+          startSX: t.clientX - r.left,
+          startSY: t.clientY - r.top,
+          startTx: zoomRef.current.tx,
+          startTy: zoomRef.current.ty,
+        };
+        return;
+      }
+      if (e.touches.length === 0) g = null;
+    };
+
+    const onTouchCancel = () => {
+      g = null;
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: false });
+    el.addEventListener('touchcancel', onTouchCancel);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchCancel);
+    };
+  }, [tool]);
+
   // Preview is gated by drawMode — when the tool isn't "crop", the preview is
   // always hidden, even if draggingPreview state still holds the last drag
   // coordinates from before the tool changed. The next touchstart in a
@@ -305,8 +482,29 @@ export function PageCropOverlay({
     <div className="relative" data-page-id={pageId ?? undefined}>
       <div
         ref={containerRef}
-        className="relative select-none"
+        className={`relative w-full select-none rounded-lg overflow-hidden border ${
+          !imageUrl
+            ? 'bg-muted/40 border-border'
+            : drawMode && pageId
+              ? 'cursor-crosshair border-border'
+              : editingMode
+                ? 'border-border'
+                : 'border-dashed border-muted-foreground/30'
+        }`}
         style={{
+          aspectRatio:
+            imageUrl && naturalAspect ? `${naturalAspect}` : '3 / 4',
+          // Per-tool native-gesture policy:
+          //   crop   → none (1-finger draws; block native scroll/zoom)
+          //   adjust → pan-y (browser still scrolls the list with 1 finger;
+          //                   our JS captures 2-finger pinch and zoomed-pan)
+          //   resize/delete → auto (taps + native scroll fall through)
+          touchAction:
+            drawMode && imageUrl && pageId
+              ? 'none'
+              : tool === 'adjust' && imageUrl
+                ? 'pan-y'
+                : 'auto',
           WebkitUserSelect: 'none',
           WebkitTouchCallout: 'none',
         }}
@@ -328,102 +526,107 @@ export function PageCropOverlay({
           />
         )}
 
-        {/* SINGLE capture-and-image element. Previous design used a separate
-            transparent overlay for touches with the image rendered below it,
-            but the layered approach kept failing on Android — either
-            zero-sized capture div, ignored hit-testing, or the overlay
-            simply wasn't intercepting. By making the visible page itself the
-            element with the touch listeners, "if you can see the image, your
-            touch hits the listener" — no z-index/layering can fail. */}
+        {/* Zoom layer — wraps the image AND the crop rects so they zoom
+            together, keeping crops visually pinned to their pixels. The
+            transform is `none` whenever the tool isn't `adjust` or scale=1
+            so the existing crop draw / resize math (which reads bounding
+            rects) works as before. */}
         <div
-          ref={captureRef}
-          role={imageUrl ? 'img' : undefined}
-          aria-label={imageUrl ? `Page ${pageNumber}` : undefined}
-          className={`w-full rounded-lg border block ${
-            drawMode && imageUrl && pageId
-              ? 'cursor-crosshair border-border'
-              : editingMode
-                ? 'border-border'
-                : 'border-dashed border-muted-foreground/30'
-          } ${!imageUrl ? 'bg-muted/40 flex flex-col items-center justify-center gap-2 text-center px-4' : 'border-border'}`}
+          className="absolute inset-0"
           style={{
-            backgroundImage: imageUrl ? `url("${imageUrl}")` : undefined,
-            backgroundSize: '100% 100%',
-            backgroundRepeat: 'no-repeat',
-            aspectRatio:
-              imageUrl && naturalAspect ? `${naturalAspect}` : '3 / 4',
-            // touch-action: none disables browser scroll/zoom on this element
-            // so our touchmove listener gets all the events without competing
-            // with native gestures. Only enable when actively drawing — in
-            // adjust/resize/delete we want the page to scroll normally.
-            touchAction: drawMode && imageUrl && pageId ? 'none' : 'auto',
-            WebkitUserSelect: 'none',
-            WebkitTouchCallout: 'none',
-            userSelect: 'none',
+            transform: isZoomed
+              ? `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`
+              : undefined,
+            transformOrigin: '0 0',
+            willChange: isZoomed ? 'transform' : undefined,
           }}
         >
-          {!imageUrl && (
-            <>
-              <p className="text-sm font-medium text-muted-foreground pointer-events-none">
-                Page {pageNumber} not uploaded
-              </p>
-              <p className="text-[11px] text-muted-foreground/70 pointer-events-none max-w-[220px]">
-                Upload this page in Settings → Content tab, then return here to crop it.
-              </p>
-            </>
-          )}
-        </div>
+          {/* SINGLE capture-and-image element. The visible page itself has
+              the touch listeners — "if you can see the image, your touch
+              hits the listener" — so no z-index/layering can fail. The
+              <div> + background-image avoids the iOS image-callout that a
+              real <img> would trigger on long-press. */}
+          <div
+            ref={captureRef}
+            role={imageUrl ? 'img' : undefined}
+            aria-label={imageUrl ? `Page ${pageNumber}` : undefined}
+            className={`w-full h-full block ${
+              !imageUrl
+                ? 'flex flex-col items-center justify-center gap-2 text-center px-4'
+                : ''
+            }`}
+            style={{
+              backgroundImage: imageUrl ? `url("${imageUrl}")` : undefined,
+              backgroundSize: '100% 100%',
+              backgroundRepeat: 'no-repeat',
+              WebkitUserSelect: 'none',
+              WebkitTouchCallout: 'none',
+              userSelect: 'none',
+            }}
+          >
+            {!imageUrl && (
+              <>
+                <p className="text-sm font-medium text-muted-foreground pointer-events-none">
+                  Page {pageNumber} not uploaded
+                </p>
+                <p className="text-[11px] text-muted-foreground/70 pointer-events-none max-w-[220px]">
+                  Upload this page in Settings → Content tab, then return here to crop it.
+                </p>
+              </>
+            )}
+          </div>
 
-        {/* Existing crops — rendered AFTER the capture layer so they are
-            on top and receive their own taps when the active tool allows it. */}
-        {crops.map((c) => (
-          c.cropBox && (
-            <CropRect
-              key={c._id}
-              crop={c}
-              linkedExercise={c.linkedExerciseId ? exById[c.linkedExerciseId] : undefined}
-              tool={tool}
-              isSelected={selectedCropId === c._id}
-              isFlash={flashCropId === c._id}
-              labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
-              parentRef={captureRef}
-              onEdit={() => {
-                if (onCropTap) onCropTap(c._id);
-                else setEditCrop(c);
-              }}
-              onResize={async (newBox) => {
-                try {
-                  await updateMut({ id: c._id, cropBox: newBox });
-                } catch (err) {
-                  console.error(err);
-                  toast.error('Could not resize');
-                }
-              }}
-              onDelete={async () => {
-                if (!confirm('Delete this crop?')) return;
-                try {
-                  await removeMut({ id: c._id });
-                } catch (err) {
-                  console.error(err);
-                  toast.error('Could not delete');
-                }
+          {/* Existing crops — inside the zoom layer so they stay aligned
+              to image pixels at any scale. */}
+          {crops.map((c) => (
+            c.cropBox && (
+              <CropRect
+                key={c._id}
+                crop={c}
+                linkedExercise={c.linkedExerciseId ? exById[c.linkedExerciseId] : undefined}
+                tool={tool}
+                isSelected={selectedCropId === c._id}
+                isFlash={flashCropId === c._id}
+                labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
+                parentRef={captureRef}
+                onEdit={() => {
+                  if (onCropTap) onCropTap(c._id);
+                  else setEditCrop(c);
+                }}
+                onResize={async (newBox) => {
+                  try {
+                    await updateMut({ id: c._id, cropBox: newBox });
+                  } catch (err) {
+                    console.error(err);
+                    toast.error('Could not resize');
+                  }
+                }}
+                onDelete={async () => {
+                  if (!confirm('Delete this crop?')) return;
+                  try {
+                    await removeMut({ id: c._id });
+                  } catch (err) {
+                    console.error(err);
+                    toast.error('Could not delete');
+                  }
+                }}
+              />
+            )
+          ))}
+
+          {/* In-progress drag preview */}
+          {preview && preview.w >= 0.005 && preview.h >= 0.005 && (
+            <div
+              className="absolute border-2 border-primary bg-primary/15 rounded-sm pointer-events-none z-20"
+              style={{
+                left: `${preview.x * 100}%`,
+                top: `${preview.y * 100}%`,
+                width: `${preview.w * 100}%`,
+                height: `${preview.h * 100}%`,
               }}
             />
-          )
-        ))}
-
-        {/* In-progress drag preview */}
-        {preview && preview.w >= 0.005 && preview.h >= 0.005 && (
-          <div
-            className="absolute border-2 border-primary bg-primary/15 rounded-sm pointer-events-none z-20"
-            style={{
-              left: `${preview.x * 100}%`,
-              top: `${preview.y * 100}%`,
-              width: `${preview.w * 100}%`,
-              height: `${preview.h * 100}%`,
-            }}
-          />
-        )}
+          )}
+        </div>
       </div>
 
       {/* Edit link dialog */}
