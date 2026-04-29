@@ -121,14 +121,11 @@ export function PageCropOverlay({
   // elements. A hidden preloader <img> reports the natural aspect once loaded.
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
 
-  // Per-page pinch-zoom state. Held only while the user is in adjust mode;
-  // when the tool flips to anything else we *derive* an identity transform
-  // for rendering so the existing crop / resize math (which reads
-  // captureRef.getBoundingClientRect) sees an un-transformed image. Keeping
-  // the raw state around means switching back to adjust restores the
-  // previous zoom — friction-free if the user toggles tools mid-inspection.
+  // Per-page pinch-zoom state. Adjust mode is the only mode that changes
+  // this transform, but Crop / Resize / Delete render the same transform so
+  // the carefully-positioned zoom view persists while editing.
   const [zoomState, setZoomState] = useState({ scale: 1, tx: 0, ty: 0 });
-  const zoom = tool === 'adjust' ? zoomState : { scale: 1, tx: 0, ty: 0 };
+  const zoom = zoomState;
   const isZoomed = zoom.scale > 1.001;
   // Live mirror so the gesture handlers can snapshot the current transform
   // without forcing the listener-attaching effect to re-bind on every tick.
@@ -527,10 +524,9 @@ export function PageCropOverlay({
         )}
 
         {/* Zoom layer — wraps the image AND the crop rects so they zoom
-            together, keeping crops visually pinned to their pixels. The
-            transform is `none` whenever the tool isn't `adjust` or scale=1
-            so the existing crop draw / resize math (which reads bounding
-            rects) works as before. */}
+            together, keeping crops visually pinned to their pixels. Crop
+            draw / resize math reads the transformed bounding rect, so the
+            adjusted view can stay active while editing. */}
         <div
           className="absolute inset-0"
           style={{
