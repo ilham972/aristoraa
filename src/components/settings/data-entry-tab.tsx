@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import { ChevronLeft, Plus, Trash2, Scissors, List, Pencil } from 'lucide-react';
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { getUnitsForBook } from '@/lib/curriculum-data';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
@@ -98,6 +99,7 @@ export function DataEntryTab() {
 
   // === LAYER 4 — Concepts drawer ===
   const [conceptsDrawerUnit, setConceptsDrawerUnit] = useState<BookUnit | null>(null);
+  const [pagesDrawerUnit, setPagesDrawerUnit] = useState<BookUnit | null>(null);
 
   // === DERIVED ===
   const selectedBook = textbooks?.find(t => t._id === selectedBookId);
@@ -372,9 +374,9 @@ export function DataEntryTab() {
             variant="outline"
             size="sm"
             className="gap-1.5 shrink-0"
-            onClick={() => router.push(`/settings/crop/${detailUnit.id}`)}
+            onClick={() => setPagesDrawerUnit(detailUnit)}
           >
-            <Scissors className="w-3.5 h-3.5" />
+            <List className="w-3.5 h-3.5" />
             Pages
           </Button>
         </div>
@@ -738,18 +740,386 @@ export function DataEntryTab() {
       </Dialog>
 
       {/* ─── LAYER 4: Concepts Drawer ─── */}
-      <ConceptsUnitDrawer
-        open={!!conceptsDrawerUnit}
-        onOpenChange={(o) => { if (!o) setConceptsDrawerUnit(null); }}
-        unit={conceptsDrawerUnit}
-        unitMeta={conceptsDrawerUnit ? getUnitMeta(conceptsDrawerUnit.id) : undefined}
-        allExercises={allExercises || []}
-      />
-    </>
+        <ConceptsUnitDrawer
+          open={!!conceptsDrawerUnit}
+          onOpenChange={(o) => { if (!o) setConceptsDrawerUnit(null); }}
+          unit={conceptsDrawerUnit}
+          unitMeta={conceptsDrawerUnit ? getUnitMeta(conceptsDrawerUnit.id) : undefined}
+          allExercises={allExercises || []}
+        />
+
+        <PagesOverviewDrawer
+          open={!!pagesDrawerUnit}
+          onOpenChange={(o) => { if (!o) setPagesDrawerUnit(null); }}
+          unit={pagesDrawerUnit}
+          unitMeta={pagesDrawerUnit ? getUnitMeta(pagesDrawerUnit.id) : undefined}
+          textbook={selectedBook ?? null}
+        />
+      </>
+    );
+  }
+
+// ─── Sub-components ────────────────────────────
+
+type TextbookForPages = {
+  _id: Id<'textbooks'>;
+};
+
+type UnitMetaForPages = {
+  startPage?: number;
+  endPage?: number;
+};
+
+type PagePreviewCrop = {
+  _id: Id<'questionBank'>;
+  textbookPageId?: Id<'textbookPages'>;
+  cropBox?: { x: number; y: number; w: number; h: number };
+  linkedQuestionKey?: string;
+};
+
+function PagesOverviewDrawer({
+  open,
+  onOpenChange,
+  unit,
+  unitMeta,
+  textbook,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  unit: BookUnit | null;
+  unitMeta: UnitMetaForPages | undefined;
+  textbook: TextbookForPages | null;
+}) {
+  const startPage = unitMeta?.startPage;
+  const endPage = unitMeta?.endPage;
+  const canLoad =
+    open && !!unit && !!textbook && startPage != null && endPage != null;
+  const storageKey = unit ? `pagesOverview.${unit.id}.lastPage` : '';
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scaleRef = useRef(1);
+  const [scale, setScale] = useState(1);
+  const [currentPage, setCurrentPage] = useState<number | null>(null);
+
+  const pages = useQuery(
+    api.textbookPages.getPagesInRange,
+    canLoad
+      ? {
+          textbookId: textbook._id,
+          startPage,
+          endPage,
+        }
+      : 'skip',
+  );
+
+  const pageIds = useMemo(
+    () =>
+      (pages || [])
+        .map((p) => p.pageId)
+        .filter((id): id is Id<'textbookPages'> => !!id),
+    [pages],
+  );
+
+  const pageCrops = useQuery(
+    api.questionBank.listByPages,
+    open && pageIds.length > 0 ? { textbookPageIds: pageIds } : 'skip',
+  );
+
+  const cropsByPage = useMemo(() => {
+    const map = new Map<string, PagePreviewCrop[]>();
+    for (const crop of pageCrops || []) {
+      if (!crop.textbookPageId) continue;
+      const arr = map.get(crop.textbookPageId) || [];
+      arr.push(crop);
+      map.set(crop.textbookPageId, arr);
+    }
+    return map;
+  }, [pageCrops]);
+
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+
+  const savedPage = useMemo(() => {
+    if (!open || !unit) return null;
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = window.sessionStorage.getItem(storageKey);
+      const saved = raw ? Number(raw) : null;
+      return saved && !Number.isNaN(saved) ? saved : null;
+    } catch {
+      return null;
+    }
+  }, [open, unit, storageKey]);
+
+  const activePageNumber = useMemo(() => {
+    const currentExists =
+      currentPage != null && !!pages?.some((p) => p.pageNumber === currentPage);
+    if (currentExists) return currentPage;
+    const savedExists =
+      savedPage != null && !!pages?.some((p) => p.pageNumber === savedPage);
+    if (savedExists) return savedPage;
+    return startPage ?? null;
+  }, [currentPage, pages, savedPage, startPage]);
+  const restorePageNumber = savedPage ?? startPage ?? null;
+
+  useEffect(() => {
+    if (!open || !pages || pages.length === 0 || restorePageNumber == null) return;
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      const pageEl = el?.querySelector<HTMLElement>(
+        `[data-overview-page="${restorePageNumber}"]`,
+      );
+      if (!el || !pageEl) return;
+      el.scrollTo({ top: pageEl.offsetTop - 12, behavior: 'auto' });
+    });
+  }, [open, pages, restorePageNumber]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const updateCurrentPage = () => {
+      const pageEls = Array.from(
+        el.querySelectorAll<HTMLElement>('[data-overview-page]'),
+      );
+      if (pageEls.length === 0) return;
+      const viewportCenter = el.getBoundingClientRect().top + el.clientHeight * 0.38;
+      let bestPage = Number(pageEls[0].dataset.overviewPage);
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const pageEl of pageEls) {
+        const rect = pageEl.getBoundingClientRect();
+        const distanceFromCenter = Math.abs(rect.top - viewportCenter);
+        if (distanceFromCenter < bestDistance) {
+          bestDistance = distanceFromCenter;
+          bestPage = Number(pageEl.dataset.overviewPage);
+        }
+      }
+      if (!Number.isNaN(bestPage)) {
+        setCurrentPage(bestPage);
+        try {
+          window.sessionStorage.setItem(storageKey, String(bestPage));
+        } catch {
+          // Ignore session storage failures.
+        }
+      }
+    };
+
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(updateCurrentPage);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    raf = requestAnimationFrame(updateCurrentPage);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener('scroll', onScroll);
+    };
+  }, [open, storageKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const distance = (a: Touch, b: Touch) =>
+      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    let pinch:
+      | {
+          startDist: number;
+          startScale: number;
+          centerX: number;
+          centerY: number;
+          contentX: number;
+          contentY: number;
+        }
+      | null = null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      const rect = el.getBoundingClientRect();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const centerX = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const centerY = (t1.clientY + t2.clientY) / 2 - rect.top;
+      const startScale = scaleRef.current;
+      pinch = {
+        startDist: distance(t1, t2),
+        startScale,
+        centerX,
+        centerY,
+        contentX: (el.scrollLeft + centerX) / startScale,
+        contentY: (el.scrollTop + centerY) / startScale,
+      };
+      e.preventDefault();
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinch || e.touches.length !== 2) return;
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const nextScale = Math.max(
+        1,
+        Math.min(4, pinch.startScale * (distance(t1, t2) / pinch.startDist)),
+      );
+      scaleRef.current = nextScale;
+      setScale(nextScale);
+      el.scrollLeft = pinch.contentX * nextScale - pinch.centerX;
+      el.scrollTop = pinch.contentY * nextScale - pinch.centerY;
+      e.preventDefault();
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinch = null;
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [open]);
+
+  const contentStyle = { zoom: scale } as CSSProperties & { zoom: number };
+
+  return (
+    <Drawer direction="right" open={open} onOpenChange={onOpenChange}>
+      <DrawerContent className="sm:max-w-lg">
+        <DrawerHeader className="border-b border-border/50">
+          <DrawerTitle className="text-sm truncate">
+            {unit ? `Unit ${unit.number}: Pages` : 'Pages'}
+            {activePageNumber != null && (
+              <span className="ml-2 font-normal text-muted-foreground">
+                p. {activePageNumber}
+              </span>
+            )}
+          </DrawerTitle>
+        </DrawerHeader>
+
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-auto bg-muted/30 px-3 py-3"
+          style={{ touchAction: 'pan-x pan-y' }}
+        >
+          {!canLoad ? (
+            <div className="rounded-lg border border-dashed border-border bg-background px-4 py-8 text-center">
+              <p className="text-xs text-muted-foreground">
+                Set this unit&apos;s page range first.
+              </p>
+            </div>
+          ) : !pages ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="aspect-[3/4] rounded-lg bg-muted animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="origin-top-left space-y-3" style={contentStyle}>
+              {pages.map((page) => (
+                <ReadOnlyPagePreview
+                  key={page.pageNumber}
+                  pageNumber={page.pageNumber}
+                  imageUrl={page.url}
+                  crops={
+                    page.pageId ? cropsByPage.get(page.pageId) || [] : []
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </DrawerContent>
+    </Drawer>
   );
 }
 
-// ─── Sub-components ────────────────────────────
+function ReadOnlyPagePreview({
+  pageNumber,
+  imageUrl,
+  crops,
+}: {
+  pageNumber: number;
+  imageUrl: string | null;
+  crops: PagePreviewCrop[];
+}) {
+  return (
+    <div
+      data-overview-page={pageNumber}
+      className="rounded-lg border border-border bg-background overflow-hidden shadow-sm"
+    >
+      <div className="px-2.5 py-1.5 border-b border-border/50 flex items-center justify-between">
+        <span className="text-[11px] font-medium text-muted-foreground">
+          Page {pageNumber}
+        </span>
+        {crops.length > 0 && (
+          <span className="text-[10px] text-emerald-600 font-medium">
+            {crops.length} crops
+          </span>
+        )}
+      </div>
+      <div className="relative bg-muted/40">
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imageUrl}
+            alt={`Page ${pageNumber}`}
+            loading="lazy"
+            decoding="async"
+            className="block w-full select-none"
+            draggable={false}
+          />
+        ) : (
+          <div className="aspect-[3/4] flex items-center justify-center px-4 text-center">
+            <p className="text-xs text-muted-foreground">
+              Page image not uploaded
+            </p>
+          </div>
+        )}
+
+        {imageUrl &&
+          crops.map((crop) => {
+            const box = crop.cropBox;
+            if (!box) return null;
+            const label = crop.linkedQuestionKey || 'unlinked';
+            const linked = !!crop.linkedQuestionKey;
+            return (
+              <div
+                key={crop._id}
+                className={`absolute rounded-sm border-2 ${
+                  linked
+                    ? 'border-emerald-500 bg-emerald-500/10'
+                    : 'border-amber-500 bg-amber-500/10'
+                }`}
+                style={{
+                  left: `${box.x * 100}%`,
+                  top: `${box.y * 100}%`,
+                  width: `${box.w * 100}%`,
+                  height: `${box.h * 100}%`,
+                }}
+              >
+                <span
+                  className={`absolute left-0 top-0 -translate-y-full rounded-t px-1 py-0.5 text-[9px] font-bold ${
+                    linked
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-amber-500 text-white'
+                  }`}
+                >
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+      </div>
+    </div>
+  );
+}
 
 function AddTheoryButton({ onClick }: { onClick: () => void }) {
   return (

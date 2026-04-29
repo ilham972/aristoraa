@@ -2,11 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useMutation } from 'convex/react';
-import { X, Link2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { X } from 'lucide-react';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
@@ -90,19 +86,13 @@ export function PageCropOverlay({
   // per-rect inside CropRect, not here.
   const drawMode = tool === 'crop';
   const deleteMode = tool === 'delete';
-  const createMut = useMutation(api.questionBank.create);
   const removeMut = useMutation(api.questionBank.remove);
   const updateMut = useMutation(api.questionBank.update);
-  const clearLinkMut = useMutation(api.questionBank.clearLink);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
   // Drag state in a ref so re-renders don't wipe it.
   const dragRef = useRef<{ startX: number; startY: number; touchId: number | null } | null>(null);
-  // Mutation kept in a ref so the listener-attaching effect doesn't tear down
-  // and re-attach every render (Convex's useMutation can return new refs).
-  const createMutRef = useRef(createMut);
-  useEffect(() => { createMutRef.current = createMut; }, [createMut]);
   // Same ref-pattern for the parent-owned save callback so the listener
   // effect doesn't tear down on every render of the parent.
   const onDrawCompleteRef = useRef(onDrawComplete);
@@ -111,7 +101,6 @@ export function PageCropOverlay({
   const [draggingPreview, setDraggingPreview] = useState<null | {
     startX: number; startY: number; endX: number; endY: number;
   }>(null);
-  const [editCrop, setEditCrop] = useState<QuestionBankRow | null>(null);
   // Natural aspect ratio of the page image (width / height). We render the
   // visible page as a <div> with `background-image` to bypass Android Chrome's
   // image context-menu (long-press save/share), which only fires on real <img>
@@ -143,9 +132,8 @@ export function PageCropOverlay({
   //      the image gesture recogniser kept stealing the touch.
   //   2. Native addEventListener with { passive: false } lets us preventDefault
   //      on touchstart and touchmove, which iOS respects.
-  // Effect deps are only [drawMode, pageId, imageUrl] — createMutRef stays
-  // stable so the effect doesn't tear down listeners mid-gesture. Listeners
-  // attach only in `crop` tool mode; resize/delete use their own rect controls.
+  // Effect deps are only [drawMode, pageId, imageUrl]. Listeners attach only
+  // in `crop` tool mode; resize/delete use their own rect controls.
   useEffect(() => {
     if (!drawMode) return;
     // Listener attaches whenever there's an image to crop. We don't gate on
@@ -185,21 +173,10 @@ export function PageCropOverlay({
         toast.error('Backend out of date — run `npx convex deploy`');
         return;
       }
-      // Fast-mode: parent owns the save (it knows the active question key
-      // from its pill header and auto-advances after).
       if (onDrawCompleteRef.current) {
         onDrawCompleteRef.current({ x, y, w, h });
         return;
       }
-      // Legacy mode: overlay saves directly with no link.
-      createMutRef.current({
-        source: 'textbook',
-        textbookPageId: pageId,
-        cropBox: { x, y, w, h },
-      }).catch((err) => {
-        console.error(err);
-        toast.error('Could not save crop');
-      });
     };
 
     // ── Touch (mobile) ─────────────────────────────
@@ -539,7 +516,6 @@ export function PageCropOverlay({
                 zoomScale={zoom.scale}
                 onEdit={() => {
                   if (onCropTap) onCropTap(c._id);
-                  else setEditCrop(c);
                 }}
                 onResize={async (newBox) => {
                   try {
@@ -550,7 +526,6 @@ export function PageCropOverlay({
                   }
                 }}
                 onDelete={async () => {
-                  if (!confirm('Delete this crop?')) return;
                   try {
                     await removeMut({ id: c._id });
                   } catch (err) {
@@ -576,36 +551,6 @@ export function PageCropOverlay({
           )}
         </div>
       </div>
-
-      {/* Edit link dialog */}
-      <CropLinkDialog
-        open={!!editCrop}
-        onOpenChange={(o) => { if (!o) setEditCrop(null); }}
-        crop={editCrop}
-        unitExercises={unitExercises}
-        onSave={async (payload) => {
-          if (!editCrop) return;
-          try {
-            await updateMut({ id: editCrop._id, ...payload });
-            toast.success('Link saved');
-            setEditCrop(null);
-          } catch (err) {
-            console.error(err);
-            toast.error('Could not save');
-          }
-        }}
-        onClear={async () => {
-          if (!editCrop) return;
-          try {
-            await clearLinkMut({ id: editCrop._id });
-            toast.success('Link cleared');
-            setEditCrop(null);
-          } catch (err) {
-            console.error(err);
-            toast.error('Could not clear');
-          }
-        }}
-      />
     </div>
   );
 }
@@ -837,146 +782,5 @@ function CropRect({
         );
       })}
     </div>
-  );
-}
-
-// ─── Edit link dialog ───
-
-function CropLinkDialog({
-  open,
-  onOpenChange,
-  crop,
-  unitExercises,
-  onSave,
-  onClear,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  crop: QuestionBankRow | null;
-  unitExercises: UnitExercise[];
-  onSave: (payload: {
-    linkedExerciseId?: Id<'exercises'>;
-    linkedQuestionKey?: string;
-  }) => Promise<void>;
-  onClear: () => Promise<void>;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm mx-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-1.5">
-            <Link2 className="w-4 h-4" />
-            Link crop to exercise
-          </DialogTitle>
-        </DialogHeader>
-        {/* Body remounts per crop via the key prop, so its useState
-            initialisers seed from the latest crop without an effect. */}
-        {crop && (
-          <CropLinkDialogBody
-            key={crop._id}
-            crop={crop}
-            unitExercises={unitExercises}
-            onSave={onSave}
-            onClear={onClear}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CropLinkDialogBody({
-  crop,
-  unitExercises,
-  onSave,
-  onClear,
-}: {
-  crop: QuestionBankRow;
-  unitExercises: UnitExercise[];
-  onSave: (payload: {
-    linkedExerciseId?: Id<'exercises'>;
-    linkedQuestionKey?: string;
-  }) => Promise<void>;
-  onClear: () => Promise<void>;
-}) {
-  const [exerciseId, setExerciseId] = useState<Id<'exercises'> | ''>(crop.linkedExerciseId ?? '');
-  const [questionKey, setQuestionKey] = useState(crop.linkedQuestionKey ?? '');
-
-  const exerciseRows = unitExercises
-    .filter((e) => (e.type ?? 'exercise') === 'exercise')
-    .sort((a, b) => a.order - b.order);
-
-  const picked = exerciseId ? unitExercises.find((e) => e._id === exerciseId) : null;
-
-  return (
-    <>
-      <div className="space-y-3">
-        <div>
-          <Label className="text-xs">Exercise</Label>
-            <div className="grid grid-cols-5 gap-1 mt-1 max-h-[200px] overflow-y-auto">
-              {exerciseRows.length === 0 ? (
-                <p className="col-span-5 text-[11px] text-muted-foreground py-2 text-center">
-                  No exercises in this unit. Add them first in Exercises subtab.
-                </p>
-              ) : (
-                exerciseRows.map((ex) => {
-                  const selected = exerciseId === ex._id;
-                  return (
-                    <button
-                      key={ex._id}
-                      onClick={() => setExerciseId(selected ? '' : ex._id)}
-                      className={`h-9 rounded-lg text-xs font-mono font-bold transition-all ${
-                        selected
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted hover:bg-muted/80 text-foreground'
-                      }`}
-                      title={ex.name}
-                    >
-                      {ex.name.replace(/^\d+\./, '')}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div>
-            <Label className="text-xs">
-              Question key
-              {picked && (
-                <span className="text-muted-foreground ml-1">
-                  (1–{picked.questionCount || '?'} or e.g. 2.a, 3.iii)
-                </span>
-              )}
-            </Label>
-            <Input
-              value={questionKey}
-              onChange={(e) => setQuestionKey(e.target.value)}
-              placeholder="e.g. 3 or 2.a"
-              className="mt-1 font-mono text-sm"
-            />
-          </div>
-
-        <div className="flex gap-2 pt-1">
-          <Button
-            variant="outline"
-            onClick={onClear}
-            className="shrink-0"
-            disabled={!crop.linkedExerciseId}
-          >
-            Clear link
-          </Button>
-          <Button
-            onClick={() => onSave({
-              linkedExerciseId: exerciseId || undefined,
-              linkedQuestionKey: questionKey.trim() || undefined,
-            })}
-            className="flex-1"
-          >
-            Save
-          </Button>
-        </div>
-      </div>
-    </>
   );
 }

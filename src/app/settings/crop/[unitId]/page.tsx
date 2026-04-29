@@ -348,7 +348,6 @@ export default function UnitCropPage() {
   // overlay already runs its own delete via the X button it renders.
   const handleCropDelete = useCallback(
     async (cropId: Id<'questionBank'>) => {
-      if (!confirm('Delete this crop?')) return;
       try {
         await removeMut({ id: cropId });
         setSelectedCropId((cur) => (cur === cropId ? null : cur));
