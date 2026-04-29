@@ -536,6 +536,7 @@ export function PageCropOverlay({
                 isFlash={flashCropId === c._id}
                 labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
                 parentRef={captureRef}
+                zoomScale={zoom.scale}
                 onEdit={() => {
                   if (onCropTap) onCropTap(c._id);
                   else setEditCrop(c);
@@ -627,6 +628,7 @@ function CropRect({
   isFlash,
   labelOverride,
   parentRef,
+  zoomScale,
   onEdit,
   onResize,
   onDelete,
@@ -638,17 +640,18 @@ function CropRect({
   isFlash?: boolean;
   labelOverride?: string;
   parentRef?: React.RefObject<HTMLDivElement | null>;
+  zoomScale: number;
   onEdit: () => void;
   onResize?: (box: CropBox) => void | Promise<void>;
   onDelete: () => void;
 }) {
   // Per-tool interactivity:
-  //   - resize/delete:  pointer events ON, taps reach the rect.
-  //   - crop:           pointer events OFF, the rect is purely visual so
-  //                     scrolling and drawing pass through unimpeded.
-  const interactive = tool === 'resize' || tool === 'delete';
+  //   - crop/resize: taps select the rect and sync the active question pill.
+  //   - delete: red X handles deletion.
+  const interactive = tool === 'crop' || tool === 'resize' || tool === 'delete';
   const showHandles = tool === 'resize' && !!isSelected;
   const showDeleteX = tool === 'delete';
+  const invZoom = 1 / Math.max(1, zoomScale);
   const savedBox = crop.cropBox!;
   // Optimistic resize override. We tag the override with the savedBox values
   // it was last applied against; once the server echoes back a different
@@ -664,7 +667,7 @@ function CropRect({
 
   const isLinked = !!crop.linkedExerciseId;
   const defaultLabel = isLinked && linkedExercise
-    ? `${linkedExercise.name}${crop.linkedQuestionKey ? ` Q${crop.linkedQuestionKey}` : ''}`
+    ? `${linkedExercise.name}${crop.linkedQuestionKey ? ` ${crop.linkedQuestionKey}` : ''}`
     : 'unlinked';
   const label = labelOverride ?? defaultLabel;
   const colorClasses = isFlash
@@ -760,10 +763,10 @@ function CropRect({
         height: `${b.h * 100}%`,
       }}
       onClick={(e) => {
-        // Only Resize mode treats a tap on the body as "select for editing".
-        // Delete mode handles its action via the dedicated X button so a
-        // misfired body-tap doesn't accidentally remove a crop.
-        if (tool !== 'resize') return;
+        // Crop and Resize mode both let a tap select the rect. In Crop mode
+        // this is mainly for syncing the active question pill; in Resize it
+        // also exposes the handles.
+        if (tool !== 'crop' && tool !== 'resize') return;
         e.stopPropagation();
         onEdit();
       }}
@@ -802,6 +805,8 @@ function CropRect({
       {showHandles && HANDLE_KINDS.map((h) => {
         const isTop = h === 'tl' || h === 'tr';
         const isLeft = h === 'tl' || h === 'bl';
+        const sizePx = 10 * invZoom;
+        const offset = -sizePx / 2;
         return (
           <div
             key={h}
@@ -816,12 +821,14 @@ function CropRect({
               e.stopPropagation();
               startResize(h);
             }}
-            className="absolute w-4 h-4 rounded-sm bg-sky-400 border border-white shadow-sm cursor-nwse-resize"
+            className="absolute rounded-[3px] bg-sky-400 border border-white shadow-sm cursor-nwse-resize"
             style={{
-              left: isLeft ? -8 : undefined,
-              right: !isLeft ? -8 : undefined,
-              top: isTop ? -8 : undefined,
-              bottom: !isTop ? -8 : undefined,
+              left: isLeft ? offset : undefined,
+              right: !isLeft ? offset : undefined,
+              top: isTop ? offset : undefined,
+              bottom: !isTop ? offset : undefined,
+              width: sizePx,
+              height: sizePx,
               cursor:
                 h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
               touchAction: 'none',

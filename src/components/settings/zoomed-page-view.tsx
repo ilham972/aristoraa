@@ -211,6 +211,7 @@ export function ZoomedPageView({
       // a handle tap would also start a pan/crop gesture on the page.
       const target = e.target as HTMLElement | null;
       if (target?.closest('[data-resize-handle]')) return;
+      if (drawMode && target?.closest('[data-crop-rect]')) return;
       const r = rectOf();
       const tr = transformRef.current;
       if (e.touches.length === 2) {
@@ -410,6 +411,7 @@ export function ZoomedPageView({
       // Same ancestor-listener bail-out as the touch path.
       const target = e.target as HTMLElement | null;
       if (target?.closest('[data-resize-handle]')) return;
+      if (drawMode && target?.closest('[data-crop-rect]')) return;
       const r = el.getBoundingClientRect();
       const sx = e.clientX - r.left;
       const sy = e.clientY - r.top;
@@ -602,7 +604,7 @@ export function ZoomedPageView({
                   <CropRectZ
                     key={c._id}
                     crop={c}
-                    label={cropLabelFor ? cropLabelFor(c) : c.linkedQuestionKey ? `Q${c.linkedQuestionKey}` : 'unlinked'}
+                    label={cropLabelFor ? cropLabelFor(c) : c.linkedQuestionKey ? c.linkedQuestionKey : 'unlinked'}
                     isSelected={selectedCropId === c._id}
                     isFlash={flashCropId === c._id}
                     invScale={1 / scale}
@@ -681,13 +683,11 @@ function CropRectZ({
   onDelete?: () => void;
 }) {
   // Per-tool interactivity:
-  //   - resize: show handles on the selected rect, body-tap selects.
+  //   - crop/resize: body-tap selects and syncs the active question pill.
   //   - delete: show the red X badge.
-  //   - crop: rect is purely visual (pointer-events:none) so the parent's
-  //           draw gesture can capture freely.
   const showHandles = tool === 'resize' && isSelected;
   const showDeleteX = tool === 'delete';
-  const interactive = tool === 'resize' || tool === 'delete';
+  const interactive = tool === 'crop' || tool === 'resize' || tool === 'delete';
   const savedBox = crop.cropBox!;
   // Optimistic resize override, tagged with the savedBox values it was
   // applied against. Once the server echoes a different savedBox the tag
@@ -791,6 +791,7 @@ function CropRectZ({
 
   return (
     <div
+      data-crop-rect="1"
       className={`absolute rounded-sm transition-colors ${baseColor} ${
         isFlash ? 'animate-pulse' : ''
       }`}
@@ -810,7 +811,7 @@ function CropRectZ({
         pointerEvents: interactive ? 'auto' : 'none',
       }}
       onClick={(e) => {
-        if (tool !== 'resize') return;
+        if (tool !== 'crop' && tool !== 'resize') return;
         e.stopPropagation();
         onTap();
       }}
@@ -883,8 +884,8 @@ function CropRectZ({
         HANDLE_KINDS_Z.map((h) => {
           const isTop = h === 'tl' || h === 'tr';
           const isLeft = h === 'tl' || h === 'bl';
-          // 16-CSS-px target counter-scaled to fight the parent transform.
-          const sizePx = 16 * handleScale;
+          // 10-CSS-px target counter-scaled to fight the parent transform.
+          const sizePx = 10 * handleScale;
           const offset = -sizePx / 2;
           return (
             <div

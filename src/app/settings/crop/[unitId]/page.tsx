@@ -388,7 +388,7 @@ export default function UnitCropPage() {
 
   const cropLabelFor = useCallback(
     (c: { linkedQuestionKey?: string }) =>
-      c.linkedQuestionKey ? `Q${c.linkedQuestionKey}` : 'unlinked',
+      c.linkedQuestionKey ? c.linkedQuestionKey : 'unlinked',
     [],
   );
 
