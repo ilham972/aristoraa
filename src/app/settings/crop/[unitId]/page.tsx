@@ -306,8 +306,10 @@ export default function UnitCropPage() {
         const next = nextCropKey(currentKey, allKeys);
         if (next) setUserKey(next);
       } catch (err) {
-        console.error(err);
-        toast.error('Could not save crop');
+        console.error('[upsertForExerciseKey]', err);
+        const msg =
+          err instanceof Error ? err.message : 'Could not save crop';
+        toast.error(`Save failed: ${msg}`);
       }
     },
     [isFastMode, exerciseId, currentKey, allKeys, upsertForKeyMut],
@@ -385,8 +387,10 @@ export default function UnitCropPage() {
           setSelectedCropId(null);
           setUserKey(key);
         } catch (err) {
-          console.error(err);
-          toast.error('Could not re-key');
+          console.error('[rekeyToExerciseKey]', err);
+          const msg =
+            err instanceof Error ? err.message : 'Could not re-key';
+          toast.error(`Re-key failed: ${msg}`);
         }
       } else {
         setUserKey(key);

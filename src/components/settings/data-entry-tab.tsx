@@ -556,6 +556,13 @@ export function DataEntryTab() {
           </DialogContent>
         </Dialog>
 
+        <PagesOverviewDrawer
+          open={!!pagesDrawerUnit}
+          onOpenChange={(o) => { if (!o) setPagesDrawerUnit(null); }}
+          unit={pagesDrawerUnit}
+          unitMeta={pagesDrawerUnit ? getUnitMeta(pagesDrawerUnit.id) : undefined}
+          textbook={selectedBook ?? null}
+        />
       </>
     );
   }
