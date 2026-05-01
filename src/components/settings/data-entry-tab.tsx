@@ -1035,7 +1035,9 @@ function PagesOverviewDrawer({
                   pageNumber={page.pageNumber}
                   imageUrl={page.url}
                   crops={
-                    page.pageId ? cropsByPage.get(page.pageId) || [] : []
+                    (page.pageId ? cropsByPage.get(page.pageId) || [] : []).filter(
+                      (c) => !!c.linkedQuestionKey,
+                    )
                   }
                 />
               ))}
@@ -1094,16 +1096,10 @@ function ReadOnlyPagePreview({
           crops.map((crop) => {
             const box = crop.cropBox;
             if (!box) return null;
-            const label = crop.linkedQuestionKey || 'unlinked';
-            const linked = !!crop.linkedQuestionKey;
             return (
               <div
                 key={crop._id}
-                className={`absolute rounded-sm border-2 ${
-                  linked
-                    ? 'border-emerald-500 bg-emerald-500/10'
-                    : 'border-amber-500 bg-amber-500/10'
-                }`}
+                className="absolute rounded-sm border-2 border-emerald-500 bg-emerald-500/10"
                 style={{
                   left: `${box.x * 100}%`,
                   top: `${box.y * 100}%`,
@@ -1111,14 +1107,8 @@ function ReadOnlyPagePreview({
                   height: `${box.h * 100}%`,
                 }}
               >
-                <span
-                  className={`absolute left-0 top-0 -translate-y-full rounded-t px-1 py-0.5 text-[9px] font-bold ${
-                    linked
-                      ? 'bg-emerald-500 text-white'
-                      : 'bg-amber-500 text-white'
-                  }`}
-                >
-                  {label}
+                <span className="absolute left-0 top-0 -translate-y-full rounded-t px-1 py-0.5 text-[9px] font-bold bg-emerald-500 text-white">
+                  {crop.linkedQuestionKey}
                 </span>
               </div>
             );
