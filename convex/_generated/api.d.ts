@@ -16,6 +16,8 @@ import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as lead from "../lead.js";
 import type * as migrations from "../migrations.js";
+import type * as pastPaperPages from "../pastPaperPages.js";
+import type * as pastPapers from "../pastPapers.js";
 import type * as questionBank from "../questionBank.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
@@ -47,6 +49,8 @@ declare const fullApi: ApiFromModules<{
   exercises: typeof exercises;
   lead: typeof lead;
   migrations: typeof migrations;
+  pastPaperPages: typeof pastPaperPages;
+  pastPapers: typeof pastPapers;
   questionBank: typeof questionBank;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;

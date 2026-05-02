@@ -28,7 +28,9 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(cat .env)",
-      "Bash(cat vercel.json)"
+      "Bash(cat vercel.json)",
+      "Bash(git commit -m 'Update data entry tab *)",
+      "Bash(git commit -m 'Update settings and generated API types *)"
     ]
   }
 }
