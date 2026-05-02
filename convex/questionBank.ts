@@ -41,6 +41,122 @@ export const listByPages = query({
   },
 });
 
+export const listByPaper = query({
+  args: { pastPaperId: v.id("pastPapers") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("questionBank")
+      .withIndex("by_past_paper", (q) => q.eq("pastPaperId", args.pastPaperId))
+      .collect();
+  },
+});
+
+// All crops for a set of pastPaperPage IDs — used to render overlays across
+// all pages of a paper in one query instead of one-per-page.
+export const listByPaperPages = query({
+  args: { pastPaperPageIds: v.array(v.id("pastPaperPages")) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const rows = await Promise.all(
+      args.pastPaperPageIds.map((id) =>
+        ctx.db
+          .query("questionBank")
+          .withIndex("by_past_paper_page", (q) => q.eq("pastPaperPageId", id))
+          .collect(),
+      ),
+    );
+    return rows.flat();
+  },
+});
+
+// All past-paper crops across all papers — used for per-paper crop count
+// badges in the Data Entry → Past Papers list.
+export const listAllPastPaperCrops = query({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("questionBank")
+      .withIndex("by_source", (q) => q.eq("source", "past-paper"))
+      .collect();
+  },
+});
+
+// Strict 1:1 between (pastPaperId, questionNumberInPaper) and a crop. The
+// crop UI calls this whenever the user draws a rect. If a crop already exists
+// at that key it's overwritten in place; any duplicates are deleted so the
+// data heals as the user re-cuts each question. Always returns the surviving
+// crop's id.
+export const upsertForPaperQuestion = mutation({
+  args: {
+    pastPaperId: v.id("pastPapers"),
+    questionNumberInPaper: v.string(),
+    pastPaperPageId: v.id("pastPaperPages"),
+    cropBox: cropBoxValidator,
+    marksAvailable: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db
+      .query("questionBank")
+      .withIndex("by_past_paper", (q) => q.eq("pastPaperId", args.pastPaperId))
+      .filter((q) =>
+        q.eq(q.field("questionNumberInPaper"), args.questionNumberInPaper),
+      )
+      .collect();
+    if (existing.length === 0) {
+      return await ctx.db.insert("questionBank", {
+        source: "past-paper",
+        pastPaperId: args.pastPaperId,
+        pastPaperPageId: args.pastPaperPageId,
+        questionNumberInPaper: args.questionNumberInPaper,
+        cropBox: args.cropBox,
+        marksAvailable: args.marksAvailable,
+        createdAt: Date.now(),
+      });
+    }
+    const [keep, ...dupes] = existing;
+    await ctx.db.patch(keep._id, {
+      cropBox: args.cropBox,
+      pastPaperPageId: args.pastPaperPageId,
+      marksAvailable: args.marksAvailable,
+    });
+    for (const d of dupes) await ctx.db.delete(d._id);
+    return keep._id;
+  },
+});
+
+// Re-key the given crop to a different questionNumberInPaper, deleting any
+// existing crop already at the target key to keep the 1:1 invariant.
+export const rekeyToPaperQuestion = mutation({
+  args: {
+    id: v.id("questionBank"),
+    pastPaperId: v.id("pastPapers"),
+    questionNumberInPaper: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db
+      .query("questionBank")
+      .withIndex("by_past_paper", (q) => q.eq("pastPaperId", args.pastPaperId))
+      .filter((q) =>
+        q.eq(q.field("questionNumberInPaper"), args.questionNumberInPaper),
+      )
+      .collect();
+    for (const e of existing) {
+      if (e._id !== args.id) await ctx.db.delete(e._id);
+    }
+    await ctx.db.patch(args.id, {
+      questionNumberInPaper: args.questionNumberInPaper,
+    });
+  },
+});
+
 export const listByLinkedExercise = query({
   args: { exerciseId: v.id("exercises") },
   handler: async (ctx, args) => {
@@ -76,7 +192,7 @@ export const listByLinkedExercises = query({
 
 export const create = mutation({
   args: {
-    source: v.string(), // "textbook" for now
+    source: v.string(), // "textbook" | "past-paper" | "teacher-authored"
     textbookPageId: v.optional(v.id("textbookPages")),
     cropBox: v.optional(cropBoxValidator),
     linkedExerciseId: v.optional(v.id("exercises")),
@@ -84,6 +200,11 @@ export const create = mutation({
     difficulty: v.optional(v.number()),
     answerKey: v.optional(v.string()),
     expectedTimeMin: v.optional(v.number()),
+    // Past-paper provenance (Phase 0.5)
+    pastPaperId: v.optional(v.id("pastPapers")),
+    pastPaperPageId: v.optional(v.id("pastPaperPages")),
+    marksAvailable: v.optional(v.number()),
+    questionNumberInPaper: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -181,6 +302,11 @@ export const update = mutation({
     difficulty: v.optional(v.number()),
     answerKey: v.optional(v.string()),
     expectedTimeMin: v.optional(v.number()),
+    // Past-paper provenance (Phase 0.5)
+    pastPaperId: v.optional(v.id("pastPapers")),
+    pastPaperPageId: v.optional(v.id("pastPaperPages")),
+    marksAvailable: v.optional(v.number()),
+    questionNumberInPaper: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();

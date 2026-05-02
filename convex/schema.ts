@@ -157,6 +157,33 @@ export default defineSchema({
     .index("by_textbook", ["textbookId"])
     .index("by_textbook_page", ["textbookId", "pageNumber"]),
 
+  // ─── Past exam papers (Phase 0.5) ─────────────────────────────────────────
+  // Source for exam-blueprint importance weighting (Phase B) and calibration
+  // loop (Phase F). Current-term papers are marked isHoldout=true and NEVER
+  // fed to the algorithm; old papers are training signal.
+  pastPapers: defineTable({
+    grade: v.number(),                         // 6..11
+    term: v.number(),                          // 1 | 2 | 3
+    year: v.number(),
+    schoolName: v.optional(v.string()),        // undefined = own / centre paper
+    totalPages: v.number(),
+    useAsTrainingSignal: v.boolean(),          // user-set; default true for old/school papers
+    isHoldout: v.boolean(),                    // true = current term's own paper, never feeds algorithm
+    totalMarks: v.optional(v.number()),
+    uploadedAt: v.number(),
+  })
+    .index("by_grade_term_year", ["grade", "term", "year"])
+    .index("by_training_signal", ["useAsTrainingSignal"])
+    .index("by_grade", ["grade"]),
+
+  pastPaperPages: defineTable({
+    pastPaperId: v.id("pastPapers"),
+    pageNumber: v.number(),
+    storageId: v.id("_storage"),
+  })
+    .index("by_paper", ["pastPaperId"])
+    .index("by_paper_page", ["pastPaperId", "pageNumber"]),
+
   // Doubts queue surfaced on the Lead's dashboard.
   // Sources:
   //   "correction"  — Correction Officer flagged a wrong answer as "needs explanation"
@@ -208,11 +235,18 @@ export default defineSchema({
     // linkedQuestionKey matches entries.questions keys ("1", "3.a", "5.iii").
     linkedExerciseId: v.optional(v.id("exercises")),
     linkedQuestionKey: v.optional(v.string()),
+    // Past-paper provenance (Phase 0.5). Populated when source === "past-paper".
+    pastPaperId: v.optional(v.id("pastPapers")),
+    pastPaperPageId: v.optional(v.id("pastPaperPages")),
+    marksAvailable: v.optional(v.number()),        // marks this question is worth in the paper
+    questionNumberInPaper: v.optional(v.string()),  // "1.a", "5.iii" — free-text from user
     createdAt: v.number(),
   })
     .index("by_source", ["source"])
     .index("by_textbook_page", ["textbookPageId"])
-    .index("by_linked_exercise", ["linkedExerciseId"]),
+    .index("by_linked_exercise", ["linkedExerciseId"])
+    .index("by_past_paper", ["pastPaperId"])
+    .index("by_past_paper_page", ["pastPaperPageId"]),
 
   // Many-to-many join tagging questionBank rows with concept-type exercises.
   // A "concept" here = an existing exercises row where type === "concept"
@@ -222,6 +256,7 @@ export default defineSchema({
   questionConcepts: defineTable({
     questionId: v.id("questionBank"),
     conceptExerciseId: v.id("exercises"),
+    weight: v.optional(v.number()), // (0, 1]; reserved for Phase G importance weighting; default 1.0
   })
     .index("by_question", ["questionId"])
     .index("by_concept_exercise", ["conceptExerciseId"]),

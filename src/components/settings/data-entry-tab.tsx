@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronLeft, Plus, Trash2, Scissors, List, Pencil } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Scissors, List, Pencil, FileText } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,7 @@ import { SubQuestionInline } from '@/components/sub-question-inline';
 import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
 import { ConceptsUnitDrawer } from '@/components/settings/concepts-unit-drawer';
 
-type Layer = 'exercises' | 'pages' | 'details' | 'concepts';
+type Layer = 'exercises' | 'pages' | 'details' | 'concepts' | 'past-papers';
 
 interface BookUnit {
   id: string;
@@ -35,7 +35,7 @@ const SS_LAYER = 'dataEntry.activeLayer';
 const SS_DETAIL = 'dataEntry.detailUnitId';
 
 const isLayer = (v: string | null): v is Layer =>
-  v === 'exercises' || v === 'pages' || v === 'details' || v === 'concepts';
+  v === 'exercises' || v === 'pages' || v === 'details' || v === 'concepts' || v === 'past-papers';
 
 export function DataEntryTab() {
   const router = useRouter();
@@ -150,6 +150,17 @@ export function DataEntryTab() {
     api.questionBank.listByLinkedExercises,
     detailExerciseIds.length > 0 ? { exerciseIds: detailExerciseIds } : 'skip',
   );
+
+  // === PAST-PAPERS (Layer 5) ===
+  const allPastPapers = useQuery(api.pastPapers.list);
+  const allPastPaperCrops = useQuery(
+    api.questionBank.listAllPastPaperCrops,
+    activeLayer === 'past-papers' ? undefined : 'skip',
+  );
+  // Filter state for the past-papers subtab
+  const [ppFilterGrade, setPpFilterGrade] = useState<number | null>(null);
+  const [ppFilterTerm, setPpFilterTerm] = useState<1 | 2 | 3 | null>(null);
+  const [ppFilterSearch, setPpFilterSearch] = useState('');
 
   const cropCountByExerciseId = useMemo(() => {
     const m = new Map<string, number>();
@@ -572,8 +583,8 @@ export function DataEntryTab() {
   // ────────────────────────────────────────────────
   return (
     <>
-      {/* Book badges */}
-      <div className="flex gap-2 overflow-x-auto pb-2 mb-3 no-scrollbar">
+      {/* Book badges — hidden on past-papers tab */}
+      {activeLayer !== 'past-papers' && <div className="flex gap-2 overflow-x-auto pb-2 mb-3 no-scrollbar">
         {sortedBooks.length === 0 && (
           <p className="text-sm text-muted-foreground">No books yet. Create them in Content tab.</p>
         )}
@@ -612,78 +623,191 @@ export function DataEntryTab() {
             </button>
           );
         })}
+      </div>}
+
+      {/* Layer buttons — always visible */}
+      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4">
+        {(
+          [
+            { key: 'exercises', label: 'Exercises' },
+            { key: 'pages', label: 'Page Nos' },
+            { key: 'details', label: 'Details' },
+            { key: 'concepts', label: 'Concepts' },
+            { key: 'past-papers', label: 'Past Papers' },
+          ] as { key: Layer; label: string }[]
+        ).map(layer => {
+          const done = layer.key !== 'past-papers' ? layerDoneCount(layer.key) : 0;
+          const total = layer.key !== 'past-papers' ? bookUnits.length : 0;
+          const isActive = activeLayer === layer.key;
+          return (
+            <button
+              key={layer.key}
+              onClick={() => {
+                setActiveLayer(layer.key);
+                setDetailUnitId(null);
+              }}
+              className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all ${
+                isActive ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {layer.label}
+              {total > 0 && (
+                <span className={`ml-1 ${done === total ? 'text-emerald-500' : ''}`}>
+                  {done}/{total}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {!selectedBook ? (
-        <p className="text-sm text-muted-foreground text-center py-8">Select a book to start</p>
-      ) : (
-        <>
-          {/* Layer buttons */}
-          <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4">
-            {(
-              [
-                { key: 'exercises', label: 'Exercises' },
-                { key: 'pages', label: 'Page Nos' },
-                { key: 'details', label: 'Details' },
-                { key: 'concepts', label: 'Concepts' },
-              ] as { key: Layer; label: string }[]
-            ).map(layer => {
-              const done = layerDoneCount(layer.key);
-              const total = bookUnits.length;
-              const isActive = activeLayer === layer.key;
-              return (
+      {/* ─── PAST-PAPERS SECTION ─── */}
+      {activeLayer === 'past-papers' && (() => {
+        const thisYear = new Date().getFullYear();
+        const cropCountByPaperId = new Map<string, number>();
+        for (const c of allPastPaperCrops || []) {
+          if (c.pastPaperId) cropCountByPaperId.set(c.pastPaperId, (cropCountByPaperId.get(c.pastPaperId) || 0) + 1);
+        }
+        const papers = (allPastPapers || [])
+          .filter(p =>
+            (ppFilterGrade === null || p.grade === ppFilterGrade) &&
+            (ppFilterTerm === null || p.term === ppFilterTerm) &&
+            (!ppFilterSearch.trim() || (p.schoolName ?? '').toLowerCase().includes(ppFilterSearch.toLowerCase()))
+          )
+          .sort((a, b) => a.grade - b.grade || a.term - b.term || b.year - a.year);
+
+        return (
+          <>
+            {/* Grade filter chips */}
+            <div className="flex gap-1 mb-2 flex-wrap">
+              {([null, 6, 7, 8, 9, 10, 11] as (number | null)[]).map(g => (
                 <button
-                  key={layer.key}
-                  onClick={() => {
-                    setActiveLayer(layer.key);
-                    setDetailUnitId(null);
-                  }}
-                  className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all ${
-                    isActive ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  key={g ?? 'all'}
+                  onClick={() => setPpFilterGrade(g)}
+                  className={`h-7 px-2.5 rounded-lg text-xs font-medium transition-all ${
+                    ppFilterGrade === g ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {layer.label}
-                  {total > 0 && (
-                    <span className={`ml-1 ${done === total ? 'text-emerald-500' : ''}`}>
-                      {done}/{total}
-                    </span>
-                  )}
+                  {g === null ? 'All' : `G${g}`}
                 </button>
-              );
-            })}
-          </div>
+              ))}
+            </div>
 
-          {/* Unit grid */}
-          {bookUnits.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No units found for this book&apos;s range
-            </p>
-          ) : (
-            <div className="grid grid-cols-5 gap-2">
-              {bookUnits.map(unit => {
-                const done = isUnitDone(unit);
-                return (
+            {/* Term filter + school search */}
+            <div className="flex gap-2 mb-3">
+              <div className="flex gap-1">
+                {([null, 1, 2, 3] as (1 | 2 | 3 | null)[]).map(t => (
                   <button
-                    key={unit.id}
-                    onClick={() => handleUnitTap(unit)}
-                    className={`p-2 rounded-xl border text-center transition-all active:scale-95 ${
-                      done
-                        ? 'bg-emerald-500/10 border-emerald-500/30'
-                        : 'bg-card border-border/50 hover:border-primary/30'
+                    key={t ?? 'all'}
+                    onClick={() => setPpFilterTerm(t)}
+                    className={`h-7 px-2 rounded-lg text-xs font-medium transition-all ${
+                      ppFilterTerm === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <div className={`text-lg font-bold ${done ? 'text-emerald-400' : 'text-foreground'}`}>
-                      {unit.number}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
-                      {unit.name.replace(/^\d+\.\s*/, '')}
-                    </div>
+                    {t === null ? 'All' : `T${t}`}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              <input
+                type="text"
+                value={ppFilterSearch}
+                onChange={e => setPpFilterSearch(e.target.value)}
+                placeholder="Search school..."
+                className="flex-1 h-7 px-2.5 rounded-lg bg-muted text-xs text-foreground border border-transparent focus:border-primary/50 focus:bg-background outline-none placeholder:text-muted-foreground/50 transition-colors"
+              />
             </div>
-          )}
-        </>
+
+            {/* Paper cards */}
+            {papers.length === 0 ? (
+              <div className="text-center py-10">
+                <FileText className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  {(allPastPapers || []).length === 0
+                    ? 'No past papers uploaded yet — go to Content → Past Papers'
+                    : 'No papers match the current filter'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {papers.map(paper => {
+                  const cropCount = cropCountByPaperId.get(paper._id) || 0;
+                  const isOld = thisYear - paper.year >= 3;
+                  const label = paper.schoolName
+                    ? `${paper.year} · T${paper.term} · ${paper.schoolName}`
+                    : `${paper.year} · T${paper.term} · Own paper`;
+                  return (
+                    <button
+                      key={paper._id}
+                      onClick={() => router.push(`/settings/past-paper-crop/${paper._id}`)}
+                      className="w-full text-left rounded-xl border border-border/50 p-3 hover:border-primary/30 transition-all active:scale-[0.98] bg-card"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-foreground truncate">G{paper.grade} · {label}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {paper.totalPages} pages · {cropCount} crop{cropCount !== 1 ? 's' : ''}
+                            {paper.totalMarks ? ` · ${paper.totalMarks} marks` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                          {paper.isHoldout && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/20 text-destructive font-medium">Holdout</span>
+                          )}
+                          {paper.useAsTrainingSignal && !paper.isHoldout && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 font-medium">Training</span>
+                          )}
+                          {isOld && !paper.isHoldout && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 font-medium">Old</span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        );
+      })()}
+
+      {/* ─── BOOK-BASED SECTIONS ─── */}
+      {activeLayer !== 'past-papers' && (
+        !selectedBook ? (
+          <p className="text-sm text-muted-foreground text-center py-8">Select a book to start</p>
+        ) : (
+          <>
+            {/* Unit grid */}
+            {bookUnits.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No units found for this book&apos;s range
+              </p>
+            ) : (
+              <div className="grid grid-cols-5 gap-2">
+                {bookUnits.map(unit => {
+                  const done = isUnitDone(unit);
+                  return (
+                    <button
+                      key={unit.id}
+                      onClick={() => handleUnitTap(unit)}
+                      className={`p-2 rounded-xl border text-center transition-all active:scale-95 ${
+                        done
+                          ? 'bg-emerald-500/10 border-emerald-500/30'
+                          : 'bg-card border-border/50 hover:border-primary/30'
+                      }`}
+                    >
+                      <div className={`text-lg font-bold ${done ? 'text-emerald-400' : 'text-foreground'}`}>
+                        {unit.number}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
+                        {unit.name.replace(/^\d+\.\s*/, '')}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )
       )}
 
       {/* ─── LAYER 1: Exercise Count Dialog ─── */}
