@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, Check } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -102,7 +103,8 @@ export function TagUnitPicker({ open, onOpenChange, selectedUnitIds, onSave }: P
     }
   };
 
-  return (
+  // Render Dialog as a portal outside of the Drawer DOM tree
+  const dialogContent = (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md mx-auto max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
@@ -127,10 +129,14 @@ export function TagUnitPicker({ open, onOpenChange, selectedUnitIds, onSave }: P
               return (
                 <button
                   key={u.unitId}
-                  onClick={() => toggle(u.unitId)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggle(u.unitId);
+                  }}
                   className={`w-full flex items-center gap-2 px-2.5 py-2 text-left transition-colors ${
                     selected ? 'bg-primary/10' : 'hover:bg-muted/60'
                   }`}
+                  type="button"
                 >
                   <span
                     className="font-mono text-[9px] font-bold rounded px-1 py-0.5 shrink-0"
@@ -149,10 +155,16 @@ export function TagUnitPicker({ open, onOpenChange, selectedUnitIds, onSave }: P
           )}
         </div>
         <div className="flex gap-2 pt-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1" disabled={saving}>
+          <Button variant="outline" onClick={(e) => {
+            e.stopPropagation();
+            onOpenChange(false);
+          }} className="flex-1" disabled={saving} type="button">
             Cancel
           </Button>
-          <Button onClick={handleSave} className="flex-1" disabled={saving}>
+          <Button onClick={(e) => {
+            e.stopPropagation();
+            handleSave();
+          }} className="flex-1" disabled={saving} type="button">
             Save{' '}
             {draft.size > 0 && (
               <Badge variant="secondary" className="ml-1.5 text-[9px] px-1">
@@ -164,4 +176,6 @@ export function TagUnitPicker({ open, onOpenChange, selectedUnitIds, onSave }: P
       </DialogContent>
     </Dialog>
   );
+
+  return typeof document !== 'undefined' ? createPortal(dialogContent, document.body) : null;
 }
