@@ -171,6 +171,17 @@ export default defineSchema({
     isHoldout: v.boolean(),                    // true = current term's own paper, never feeds algorithm
     totalMarks: v.optional(v.number()),
     uploadedAt: v.number(),
+    // Per-paper overrides on the grade's default paperStructure parts. Only
+    // populated when this paper deviates from the grade's default structure
+    // (e.g. G6-G9 alternate Part 2 with 8 essays × 10 marks instead of the
+    // default 7 × 12). Each entry overlays the matching part by partCode;
+    // unset fields fall through to the structure default.
+    partOverrides: v.optional(v.array(v.object({
+      partCode: v.string(),
+      questionCount: v.optional(v.number()),
+      marksPerQuestion: v.optional(v.number()),
+      requiredCount: v.optional(v.number()),
+    }))),
   })
     .index("by_grade_term_year", ["grade", "term", "year"])
     .index("by_training_signal", ["useAsTrainingSignal"])
@@ -239,14 +250,25 @@ export default defineSchema({
     pastPaperId: v.optional(v.id("pastPapers")),
     pastPaperPageId: v.optional(v.id("pastPaperPages")),
     marksAvailable: v.optional(v.number()),        // marks this question is worth in the paper
-    questionNumberInPaper: v.optional(v.string()),  // "1.a", "5.iii" — free-text from user
+    questionNumberInPaper: v.optional(v.string()),  // "1.a", "5.iii" — free-text (legacy) or denormalized "1A.1" (Phase 0.4)
+    // Phase 0.4: structured slot identity for past-paper crops. When set,
+    // (pastPaperId, paperStructurePartId, paperStructureSlotNumber) is the
+    // 1:1 key; questionNumberInPaper becomes a denormalized cache for display.
+    paperStructurePartId: v.optional(v.id("paperStructureParts")),
+    paperStructureSlotNumber: v.optional(v.number()),
+    // Broad topic tag for the question — feeds the Phase B importance engine.
+    // Distinct from (and complementary to) questionConcepts which carries
+    // fine-grained per-concept identity.
+    topicTagId: v.optional(v.id("examTopicTags")),
     createdAt: v.number(),
   })
     .index("by_source", ["source"])
     .index("by_textbook_page", ["textbookPageId"])
     .index("by_linked_exercise", ["linkedExerciseId"])
     .index("by_past_paper", ["pastPaperId"])
-    .index("by_past_paper_page", ["pastPaperPageId"]),
+    .index("by_past_paper_page", ["pastPaperPageId"])
+    .index("by_topic_tag", ["topicTagId"])
+    .index("by_paper_slot", ["pastPaperId", "paperStructurePartId", "paperStructureSlotNumber"]),
 
   // Many-to-many join tagging questionBank rows with concept-type exercises.
   // A "concept" here = an existing exercises row where type === "concept"
@@ -260,6 +282,77 @@ export default defineSchema({
   })
     .index("by_question", ["questionId"])
     .index("by_concept_exercise", ["conceptExerciseId"]),
+
+  // ─── Topic tags + paper structure (Phase 0.4) ──────────────────────────
+  // Broad-topic taxonomy bridging past-paper crops to the Phase B importance
+  // engine. Each tag links to one or more curriculum *units* via
+  // examTopicTagLinks; concepts derived from those units come along for free.
+  examTopicTags: defineTable({
+    name: v.string(),                           // "Fractions" — user-facing label
+    description: v.optional(v.string()),
+    color: v.optional(v.string()),              // CSS hex; defaults to module color
+    moduleId: v.optional(v.string()),           // "M1".."M6" for grouping + default color
+    createdAt: v.number(),
+  })
+    .index("by_module", ["moduleId"])
+    .index("by_name", ["name"]),                 // soft-uniqueness — checked in mutation
+
+  // Tag → unit join. unitId is a static string from src/lib/curriculum-data.ts
+  // (e.g. "M1-G6-T2-0"). Backend cannot import from src/lib so callers pass
+  // grade/term/moduleId denormalized for cheaper filtering and display.
+  examTopicTagLinks: defineTable({
+    tagId: v.id("examTopicTags"),
+    unitId: v.string(),
+    grade: v.number(),
+    term: v.number(),
+    moduleId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_tag", ["tagId"])
+    .index("by_unit", ["unitId"])
+    .index("by_tag_unit", ["tagId", "unitId"])
+    .index("by_grade", ["grade"]),
+
+  // One row per grade defining the exam paper shape. G10/G11 share an
+  // identical national structure; G6-G9 share a default with per-paper
+  // overrides via pastPapers.partOverrides.
+  paperStructures: defineTable({
+    grade: v.number(),
+    divisionFactor: v.number(),                  // 1 for G6-G9, 2 for G10-G11
+    totalRawMarks: v.number(),                   // sum of (questionCount × marksPerQuestion) across required slots
+    scaledTotal: v.number(),                     // totalRawMarks / divisionFactor
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_grade", ["grade"]),
+
+  paperStructureParts: defineTable({
+    structureId: v.id("paperStructures"),
+    partCode: v.string(),                        // "1A" | "1B" | "2A" | "2B" | "1" | "2"
+    partLabel: v.string(),                       // "Part I Section A — MCQ"
+    questionCount: v.number(),                   // total slots
+    marksPerQuestion: v.number(),
+    requiredCount: v.number(),                   // students must answer N — 0..questionCount
+    order: v.number(),
+    notes: v.optional(v.string()),
+  })
+    .index("by_structure", ["structureId"])
+    .index("by_structure_order", ["structureId", "order"]),
+
+  // Per-slot tag config. mode === "permanent": auto-applied on crop save
+  // (one row per slot). mode === "option": surfaced as suggested choices in
+  // the crop UI (any number per slot). Absence of any row at a slot ⇒
+  // "learned" mode (UI reads questionBank history for suggestions).
+  paperStructureSlotTags: defineTable({
+    partId: v.id("paperStructureParts"),
+    slotNumber: v.number(),                      // 1..questionCount
+    tagId: v.id("examTopicTags"),
+    mode: v.string(),                            // "permanent" | "option"
+    createdAt: v.number(),
+  })
+    .index("by_part_slot", ["partId", "slotNumber"])
+    .index("by_part", ["partId"])
+    .index("by_tag", ["tagId"]),
 
   // Lead's per-student "next task" for a given day. Upserted by (studentId, date).
   // Phase 4 (student tablet) reads this for the student's home screen.

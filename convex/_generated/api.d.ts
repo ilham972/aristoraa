@@ -16,12 +16,14 @@ import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as lead from "../lead.js";
 import type * as migrations from "../migrations.js";
+import type * as paperStructures from "../paperStructures.js";
 import type * as pastPaperPages from "../pastPaperPages.js";
 import type * as pastPapers from "../pastPapers.js";
 import type * as questionBank from "../questionBank.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
+import type * as seeds_topicTags from "../seeds/topicTags.js";
 import type * as sessionSubmissions from "../sessionSubmissions.js";
 import type * as settings from "../settings.js";
 import type * as slotStudents from "../slotStudents.js";
@@ -32,6 +34,7 @@ import type * as teachers from "../teachers.js";
 import type * as textbookPages from "../textbookPages.js";
 import type * as textbooks from "../textbooks.js";
 import type * as timeline from "../timeline.js";
+import type * as topicTags from "../topicTags.js";
 import type * as unitMetadata from "../unitMetadata.js";
 
 import type {
@@ -49,12 +52,14 @@ declare const fullApi: ApiFromModules<{
   exercises: typeof exercises;
   lead: typeof lead;
   migrations: typeof migrations;
+  paperStructures: typeof paperStructures;
   pastPaperPages: typeof pastPaperPages;
   pastPapers: typeof pastPapers;
   questionBank: typeof questionBank;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
   seed: typeof seed;
+  "seeds/topicTags": typeof seeds_topicTags;
   sessionSubmissions: typeof sessionSubmissions;
   settings: typeof settings;
   slotStudents: typeof slotStudents;
@@ -65,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   textbookPages: typeof textbookPages;
   textbooks: typeof textbooks;
   timeline: typeof timeline;
+  topicTags: typeof topicTags;
   unitMetadata: typeof unitMetadata;
 }>;
 
