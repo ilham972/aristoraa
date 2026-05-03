@@ -582,6 +582,7 @@ function CropRect({
   onEdit,
   onResize,
   onDelete,
+  badgesInside,
 }: {
   crop: QuestionBankRow;
   linkedExercise?: UnitExercise;

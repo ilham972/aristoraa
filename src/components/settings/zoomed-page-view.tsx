@@ -672,6 +672,7 @@ function CropRectZ({
   onTap,
   onResize,
   onDelete,
+  badgesInside,
 }: {
   crop: QuestionBankRow;
   label: string;
