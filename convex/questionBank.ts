@@ -157,6 +157,229 @@ export const rekeyToPaperQuestion = mutation({
   },
 });
 
+// ─── Phase 0.4 — structured slot identity for past-paper crops ───────────
+
+// Strict 1:1 between (pastPaperId, paperStructurePartId, paperStructureSlotNumber)
+// and a crop. Mirrors upsertForPaperQuestion but keys off the structured slot
+// instead of free-text question number. Always denormalizes
+// "${partCode}.${slotNumber}" into questionNumberInPaper so existing list
+// views continue rendering without joining through the structure tables.
+export const upsertForPaperSlot = mutation({
+  args: {
+    pastPaperId: v.id("pastPapers"),
+    paperStructurePartId: v.id("paperStructureParts"),
+    paperStructureSlotNumber: v.number(),
+    pastPaperPageId: v.id("pastPaperPages"),
+    cropBox: cropBoxValidator,
+    marksAvailable: v.optional(v.number()),
+    topicTagId: v.optional(v.id("examTopicTags")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const part = await ctx.db.get(args.paperStructurePartId);
+    if (!part) throw new Error("Paper structure part not found");
+    const denormNumber = `${part.partCode}.${args.paperStructureSlotNumber}`;
+
+    const existing = await ctx.db
+      .query("questionBank")
+      .withIndex("by_paper_slot", (q) =>
+        q
+          .eq("pastPaperId", args.pastPaperId)
+          .eq("paperStructurePartId", args.paperStructurePartId)
+          .eq("paperStructureSlotNumber", args.paperStructureSlotNumber),
+      )
+      .collect();
+
+    if (existing.length === 0) {
+      return await ctx.db.insert("questionBank", {
+        source: "past-paper",
+        pastPaperId: args.pastPaperId,
+        pastPaperPageId: args.pastPaperPageId,
+        paperStructurePartId: args.paperStructurePartId,
+        paperStructureSlotNumber: args.paperStructureSlotNumber,
+        questionNumberInPaper: denormNumber,
+        cropBox: args.cropBox,
+        marksAvailable: args.marksAvailable ?? part.marksPerQuestion,
+        topicTagId: args.topicTagId,
+        createdAt: Date.now(),
+      });
+    }
+    const [keep, ...dupes] = existing;
+    await ctx.db.patch(keep._id, {
+      cropBox: args.cropBox,
+      pastPaperPageId: args.pastPaperPageId,
+      questionNumberInPaper: denormNumber,
+      ...(args.marksAvailable !== undefined
+        ? { marksAvailable: args.marksAvailable }
+        : {}),
+      ...(args.topicTagId !== undefined
+        ? { topicTagId: args.topicTagId }
+        : {}),
+    });
+    for (const d of dupes) await ctx.db.delete(d._id);
+    return keep._id;
+  },
+});
+
+// Re-key the given crop to a different slot. Deletes any pre-existing crop
+// at the target slot to keep the 1:1 invariant. Recomputes the denormalized
+// questionNumberInPaper. Works on legacy crops (no slot fields set yet) too.
+export const rekeyToPaperSlot = mutation({
+  args: {
+    id: v.id("questionBank"),
+    pastPaperId: v.id("pastPapers"),
+    paperStructurePartId: v.id("paperStructureParts"),
+    paperStructureSlotNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const part = await ctx.db.get(args.paperStructurePartId);
+    if (!part) throw new Error("Paper structure part not found");
+    const denormNumber = `${part.partCode}.${args.paperStructureSlotNumber}`;
+
+    const existing = await ctx.db
+      .query("questionBank")
+      .withIndex("by_paper_slot", (q) =>
+        q
+          .eq("pastPaperId", args.pastPaperId)
+          .eq("paperStructurePartId", args.paperStructurePartId)
+          .eq("paperStructureSlotNumber", args.paperStructureSlotNumber),
+      )
+      .collect();
+    for (const e of existing) {
+      if (e._id !== args.id) await ctx.db.delete(e._id);
+    }
+
+    await ctx.db.patch(args.id, {
+      pastPaperId: args.pastPaperId,
+      paperStructurePartId: args.paperStructurePartId,
+      paperStructureSlotNumber: args.paperStructureSlotNumber,
+      questionNumberInPaper: denormNumber,
+    });
+  },
+});
+
+// Patch a single crop's topic tag. Pass topicTagId === null to clear; passing
+// undefined leaves the field untouched.
+export const setTopicTag = mutation({
+  args: {
+    id: v.id("questionBank"),
+    topicTagId: v.union(v.id("examTopicTags"), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await ctx.db.patch(args.id, {
+      topicTagId: args.topicTagId === null ? undefined : args.topicTagId,
+    });
+  },
+});
+
+// Replace-all: deletes every existing questionConcepts row for this crop and
+// inserts the new set. Keeps things simple — no diffing.
+export const setConcepts = mutation({
+  args: {
+    id: v.id("questionBank"),
+    conceptExerciseIds: v.array(v.id("exercises")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db
+      .query("questionConcepts")
+      .withIndex("by_question", (q) => q.eq("questionId", args.id))
+      .collect();
+    for (const r of existing) await ctx.db.delete(r._id);
+    for (const conceptId of args.conceptExerciseIds) {
+      await ctx.db.insert("questionConcepts", {
+        questionId: args.id,
+        conceptExerciseId: conceptId,
+      });
+    }
+  },
+});
+
+// All crops carrying a given topic tag. Used by the tag-detail-page question
+// list and downstream importance rollups.
+export const listByTopicTag = query({
+  args: { topicTagId: v.id("examTopicTags") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("questionBank")
+      .withIndex("by_topic_tag", (q) => q.eq("topicTagId", args.topicTagId))
+      .collect();
+  },
+});
+
+// All past-paper crops at a given (grade, partCode, slotNumber) across every
+// paper of that grade. Mirrors getLearnedOptionsForSlot's traversal but
+// returns the raw crop rows for any caller that needs them.
+export const listByGradeSlot = query({
+  args: {
+    grade: v.number(),
+    partCode: v.string(),
+    slotNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const structure = await ctx.db
+      .query("paperStructures")
+      .withIndex("by_grade", (q) => q.eq("grade", args.grade))
+      .first();
+    if (!structure) return [];
+    const parts = await ctx.db
+      .query("paperStructureParts")
+      .withIndex("by_structure", (q) => q.eq("structureId", structure._id))
+      .collect();
+    const part = parts.find((p) => p.partCode === args.partCode);
+    if (!part) return [];
+
+    const papers = await ctx.db
+      .query("pastPapers")
+      .withIndex("by_grade", (q) => q.eq("grade", args.grade))
+      .collect();
+
+    const all = await Promise.all(
+      papers.map((paper) =>
+        ctx.db
+          .query("questionBank")
+          .withIndex("by_paper_slot", (q) =>
+            q
+              .eq("pastPaperId", paper._id)
+              .eq("paperStructurePartId", part._id)
+              .eq("paperStructureSlotNumber", args.slotNumber),
+          )
+          .collect(),
+      ),
+    );
+    return all.flat();
+  },
+});
+
+// ─── Concept join queries (read-side) ────────────────────────────────────
+
+// All concept-type exercise IDs joined to a given crop. Powers the concept
+// multi-select in the past-paper crop UI.
+export const listConcepts = query({
+  args: { questionId: v.id("questionBank") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("questionConcepts")
+      .withIndex("by_question", (q) => q.eq("questionId", args.questionId))
+      .collect();
+  },
+});
+
 export const listByLinkedExercise = query({
   args: { exerciseId: v.id("exercises") },
   handler: async (ctx, args) => {

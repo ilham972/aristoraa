@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { PaperOverridesEditor } from './paper-overrides-editor';
 import { api } from '@/lib/convex';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
@@ -31,6 +32,12 @@ type PastPaperDoc = {
   isHoldout: boolean;
   totalMarks?: number;
   uploadedAt: number;
+  partOverrides?: Array<{
+    partCode: string;
+    questionCount?: number;
+    marksPerQuestion?: number;
+    requiredCount?: number;
+  }>;
 };
 
 const GRADES = [6, 7, 8, 9, 10, 11];
@@ -1219,6 +1226,15 @@ export function ContentTab() {
                 </div>
               </label>
             </div>
+
+            {/* Per-paper structure overrides — G6-G9 only, editing mode only */}
+            {editingPaper && editingPaper.grade >= 6 && editingPaper.grade <= 9 && (
+              <PaperOverridesEditor
+                paperId={editingPaper._id}
+                grade={editingPaper.grade}
+                initialOverrides={editingPaper.partOverrides}
+              />
+            )}
 
             <Button onClick={handleSavePaper} className="w-full rounded-xl">
               {editingPaper ? 'Save Changes' : 'Add Paper'}

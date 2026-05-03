@@ -7,7 +7,11 @@ import { ChevronLeft } from 'lucide-react';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { PageCropOverlay } from '@/components/settings/page-crop-overlay';
-import { PastPaperPillHeader } from '@/components/settings/past-paper-pill-header';
+import {
+  PastPaperStructuredHeader,
+  type ResolvedPart,
+} from '@/components/settings/past-paper-structured-header';
+import { PastPaperTagPicker } from '@/components/settings/past-paper-tag-picker';
 import { ZoomedPageView } from '@/components/settings/zoomed-page-view';
 import {
   CropToolToolbar,
@@ -25,10 +29,6 @@ function asPageId(id: Id<'pastPaperPages'>): FakePageId {
   return id as unknown as FakePageId;
 }
 
-// cropLabelFor callbacks must accept the QuestionBankRow type defined locally
-// inside PageCropOverlay / ZoomedPageView. That type has no questionNumberInPaper
-// field, but the actual Convex objects passed at runtime do. We use `unknown`
-// here and cast inside the body so the signature is compatible.
 type QBRow = { _id: Id<'questionBank'>; cropBox?: CropBox };
 
 export default function PastPaperCropPage() {
@@ -37,8 +37,10 @@ export default function PastPaperCropPage() {
   const paperId = params.paperId as Id<'pastPapers'>;
 
   const [tool, setTool] = useState<CropTool>('crop');
-  const [questionNumber, setQuestionNumber] = useState('');
+  const [selectedPartCode, setSelectedPartCode] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [selectedCropId, setSelectedCropId] = useState<Id<'questionBank'> | null>(null);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const [zoomState, setZoomState] = useState<{
     pageId: FakePageId;
     pageNumber: number;
@@ -57,10 +59,11 @@ export default function PastPaperCropPage() {
   const paper = useQuery(api.pastPapers.getById, { id: paperId });
   const paperPages = useQuery(api.pastPaperPages.getByPaper, { pastPaperId: paperId });
   const paperCrops = useQuery(api.questionBank.listByPaper, { pastPaperId: paperId });
+  const resolved = useQuery(api.paperStructures.getResolvedForPaper, { paperId });
+  const allTags = useQuery(api.topicTags.list);
 
   type PaperCrop = NonNullable<typeof paperCrops>[number];
 
-  // Map pageId → crops for that page
   const cropsByPage = useMemo(() => {
     const map = new Map<string, PaperCrop[]>();
     if (!paperCrops) return map;
@@ -73,46 +76,197 @@ export default function PastPaperCropPage() {
     return map;
   }, [paperCrops]);
 
-  // Already-cropped question numbers for the pill chips
-  const existingNumbers = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (paperCrops || [])
-            .map((c) => c.questionNumberInPaper)
-            .filter((n): n is string => !!n),
-        ),
-      ).sort(),
-    [paperCrops],
+  // Resolved structure pieces for the header
+  const parts = useMemo<ResolvedPart[]>(
+    () => resolved?.parts ?? [],
+    [resolved],
   );
+  const partByCode = useMemo(() => {
+    const m = new Map<string, ResolvedPart>();
+    for (const p of parts) m.set(p.partCode, p);
+    return m;
+  }, [parts]);
+  const partById = useMemo(() => {
+    const m = new Map<string, ResolvedPart>();
+    for (const p of parts) m.set(p._id, p);
+    return m;
+  }, [parts]);
 
-  const upsertMut = useMutation(api.questionBank.upsertForPaperQuestion);
-  const rekeyMut = useMutation(api.questionBank.rekeyToPaperQuestion);
+  // Default-select the first part if the user hasn't explicitly picked one.
+  // Derived rather than stored, to avoid setState-in-effect cascades.
+  const effectivePartCode = selectedPartCode ?? parts[0]?.partCode ?? null;
+
+  // Map `${partCode}:${slotNumber}` → cropId for filled slots; ignores
+  // legacy crops with no structured slot fields.
+  const cropsBySlotKey = useMemo(() => {
+    const m = new Map<string, Id<'questionBank'>>();
+    if (!paperCrops) return m;
+    for (const c of paperCrops) {
+      if (!c.paperStructurePartId || c.paperStructureSlotNumber == null) continue;
+      const part = partById.get(c.paperStructurePartId);
+      if (!part) continue;
+      m.set(`${part.partCode}:${c.paperStructureSlotNumber}`, c._id);
+    }
+    return m;
+  }, [paperCrops, partById]);
+
+  // Map slotKey → permanent tag id
+  const permanentTagBySlot = useMemo(() => {
+    const m = new Map<string, Id<'examTopicTags'>>();
+    const slotTags = resolved?.slotTags ?? [];
+    for (const s of slotTags) {
+      if (s.mode !== 'permanent') continue;
+      const part = partById.get(s.partId);
+      if (!part) continue;
+      m.set(`${part.partCode}:${s.slotNumber}`, s.tagId);
+    }
+    return m;
+  }, [resolved, partById]);
+
+  // Map slotKey → option tag ids
+  const optionTagsBySlot = useMemo(() => {
+    const m = new Map<string, Id<'examTopicTags'>[]>();
+    const slotTags = resolved?.slotTags ?? [];
+    for (const s of slotTags) {
+      if (s.mode !== 'option') continue;
+      const part = partById.get(s.partId);
+      if (!part) continue;
+      const k = `${part.partCode}:${s.slotNumber}`;
+      const arr = m.get(k) ?? [];
+      arr.push(s.tagId);
+      m.set(k, arr);
+    }
+    return m;
+  }, [resolved, partById]);
+
+  const tagById = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof allTags>[number]>();
+    for (const t of allTags ?? []) m.set(t._id, t);
+    return m;
+  }, [allTags]);
+
+  // Active crop (the one we'd patch with tag/concept changes) — selectedCropId
+  // takes precedence; otherwise the crop at the active slot if any.
+  const activeCropId = useMemo<Id<'questionBank'> | null>(() => {
+    if (selectedCropId) return selectedCropId;
+    if (effectivePartCode && selectedSlot != null) {
+      return cropsBySlotKey.get(`${effectivePartCode}:${selectedSlot}`) ?? null;
+    }
+    return null;
+  }, [selectedCropId, effectivePartCode, selectedSlot, cropsBySlotKey]);
+
+  const activeCrop = useMemo<PaperCrop | null>(() => {
+    if (!activeCropId || !paperCrops) return null;
+    return paperCrops.find((c) => c._id === activeCropId) ?? null;
+  }, [activeCropId, paperCrops]);
+
+  // Concept count for the chip — pulled lazily.
+  const activeCropConcepts = useQuery(
+    api.questionBank.listConcepts,
+    activeCropId ? { questionId: activeCropId } : 'skip',
+  );
+  const activeConceptCount = activeCropConcepts?.length ?? 0;
+
+  const upsertSlotMut = useMutation(api.questionBank.upsertForPaperSlot);
+  const rekeySlotMut = useMutation(api.questionBank.rekeyToPaperSlot);
   const updateMut = useMutation(api.questionBank.update);
   const removeMut = useMutation(api.questionBank.remove);
 
+  const handlePickPart = useCallback((code: string) => {
+    setSelectedPartCode(code);
+    setSelectedSlot(null);
+    setSelectedCropId(null);
+  }, []);
+
+  // Find the next empty slot in the active part, starting after `from`.
+  const advanceToNextEmptySlot = useCallback(
+    (partCode: string, from: number) => {
+      const part = partByCode.get(partCode);
+      if (!part) return;
+      for (let s = from + 1; s <= part.questionCount; s++) {
+        if (!cropsBySlotKey.has(`${partCode}:${s}`)) {
+          setSelectedSlot(s);
+          return;
+        }
+      }
+      // No more empty slots in this part — leave selection where it is.
+    },
+    [partByCode, cropsBySlotKey],
+  );
+
+  // Tap a slot: re-key if a crop is selected, else just switch active slot.
+  const handlePickSlot = useCallback(
+    async (partCode: string, slotNumber: number) => {
+      const part = partByCode.get(partCode);
+      if (!part) return;
+      if (selectedCropId) {
+        try {
+          await rekeySlotMut({
+            id: selectedCropId,
+            pastPaperId: paperId,
+            paperStructurePartId: part._id,
+            paperStructureSlotNumber: slotNumber,
+          });
+          setSelectedCropId(null);
+          setSelectedPartCode(partCode);
+          setSelectedSlot(slotNumber);
+          toast.success(`Re-keyed to ${partCode}.${slotNumber}`);
+        } catch (err) {
+          console.error('[rekeyToPaperSlot]', err);
+          toast.error(`Re-key failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+      } else {
+        setSelectedPartCode(partCode);
+        setSelectedSlot(slotNumber);
+      }
+    },
+    [partByCode, selectedCropId, paperId, rekeySlotMut],
+  );
+
   const handleDraw = useCallback(
     async (pageId: Id<'pastPaperPages'>, box: CropBox) => {
-      const qn = questionNumber.trim();
-      if (!qn) {
-        toast.error('Enter a question number first');
+      if (!effectivePartCode || selectedSlot == null) {
+        toast.error('Pick a slot first');
         return;
       }
+      const part = partByCode.get(effectivePartCode);
+      if (!part) {
+        toast.error('Active part not found');
+        return;
+      }
+      const slotKey = `${effectivePartCode}:${selectedSlot}`;
+      // Permanent tag re-applies on every save — by spec, permanent always
+      // wins. Users who want a different tag clear the slot's permanent in
+      // the structure builder, or override per-crop after via the tag picker.
+      const permanentTagId = permanentTagBySlot.get(slotKey);
       try {
-        const id = await upsertMut({
+        const id = await upsertSlotMut({
           pastPaperId: paperId,
-          questionNumberInPaper: qn,
+          paperStructurePartId: part._id,
+          paperStructureSlotNumber: selectedSlot,
           pastPaperPageId: pageId,
           cropBox: box,
+          marksAvailable: part.marksPerQuestion,
+          ...(permanentTagId ? { topicTagId: permanentTagId } : {}),
         });
         lastTouchedCropIdRef.current = id as Id<'questionBank'>;
-        setSelectedCropId(null);
+        toast.success(`Saved ${effectivePartCode}.${selectedSlot}`);
+        // Auto-advance to next empty slot in this part.
+        advanceToNextEmptySlot(effectivePartCode, selectedSlot);
       } catch (err) {
-        console.error('[upsertForPaperQuestion]', err);
+        console.error('[upsertForPaperSlot]', err);
         toast.error(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     },
-    [questionNumber, paperId, upsertMut],
+    [
+      effectivePartCode,
+      selectedSlot,
+      partByCode,
+      paperId,
+      upsertSlotMut,
+      permanentTagBySlot,
+      advanceToNextEmptySlot,
+    ],
   );
 
   const handleCropTap = useCallback(
@@ -121,9 +275,16 @@ export default function PastPaperCropPage() {
       if (!c) return;
       setSelectedCropId(cropId);
       lastTouchedCropIdRef.current = cropId;
-      if (c.questionNumberInPaper) setQuestionNumber(c.questionNumberInPaper);
+      // If crop has structured identity, surface its slot.
+      if (c.paperStructurePartId && c.paperStructureSlotNumber != null) {
+        const part = partById.get(c.paperStructurePartId);
+        if (part) {
+          setSelectedPartCode(part.partCode);
+          setSelectedSlot(c.paperStructureSlotNumber);
+        }
+      }
     },
-    [paperCrops],
+    [paperCrops, partById],
   );
 
   const handleToolChange = useCallback(
@@ -160,32 +321,6 @@ export default function PastPaperCropPage() {
     [removeMut],
   );
 
-  // Tapping a chip: if a crop is selected, re-key it; otherwise switch active number
-  const handlePickNumber = useCallback(
-    async (n: string) => {
-      if (selectedCropId) {
-        try {
-          await rekeyMut({
-            id: selectedCropId,
-            pastPaperId: paperId,
-            questionNumberInPaper: n,
-          });
-          setSelectedCropId(null);
-          setQuestionNumber(n);
-        } catch (err) {
-          console.error('[rekeyToPaperQuestion]', err);
-          toast.error(`Re-key failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        }
-      } else {
-        setQuestionNumber(n);
-      }
-    },
-    [selectedCropId, paperId, rekeyMut],
-  );
-
-  // The component's cropLabelFor must be typed as (c: QBRow) => string to
-  // satisfy PageCropOverlay / ZoomedPageView. At runtime the objects carry
-  // questionNumberInPaper, so we cast to access it.
   const cropLabelFor = useCallback(
     (c: QBRow) =>
       (c as QBRow & { questionNumberInPaper?: string }).questionNumberInPaper ||
@@ -225,6 +360,36 @@ export default function PastPaperCropPage() {
     requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
   }, [paperPages, scrollKey]);
 
+  // Render header — extracted as a function so we can mount it in both the
+  // sticky page header and inside ZoomedPageView's pill-header slot.
+  const renderHeader = () => {
+    return (
+      <PastPaperStructuredHeader
+        parts={parts}
+        selectedPartCode={effectivePartCode}
+        selectedSlot={selectedSlot}
+        selectedCropId={selectedCropId}
+        cropsBySlotKey={cropsBySlotKey}
+        permanentTagBySlot={permanentTagBySlot}
+        tagById={tagById}
+        activeTopicTagId={
+          (activeCrop?.topicTagId as Id<'examTopicTags'> | undefined) ?? null
+        }
+        conceptCount={activeConceptCount}
+        onPickPart={handlePickPart}
+        onPickSlot={handlePickSlot}
+        onCancelSelection={() => setSelectedCropId(null)}
+        onOpenTagPicker={() => {
+          if (!activeCropId) {
+            toast.error('No crop yet for this slot');
+            return;
+          }
+          setTagPickerOpen(true);
+        }}
+      />
+    );
+  };
+
   // ── Render ───────────────────────────────────────────────
   if (paper === null) {
     return (
@@ -234,11 +399,23 @@ export default function PastPaperCropPage() {
     );
   }
 
-  const isLoading = paper === undefined || paperPages === undefined;
+  const isLoading =
+    paper === undefined || paperPages === undefined || resolved === undefined;
 
   const paperLabel = paper
     ? `${paper.schoolName ? `${paper.schoolName} · ` : ''}Term ${paper.term} ${paper.year} (Gr ${paper.grade})`
     : '';
+
+  const slotKey =
+    effectivePartCode && selectedSlot != null
+      ? `${effectivePartCode}:${selectedSlot}`
+      : null;
+  const optionTagIdsForActive = slotKey
+    ? optionTagsBySlot.get(slotKey) ?? []
+    : [];
+  const permanentTagIdForActive = slotKey
+    ? permanentTagBySlot.get(slotKey) ?? null
+    : null;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -273,14 +450,7 @@ export default function PastPaperCropPage() {
           />
         </div>
 
-        <PastPaperPillHeader
-          questionNumber={questionNumber}
-          onChangeQuestionNumber={setQuestionNumber}
-          selectedCropId={selectedCropId}
-          existingNumbers={existingNumbers}
-          onPickNumber={handlePickNumber}
-          onCancelSelection={() => setSelectedCropId(null)}
-        />
+        {renderHeader()}
       </div>
 
       {/* Body */}
@@ -347,18 +517,22 @@ export default function PastPaperCropPage() {
             }
           }}
           onCropDelete={handleCropDelete}
-          pillHeader={
-            <PastPaperPillHeader
-              questionNumber={questionNumber}
-              onChangeQuestionNumber={setQuestionNumber}
-              selectedCropId={selectedCropId}
-              existingNumbers={existingNumbers}
-              onPickNumber={handlePickNumber}
-              onCancelSelection={() => setSelectedCropId(null)}
-            />
-          }
+          pillHeader={renderHeader()}
         />
       )}
+
+      {/* Tag + concept picker bottom sheet */}
+      <PastPaperTagPicker
+        open={tagPickerOpen}
+        onClose={() => setTagPickerOpen(false)}
+        cropId={activeCropId}
+        currentTopicTagId={
+          (activeCrop?.topicTagId as Id<'examTopicTags'> | undefined) ?? null
+        }
+        permanentTagId={permanentTagIdForActive}
+        optionTagIds={optionTagIdsForActive}
+        allTags={allTags ?? []}
+      />
     </div>
   );
 }

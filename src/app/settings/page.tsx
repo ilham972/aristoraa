@@ -10,10 +10,11 @@ import { CurriculumTab } from '@/components/settings/curriculum-tab';
 import { ContentTab } from '@/components/settings/content-tab';
 import { DataEntryTab } from '@/components/settings/data-entry-tab';
 import { TagsTab } from '@/components/settings/tags-tab';
+import { ExamStructureTab } from '@/components/settings/exam-structure-tab';
 
-type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'content' | 'curriculum' | 'tags' | 'data-entry';
+type Tab = 'general' | 'centers' | 'schedule' | 'teachers' | 'content' | 'curriculum' | 'tags' | 'exam-structure' | 'data-entry';
 
-const TAB_KEYS: Tab[] = ['general', 'centers', 'schedule', 'teachers', 'content', 'curriculum', 'tags', 'data-entry'];
+const TAB_KEYS: Tab[] = ['general', 'centers', 'schedule', 'teachers', 'content', 'curriculum', 'tags', 'exam-structure', 'data-entry'];
 const SS_KEY = 'settings.activeTab';
 
 function readPersistedTab(): Tab {
@@ -30,6 +31,7 @@ const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'content', label: 'Content', adminOnly: true },
   { key: 'curriculum', label: 'Curriculum', adminOnly: true },
   { key: 'tags', label: 'Tags', adminOnly: true },
+  { key: 'exam-structure', label: 'Exam', adminOnly: true },
   { key: 'data-entry', label: 'Data Entry', adminOnly: true },
 ];
 
@@ -89,6 +91,7 @@ export default function SettingsPage() {
       {activeTab === 'content' && <ContentTab />}
       {activeTab === 'curriculum' && <CurriculumTab />}
       {activeTab === 'tags' && <TagsTab />}
+      {activeTab === 'exam-structure' && <ExamStructureTab />}
       {activeTab === 'data-entry' && <DataEntryTab />}
     </div>
   );

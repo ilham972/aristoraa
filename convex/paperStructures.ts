@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 
 // ─── Queries ────────────────────────────────────────────────────────────
 
@@ -347,6 +348,128 @@ export const clearSlotPermanent = mutation({
     for (const r of rows) {
       if (r.mode === "permanent") await ctx.db.delete(r._id);
     }
+  },
+});
+
+// ─── Resolved structure for a single paper (default merged with overrides) ─
+
+export const getResolvedForPaper = query({
+  args: { paperId: v.id("pastPapers") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const paper = await ctx.db.get(args.paperId);
+    if (!paper) return null;
+
+    const structure = await ctx.db
+      .query("paperStructures")
+      .withIndex("by_grade", (q) => q.eq("grade", paper.grade))
+      .first();
+    if (!structure) return null;
+
+    const parts = await ctx.db
+      .query("paperStructureParts")
+      .withIndex("by_structure_order", (q) =>
+        q.eq("structureId", structure._id),
+      )
+      .collect();
+    parts.sort((a, b) => a.order - b.order);
+
+    const slotTagsByPart = await Promise.all(
+      parts.map((p) =>
+        ctx.db
+          .query("paperStructureSlotTags")
+          .withIndex("by_part", (q) => q.eq("partId", p._id))
+          .collect(),
+      ),
+    );
+    const slotTags = slotTagsByPart.flat();
+
+    // Apply per-paper overrides — overlay matched part by partCode.
+    const overrides = paper.partOverrides ?? [];
+    const resolvedParts = parts.map((p) => {
+      const ov = overrides.find((o) => o.partCode === p.partCode);
+      if (!ov) return p;
+      return {
+        ...p,
+        questionCount: ov.questionCount ?? p.questionCount,
+        marksPerQuestion: ov.marksPerQuestion ?? p.marksPerQuestion,
+        requiredCount: ov.requiredCount ?? p.requiredCount,
+      };
+    });
+
+    return { structure, parts: resolvedParts, slotTags, paper };
+  },
+});
+
+// Frequency analysis: across every past paper of this grade, what topic
+// tags have been applied at this (partCode, slotNumber)? Returns top-5 by
+// count. Used by the slot-config popover to surface "learned" suggestions
+// when the slot has no permanent / option rows. Does NOT filter out the
+// holdout paper — current-term holdout signal is fine for tag suggestions
+// in the structure builder; the holdout invariant is about the algorithm,
+// not the structure UI.
+export const getLearnedOptionsForSlot = query({
+  args: {
+    grade: v.number(),
+    partCode: v.string(),
+    slotNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    // Resolve grade → structure → part by partCode → partId.
+    const structure = await ctx.db
+      .query("paperStructures")
+      .withIndex("by_grade", (q) => q.eq("grade", args.grade))
+      .first();
+    if (!structure) return [];
+    const parts = await ctx.db
+      .query("paperStructureParts")
+      .withIndex("by_structure", (q) => q.eq("structureId", structure._id))
+      .collect();
+    const part = parts.find((p) => p.partCode === args.partCode);
+    if (!part) return [];
+
+    // All papers of this grade.
+    const papers = await ctx.db
+      .query("pastPapers")
+      .withIndex("by_grade", (q) => q.eq("grade", args.grade))
+      .collect();
+
+    const counts = new Map<string, number>();
+    for (const paper of papers) {
+      const crops = await ctx.db
+        .query("questionBank")
+        .withIndex("by_paper_slot", (q) =>
+          q
+            .eq("pastPaperId", paper._id)
+            .eq("paperStructurePartId", part._id)
+            .eq("paperStructureSlotNumber", args.slotNumber),
+        )
+        .collect();
+      for (const c of crops) {
+        if (c.topicTagId) {
+          const k = c.topicTagId as string;
+          counts.set(k, (counts.get(k) ?? 0) + 1);
+        }
+      }
+    }
+
+    const sorted = Array.from(counts.entries())
+      .map(([tagId, count]) => ({ tagId, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    // Hydrate tag rows for the picker label.
+    const hydrated = await Promise.all(
+      sorted.map(async (entry) => {
+        const tag = await ctx.db.get(entry.tagId as Id<"examTopicTags">);
+        return tag ? { ...entry, tag } : null;
+      }),
+    );
+    return hydrated.filter((x): x is NonNullable<typeof x> => x !== null);
   },
 });
 
