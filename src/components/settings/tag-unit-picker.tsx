@@ -30,10 +30,13 @@ export function TagUnitPicker({ open, onOpenChange, selectedUnitIds, onSave }: P
   const [draft, setDraft] = useState<Set<string>>(() => new Set(selectedUnitIds));
   const [saving, setSaving] = useState(false);
 
-  // Reset draft when re-opened with new selection
+  // Reset draft ONLY when dialog opens (not when selectedUnitIds changes while open)
+  // This prevents selections from being cleared if the parent query refetches
   useEffect(() => {
-    if (open) setDraft(new Set(selectedUnitIds));
-  }, [open, selectedUnitIds]);
+    if (open) {
+      setDraft(new Set(selectedUnitIds));
+    }
+  }, [open]); // Deliberately exclude selectedUnitIds from dependencies
 
   const allUnits = useMemo<UnitRow[]>(() => {
     const out: UnitRow[] = [];
