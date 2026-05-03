@@ -62,6 +62,9 @@ interface Props {
   // the user can see exactly which crop a deep-link from the Details capture
   // grid pointed at.
   flashCropId?: Id<'questionBank'> | null;
+  // If true, the question badge is rendered inside the crop box instead of
+  // outside, to avoid obscuring nearby questions when cropping small areas.
+  badgesInside?: boolean;
 }
 
 const MIN_CROP_SIZE = 0.03; // 3% of image in either dimension
@@ -81,6 +84,7 @@ export function PageCropOverlay({
   cropLabelFor,
   onZoom,
   flashCropId,
+  badgesInside,
 }: Props) {
   // Convenience flags derived from the active tool. `resizeMode` is gated
   // per-rect inside CropRect, not here.
@@ -533,6 +537,7 @@ export function PageCropOverlay({
                     toast.error('Could not delete');
                   }
                 }}
+                badgesInside={badgesInside}
               />
             )
           ))}
@@ -589,6 +594,7 @@ function CropRect({
   onEdit: () => void;
   onResize?: (box: CropBox) => void | Promise<void>;
   onDelete: () => void;
+  badgesInside?: boolean;
 }) {
   // Per-tool interactivity:
   //   - crop/resize: taps select the rect and sync the active question pill.
@@ -718,9 +724,13 @@ function CropRect({
       onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
       onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
-      {/* Label chip at top-left */}
+      {/* Label chip */}
       <div
-        className={`absolute top-0 left-0 -translate-y-full mb-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
+        className={`absolute top-0 left-0 text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
+          badgesInside
+            ? 'm-0.5 opacity-80 backdrop-blur-sm'
+            : '-translate-y-full mb-0.5'
+        } ${
           isFlash
             ? 'bg-yellow-400 text-black'
             : isSelected
@@ -729,7 +739,7 @@ function CropRect({
                 ? 'bg-emerald-500 text-white'
                 : 'bg-amber-500 text-white'
         }`}
-        style={{ transform: 'translateY(-100%)' }}
+        style={badgesInside ? undefined : { transform: 'translateY(-100%)' }}
       >
         {label}
       </div>

@@ -37,6 +37,7 @@ export default function PastPaperCropPage() {
   const paperId = params.paperId as Id<'pastPapers'>;
 
   const [tool, setTool] = useState<CropTool>('crop');
+  const [badgesInside, setBadgesInside] = useState(false);
   const [selectedPartCode, setSelectedPartCode] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [selectedCropId, setSelectedCropId] = useState<Id<'questionBank'> | null>(null);
@@ -447,6 +448,8 @@ export default function PastPaperCropPage() {
             tool={tool}
             onChange={handleToolChange}
             disabled={isLoading}
+            badgesInside={badgesInside}
+            onToggleBadgesInside={() => setBadgesInside((b) => !b)}
           />
         </div>
 
@@ -479,6 +482,7 @@ export default function PastPaperCropPage() {
                   cropsByPage={cropsByPage}
                   selectedCropId={selectedCropId}
                   cropLabelFor={cropLabelFor}
+                  badgesInside={badgesInside}
                   onDraw={handleDraw}
                   onCropTap={handleCropTap}
                   onZoom={(fakeId, pageNumber, imageUrl, na) =>
@@ -501,6 +505,8 @@ export default function PastPaperCropPage() {
           selectedCropId={selectedCropId}
           flashCropId={null}
           tool={tool}
+          badgesInside={badgesInside}
+          onToggleBadgesInside={() => setBadgesInside((b) => !b)}
           onToolChange={handleToolChange}
           onClose={() => setZoomState(null)}
           onDrawComplete={(box) => {
@@ -546,6 +552,7 @@ function PaperPageRow({
   cropsByPage,
   selectedCropId,
   cropLabelFor,
+  badgesInside,
   onDraw,
   onCropTap,
   onZoom,
@@ -556,6 +563,7 @@ function PaperPageRow({
   cropsByPage: Map<string, QBRow[]>;
   selectedCropId: Id<'questionBank'> | null;
   cropLabelFor: (c: QBRow) => string;
+  badgesInside: boolean;
   onDraw: (pageId: Id<'pastPaperPages'>, box: CropBox) => void;
   onCropTap: (cropId: Id<'questionBank'>) => void;
   onZoom: (fakeId: FakePageId, pageNumber: number, imageUrl: string, naturalAspect: number | null) => void;
@@ -580,6 +588,7 @@ function PaperPageRow({
       selectedCropId={selectedCropId}
       cropLabelFor={cropLabelFor}
       flashCropId={null}
+      badgesInside={badgesInside}
       onZoom={
         imageUrl
           ? (id, na) => onZoom(id, pg.pageNumber, imageUrl, na)

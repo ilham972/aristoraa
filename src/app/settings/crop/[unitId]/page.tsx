@@ -66,6 +66,7 @@ export default function UnitCropPage() {
   // pinch / pan works in every tool, while `resize` and `delete` operate on
   // existing crops independently.
   const [tool, setTool] = useState<CropTool>('crop');
+  const [badgesInside, setBadgesInside] = useState(false);
 
   // Document-level contextmenu blocker. Android Chrome shows a long-press
   // image menu via the contextmenu event — preventing it at the document
@@ -574,6 +575,8 @@ export default function UnitCropPage() {
             tool={tool}
             onChange={handleToolChange}
             disabled={pageStart == null || pageEnd == null}
+            badgesInside={badgesInside}
+            onToggleBadgesInside={() => setBadgesInside((b) => !b)}
           />
         </div>
 
@@ -635,6 +638,7 @@ export default function UnitCropPage() {
                       selectedCropId={selectedCropId}
                       cropLabelFor={cropLabelFor}
                       flashCropId={liveFlashCropId}
+                      badgesInside={badgesInside}
                       onZoom={
                         pageId && selectedFastPage.url
                           ? (id, na) =>
@@ -700,6 +704,7 @@ export default function UnitCropPage() {
                       selectedCropId={null}
                       cropLabelFor={undefined}
                       flashCropId={liveFlashCropId}
+                      badgesInside={badgesInside}
                       onZoom={
                         pageId && pg.url
                           ? (id, na) =>
@@ -733,6 +738,8 @@ export default function UnitCropPage() {
           cropLabelFor={isFastMode ? cropLabelFor : undefined}
           selectedCropId={isFastMode ? selectedCropId : null}
           flashCropId={liveFlashCropId}
+          badgesInside={badgesInside}
+          onToggleBadgesInside={() => setBadgesInside((b) => !b)}
           tool={tool}
           onToolChange={handleToolChange}
           onClose={() => setZoomState(null)}

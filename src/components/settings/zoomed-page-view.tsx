@@ -41,6 +41,8 @@ interface Props {
   onCropDelete?: (cropId: Id<'questionBank'>) => void;
   // Optional pill header rendered below the toolbar (fast-mode only).
   pillHeader?: React.ReactNode;
+  badgesInside?: boolean;
+  onToggleBadgesInside?: () => void;
 }
 
 const MIN_CROP_SIZE = 0.02; // 2% of image — slightly more permissive at zoom
@@ -71,6 +73,8 @@ export function ZoomedPageView({
   onCropResize,
   onCropDelete,
   pillHeader,
+  badgesInside,
+  onToggleBadgesInside,
 }: Props) {
   const canCrop = !!onDrawComplete;
   // Convenience flags from the active tool. The pan-default catches every
@@ -553,7 +557,7 @@ export function ZoomedPageView({
           closing the modal. */}
       {canCrop && (
         <div className="shrink-0 px-3 py-2 border-b border-border/50 bg-background flex justify-center">
-          <CropToolToolbar tool={tool} onChange={onToolChange} />
+          <CropToolToolbar tool={tool} onChange={onToolChange} badgesInside={badgesInside} onToggleBadgesInside={onToggleBadgesInside} />
         </div>
       )}
 
@@ -620,6 +624,7 @@ export function ZoomedPageView({
                     onDelete={
                       onCropDelete ? () => onCropDelete(c._id) : undefined
                     }
+                    badgesInside={badgesInside}
                   />
                 ),
             )}
@@ -681,6 +686,7 @@ function CropRectZ({
   onTap: () => void;
   onResize?: (box: CropBox) => void;
   onDelete?: () => void;
+  badgesInside?: boolean;
 }) {
   // Per-tool interactivity:
   //   - crop/resize: body-tap selects and syncs the active question pill.
@@ -820,6 +826,8 @@ function CropRectZ({
     >
       <div
         className={`absolute font-bold whitespace-nowrap ${
+          badgesInside ? 'opacity-80 backdrop-blur-sm' : ''
+        } ${
           isFlash
             ? 'bg-yellow-400 text-black'
             : isSelected
@@ -828,7 +836,16 @@ function CropRectZ({
                 ? 'bg-emerald-500 text-white'
                 : 'bg-amber-500 text-white'
         }`}
-        style={{
+        style={badgesInside ? {
+          left: 0,
+          top: 0,
+          margin: 2 * invScale,
+          transform: `scale(${invScale})`,
+          transformOrigin: '0 0',
+          fontSize: 9,
+          padding: '1px 4px',
+          borderRadius: 3,
+        } : {
           // Keep label visually constant size by counter-scaling.
           left: 0,
           top: 0,

@@ -23,6 +23,7 @@ import type * as questionBank from "../questionBank.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
+import type * as seeds_paperStructures from "../seeds/paperStructures.js";
 import type * as seeds_topicTags from "../seeds/topicTags.js";
 import type * as sessionSubmissions from "../sessionSubmissions.js";
 import type * as settings from "../settings.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
   seed: typeof seed;
+  "seeds/paperStructures": typeof seeds_paperStructures;
   "seeds/topicTags": typeof seeds_topicTags;
   sessionSubmissions: typeof sessionSubmissions;
   settings: typeof settings;

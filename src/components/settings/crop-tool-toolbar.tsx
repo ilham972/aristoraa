@@ -12,6 +12,8 @@ interface Props {
   // header where horizontal space is tight; the zoom-view toolbar has more
   // room and shows labels.
   compact?: boolean;
+  badgesInside?: boolean;
+  onToggleBadgesInside?: () => void;
 }
 
 const ITEMS: Array<{
@@ -27,7 +29,16 @@ const ITEMS: Array<{
   { id: 'delete', label: 'Delete', Icon: Trash2, flavour: 'danger' },
 ];
 
-export function CropToolToolbar({ tool, onChange, disabled, compact }: Props) {
+import { AlignVerticalSpaceAround } from 'lucide-react'; // Or any other suitable icon for toggling badge position
+
+export function CropToolToolbar({
+  tool,
+  onChange,
+  disabled,
+  compact,
+  badgesInside,
+  onToggleBadgesInside,
+}: Props) {
   return (
     <div
       className={`flex bg-muted rounded-lg p-0.5 shrink-0 ${
@@ -63,6 +74,29 @@ export function CropToolToolbar({ tool, onChange, disabled, compact }: Props) {
           </button>
         );
       })}
+
+      {onToggleBadgesInside && (
+        <>
+          <div className="w-px bg-border/50 my-1 mx-0.5" />
+          <button
+            role="switch"
+            aria-checked={badgesInside}
+            onClick={onToggleBadgesInside}
+            className={`h-8 ${
+              compact ? 'px-1.5' : 'px-2.5'
+            } rounded-md text-[11px] font-medium flex items-center gap-1 transition-all active:scale-95 ${
+              badgesInside
+                ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            aria-label="Toggle badges inside"
+            title="Toggle badges inside"
+          >
+            <AlignVerticalSpaceAround className="w-3.5 h-3.5 shrink-0" />
+            {!compact && <span>Badges In</span>}
+          </button>
+        </>
+      )}
     </div>
   );
 }
