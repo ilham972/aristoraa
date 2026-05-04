@@ -400,6 +400,22 @@ export default function UnitCropPage() {
     [selectedCropId, exerciseId, rekeyMut],
   );
 
+  // In Q# (proof-check) mode: pill tap only highlights the matching rect —
+  // never re-keys. This lets the user step through question numbers and
+  // verify each rect is in the right place without risking accidental re-keys.
+  const handlePillTapProofCheck = useCallback(
+    (key: string) => {
+      setUserKey(key);
+      const crop = (pageCrops || []).find(
+        (c) => c.linkedExerciseId === exerciseId && c.linkedQuestionKey === key,
+      );
+      const id = crop?._id ?? null;
+      setSelectedCropId(id);
+      if (id) lastTouchedCropIdRef.current = id;
+    },
+    [pageCrops, exerciseId],
+  );
+
   const cropLabelFor = useCallback(
     (c: { linkedQuestionKey?: string }) =>
       c.linkedQuestionKey ? c.linkedQuestionKey : 'unlinked',
@@ -576,7 +592,10 @@ export default function UnitCropPage() {
             onChange={handleToolChange}
             disabled={pageStart == null || pageEnd == null}
             badgesInside={badgesInside}
-            onToggleBadgesInside={() => setBadgesInside((b) => !b)}
+            onToggleBadgesInside={() => {
+              setBadgesInside((b) => !b);
+              setSelectedCropId(null);
+            }}
           />
         </div>
 
@@ -587,7 +606,7 @@ export default function UnitCropPage() {
             currentKey={currentKey}
             selectedCropId={selectedCropId}
             existingKeys={existingKeysForExercise}
-            onPickKey={handlePillTap}
+            onPickKey={badgesInside ? handlePillTapProofCheck : handlePillTap}
             onCancelSelection={() => setSelectedCropId(null)}
           />
         )}
@@ -765,7 +784,7 @@ export default function UnitCropPage() {
                 currentKey={currentKey}
                 selectedCropId={selectedCropId}
                 existingKeys={existingKeysForExercise}
-                onPickKey={handlePillTap}
+                onPickKey={badgesInside ? handlePillTapProofCheck : handlePillTap}
                 onCancelSelection={() => setSelectedCropId(null)}
               />
             ) : undefined

@@ -625,10 +625,10 @@ function CropRect({
   const colorClasses = isFlash
     ? 'border-2 border-yellow-400 bg-yellow-400/30 ring-4 ring-yellow-400/50 animate-pulse'
     : isSelected
-      ? 'border-2 border-sky-400 bg-sky-400/20 hover:bg-sky-400/30 ring-2 ring-sky-400/40'
+      ? 'border-2 border-sky-400 bg-sky-400/20 ring-2 ring-sky-400/40'
       : isLinked
-        ? 'border-2 border-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
-        : 'border-2 border-amber-500 bg-amber-500/10 hover:bg-amber-500/20';
+        ? `border-2 border-emerald-500 ${badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10 hover:bg-emerald-500/20'}`
+        : `border-2 border-amber-500 ${badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10 hover:bg-amber-500/20'}`;
 
   const startResize = (handle: HandleKind) => {
     const parent = parentRef?.current;
@@ -725,20 +725,15 @@ function CropRect({
       onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
       onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
-      {/* Label chip — only rendered when badgesInside is on */}
+      {/* Centered question number — floats inside the rect fill, no separate chip */}
       {badgesInside && (
-        <div
-          className={`absolute top-0 left-0 text-[8px] font-bold px-1 py-px rounded m-0.5 max-w-[calc(100%-4px)] overflow-hidden ${
-            isFlash
-              ? 'bg-yellow-400/50 text-yellow-900'
-              : isSelected
-                ? 'bg-sky-400/40 text-white'
-                : isLinked
-                  ? 'bg-emerald-500/30 text-white'
-                  : 'bg-amber-500/30 text-white'
-          }`}
-        >
-          {label}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+          <span
+            className="text-white font-bold text-[10px] leading-none"
+            style={{ textShadow: '0 1px 3px rgba(0,0,0,0.85)' }}
+          >
+            {label}
+          </span>
         </div>
       )}
 

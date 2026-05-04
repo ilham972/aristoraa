@@ -713,8 +713,8 @@ function CropRectZ({
     : isSelected
       ? 'bg-sky-400/20'
       : isLinked
-        ? 'bg-emerald-500/10'
-        : 'bg-amber-500/10';
+        ? (badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10')
+        : (badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10');
   const borderColor = isFlash
     ? '#facc15'
     : isSelected
@@ -825,32 +825,18 @@ function CropRectZ({
       onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
       onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
-      {/* Label chip — only rendered when badgesInside is on */}
+      {/* Centered question number — zooms with the rect, no counter-scaling */}
       {badgesInside && (
-        <div
-          className={`absolute font-bold ${
-            isFlash
-              ? 'bg-yellow-400/50 text-yellow-900'
-              : isSelected
-                ? 'bg-sky-400/40 text-white'
-                : isLinked
-                  ? 'bg-emerald-500/30 text-white'
-                  : 'bg-amber-500/30 text-white'
-          }`}
-          style={{
-            left: 0,
-            top: 0,
-            margin: 2 * invScale,
-            transform: `scale(${invScale})`,
-            transformOrigin: '0 0',
-            fontSize: 8,
-            padding: '1px 3px',
-            borderRadius: 3,
-            maxWidth: `calc(100% - ${4 * invScale}px)`,
-            overflow: 'hidden',
-          }}
-        >
-          {label}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+          <span
+            className="text-white font-bold leading-none"
+            style={{
+              fontSize: 9,
+              textShadow: '0 1px 3px rgba(0,0,0,0.85)',
+            }}
+          >
+            {label}
+          </span>
         </div>
       )}
 
