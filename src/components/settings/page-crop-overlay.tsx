@@ -725,25 +725,22 @@ function CropRect({
       onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
       onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
-      {/* Label chip */}
-      <div
-        className={`absolute top-0 left-0 text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
-          badgesInside
-            ? 'm-0.5 opacity-80 backdrop-blur-sm'
-            : '-translate-y-full mb-0.5'
-        } ${
-          isFlash
-            ? 'bg-yellow-400 text-black'
-            : isSelected
-              ? 'bg-sky-500 text-white'
-              : isLinked
-                ? 'bg-emerald-500 text-white'
-                : 'bg-amber-500 text-white'
-        }`}
-        style={badgesInside ? undefined : { transform: 'translateY(-100%)' }}
-      >
-        {label}
-      </div>
+      {/* Label chip — only rendered when badgesInside is on */}
+      {badgesInside && (
+        <div
+          className={`absolute top-0 left-0 text-[8px] font-bold px-1 py-px rounded m-0.5 max-w-[calc(100%-4px)] overflow-hidden ${
+            isFlash
+              ? 'bg-yellow-400/50 text-yellow-900'
+              : isSelected
+                ? 'bg-sky-400/40 text-white'
+                : isLinked
+                  ? 'bg-emerald-500/30 text-white'
+                  : 'bg-amber-500/30 text-white'
+          }`}
+        >
+          {label}
+        </div>
+      )}
 
       {/* Delete button at top-right — only visible in Delete mode. */}
       {showDeleteX && (

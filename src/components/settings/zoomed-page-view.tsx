@@ -825,40 +825,34 @@ function CropRectZ({
       onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
       onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
     >
-      <div
-        className={`absolute font-bold whitespace-nowrap ${
-          badgesInside ? 'opacity-80 backdrop-blur-sm' : ''
-        } ${
-          isFlash
-            ? 'bg-yellow-400 text-black'
-            : isSelected
-              ? 'bg-sky-500 text-white'
-              : isLinked
-                ? 'bg-emerald-500 text-white'
-                : 'bg-amber-500 text-white'
-        }`}
-        style={badgesInside ? {
-          left: 0,
-          top: 0,
-          margin: 2 * invScale,
-          transform: `scale(${invScale})`,
-          transformOrigin: '0 0',
-          fontSize: 9,
-          padding: '1px 4px',
-          borderRadius: 3,
-        } : {
-          // Keep label visually constant size by counter-scaling.
-          left: 0,
-          top: 0,
-          transform: `translateY(-100%) scale(${invScale})`,
-          transformOrigin: '0 100%',
-          fontSize: 9,
-          padding: '1px 4px',
-          borderRadius: 3,
-        }}
-      >
-        {label}
-      </div>
+      {/* Label chip — only rendered when badgesInside is on */}
+      {badgesInside && (
+        <div
+          className={`absolute font-bold ${
+            isFlash
+              ? 'bg-yellow-400/50 text-yellow-900'
+              : isSelected
+                ? 'bg-sky-400/40 text-white'
+                : isLinked
+                  ? 'bg-emerald-500/30 text-white'
+                  : 'bg-amber-500/30 text-white'
+          }`}
+          style={{
+            left: 0,
+            top: 0,
+            margin: 2 * invScale,
+            transform: `scale(${invScale})`,
+            transformOrigin: '0 0',
+            fontSize: 8,
+            padding: '1px 3px',
+            borderRadius: 3,
+            maxWidth: `calc(100% - ${4 * invScale}px)`,
+            overflow: 'hidden',
+          }}
+        >
+          {label}
+        </div>
+      )}
 
       {/* Delete X (only in Delete mode). Counter-scaled so the visual
           target stays roughly 22 CSS px regardless of zoom. The tag is

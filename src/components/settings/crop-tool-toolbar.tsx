@@ -1,6 +1,6 @@
 'use client';
 
-import { Scissors, Maximize2, Trash2, type LucideIcon } from 'lucide-react';
+import { Scissors, Maximize2, Trash2, Hash, type LucideIcon } from 'lucide-react';
 
 export type CropTool = 'crop' | 'resize' | 'delete';
 
@@ -29,8 +29,6 @@ const ITEMS: Array<{
   { id: 'delete', label: 'Delete', Icon: Trash2, flavour: 'danger' },
 ];
 
-import { AlignVerticalSpaceAround } from 'lucide-react'; // Or any other suitable icon for toggling badge position
-
 export function CropToolToolbar({
   tool,
   onChange,
@@ -40,62 +38,59 @@ export function CropToolToolbar({
   onToggleBadgesInside,
 }: Props) {
   return (
-    <div
-      className={`flex bg-muted rounded-lg p-0.5 shrink-0 ${
-        disabled ? 'opacity-50 pointer-events-none' : ''
-      }`}
-      role="tablist"
-      aria-label="Crop tool"
-    >
-      {ITEMS.map(({ id, label, Icon, flavour }) => {
-        const active = tool === id;
-        const activeClass =
-          flavour === 'danger'
-            ? 'bg-destructive text-destructive-foreground shadow-sm'
-            : flavour === 'primary'
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'bg-card text-foreground shadow-sm';
-        return (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(id)}
-            className={`h-8 ${
-              compact ? 'px-1.5' : 'px-2.5'
-            } rounded-md text-[11px] font-medium flex items-center gap-1 transition-all active:scale-95 ${
-              active ? activeClass : 'text-muted-foreground hover:text-foreground'
-            }`}
-            aria-label={label}
-            title={label}
-          >
-            <Icon className="w-3.5 h-3.5 shrink-0" />
-            {!compact && <span>{label}</span>}
-          </button>
-        );
-      })}
+    <div className={`flex items-center gap-2 shrink-0 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div
+        className="flex bg-muted rounded-lg p-0.5"
+        role="tablist"
+        aria-label="Crop tool"
+      >
+        {ITEMS.map(({ id, label, Icon, flavour }) => {
+          const active = tool === id;
+          const activeClass =
+            flavour === 'danger'
+              ? 'bg-destructive text-destructive-foreground shadow-sm'
+              : flavour === 'primary'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-card text-foreground shadow-sm';
+          return (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => onChange(id)}
+              className={`h-8 ${
+                compact ? 'px-1.5' : 'px-2.5'
+              } rounded-md text-[11px] font-medium flex items-center gap-1 transition-all active:scale-95 ${
+                active ? activeClass : 'text-muted-foreground hover:text-foreground'
+              }`}
+              aria-label={label}
+              title={label}
+            >
+              <Icon className="w-3.5 h-3.5 shrink-0" />
+              {!compact && <span>{label}</span>}
+            </button>
+          );
+        })}
+      </div>
 
       {onToggleBadgesInside && (
-        <>
-          <div className="w-px bg-border/50 my-1 mx-0.5" />
-          <button
-            role="switch"
-            aria-checked={badgesInside}
-            onClick={onToggleBadgesInside}
-            className={`h-8 ${
-              compact ? 'px-1.5' : 'px-2.5'
-            } rounded-md text-[11px] font-medium flex items-center gap-1 transition-all active:scale-95 ${
-              badgesInside
-                ? 'bg-primary/20 text-primary hover:bg-primary/30'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            aria-label="Toggle badges inside"
-            title="Toggle badges inside"
-          >
-            <AlignVerticalSpaceAround className="w-3.5 h-3.5 shrink-0" />
-            {!compact && <span>Badges In</span>}
-          </button>
-        </>
+        <button
+          role="switch"
+          aria-checked={badgesInside}
+          onClick={onToggleBadgesInside}
+          className={`h-8 ${
+            compact ? 'px-2' : 'px-3'
+          } rounded-full text-[11px] font-medium flex items-center gap-1.5 transition-all active:scale-95 border ${
+            badgesInside
+              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+              : 'bg-muted text-muted-foreground border-border hover:text-foreground'
+          }`}
+          aria-label="Show question numbers"
+          title="Show question numbers"
+        >
+          <Hash className="w-3.5 h-3.5 shrink-0" />
+          {!compact && <span>Q#</span>}
+        </button>
       )}
     </div>
   );
