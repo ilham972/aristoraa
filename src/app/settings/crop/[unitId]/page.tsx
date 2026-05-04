@@ -267,16 +267,13 @@ export default function UnitCropPage() {
     naturalAspect: number | null;
   } | null>(null);
 
-  // ─── Mutations for fast-mode save / re-key ────────────────────
+  // ─── Mutations for fast-mode save ────────────────────
   const updateMut = useMutation(api.questionBank.update);
   const removeMut = useMutation(api.questionBank.remove);
-  // Strict 1:1 (exercise, key) → crop. Server enforces by overwriting any
-  // existing crop at that key on draw, and by deleting duplicates on
-  // re-key. The legacy create/update path could produce duplicates
-  // (different pages, race conditions) — these mutations make that
-  // structurally impossible.
+  // Strict 1:1 (exercise, key) → crop. Server overwrites any existing crop
+  // at the same (exercise, key) on draw, so re-drawing a question simply
+  // replaces the old box with no duplicates.
   const upsertForKeyMut = useMutation(api.questionBank.upsertForExerciseKey);
-  const rekeyMut = useMutation(api.questionBank.rekeyToExerciseKey);
 
   // Most-recently-touched crop (drawn or tapped). Used so when the user
   // switches into Resize mode without explicitly tapping a rect, we can
@@ -353,37 +350,13 @@ export default function UnitCropPage() {
     [removeMut],
   );
 
+  // Pill tap = highlight-only sync. Finds the existing crop for the chosen
+  // key (if any) and selects it so the rect lights up sky-blue. Never
+  // re-keys — re-keying via pill tap caused accidental key swaps when the
+  // user just wanted to navigate between questions. To replace a crop's
+  // box, draw over it (the server overwrites the same key) or delete +
+  // re-crop with the right key picked first.
   const handlePillTap = useCallback(
-    async (key: string) => {
-      if (selectedCropId && exerciseId) {
-        // Re-key the selected crop in place. Server-side, any other crop
-        // already at the target (exercise, key) is deleted to keep the
-        // 1:1 invariant.
-        try {
-          await rekeyMut({
-            id: selectedCropId,
-            linkedExerciseId: exerciseId,
-            linkedQuestionKey: key,
-          });
-          setSelectedCropId(null);
-          setUserKey(key);
-        } catch (err) {
-          console.error('[rekeyToExerciseKey]', err);
-          const msg =
-            err instanceof Error ? err.message : 'Could not re-key';
-          toast.error(`Re-key failed: ${msg}`);
-        }
-      } else {
-        setUserKey(key);
-      }
-    },
-    [selectedCropId, exerciseId, rekeyMut],
-  );
-
-  // In Q# (proof-check) mode: pill tap only highlights the matching rect —
-  // never re-keys. This lets the user step through question numbers and
-  // verify each rect is in the right place without risking accidental re-keys.
-  const handlePillTapProofCheck = useCallback(
     (key: string) => {
       setUserKey(key);
       const crop = (pageCrops || []).find(
@@ -572,10 +545,7 @@ export default function UnitCropPage() {
             onChange={handleToolChange}
             disabled={pageStart == null || pageEnd == null}
             badgesInside={badgesInside}
-            onToggleBadgesInside={() => {
-              setBadgesInside((b) => !b);
-              setSelectedCropId(null);
-            }}
+            onToggleBadgesInside={() => setBadgesInside((b) => !b)}
           />
         </div>
 
@@ -586,7 +556,7 @@ export default function UnitCropPage() {
             currentKey={currentKey}
             selectedCropId={selectedCropId}
             existingKeys={existingKeysForExercise}
-            onPickKey={badgesInside ? handlePillTapProofCheck : handlePillTap}
+            onPickKey={handlePillTap}
             onCancelSelection={() => setSelectedCropId(null)}
           />
         )}
@@ -764,7 +734,7 @@ export default function UnitCropPage() {
                 currentKey={currentKey}
                 selectedCropId={selectedCropId}
                 existingKeys={existingKeysForExercise}
-                onPickKey={badgesInside ? handlePillTapProofCheck : handlePillTap}
+                onPickKey={handlePillTap}
                 onCancelSelection={() => setSelectedCropId(null)}
               />
             ) : undefined

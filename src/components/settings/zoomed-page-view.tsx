@@ -45,7 +45,7 @@ interface Props {
   onToggleBadgesInside?: () => void;
 }
 
-const MIN_CROP_SIZE = 0.02; // 2% of image — slightly more permissive at zoom
+const MIN_CROP_SIZE = 0.01; // 1% — generous threshold so very small Qs crop
 const MAX_SCALE = 8;
 const MIN_SCALE = 1;
 
@@ -858,7 +858,7 @@ function CropRectZ({
         const mg = moveGestureRef.current;
         if (!mg || mg.pid !== e.pointerId) return;
         if (!mg.active) {
-          if (Math.abs(e.clientX - mg.startClientX) > 8 || Math.abs(e.clientY - mg.startClientY) > 8) {
+          if (Math.abs(e.clientX - mg.startClientX) > 14 || Math.abs(e.clientY - mg.startClientY) > 14) {
             if (mg.timerId) clearTimeout(mg.timerId);
             moveGestureRef.current = null;
           }
@@ -947,21 +947,24 @@ function CropRectZ({
         </button>
       )}
 
-      {/* Resize handles (only when selected and onResize wired) */}
+      {/* Resize handles — small visible dot wrapped in a much larger touch
+          target so even tiny crops are easy to grab. Counter-scaled with
+          the page's pinch zoom so handles stay roughly constant on screen. */}
       {showHandles &&
         onResize &&
         HANDLE_KINDS_Z.map((h) => {
           const isTop = h === 'tl' || h === 'tr';
           const isLeft = h === 'tl' || h === 'bl';
-          // 10-CSS-px target counter-scaled to fight the parent transform.
-          const sizePx = 10 * handleScale;
-          const offset = -sizePx / 2;
+          const visualPx = 12 * handleScale;
+          const touchPx = 28 * handleScale;
+          const offset = -touchPx / 2;
           return (
             <div
               key={h}
               role="button"
               aria-label={`Resize ${h}`}
               data-resize-handle="1"
+              onPointerDown={(e) => e.stopPropagation()}
               onMouseDown={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -971,18 +974,23 @@ function CropRectZ({
                 e.stopPropagation();
                 startResize(h);
               }}
-              className="absolute bg-sky-400 border border-white shadow-sm rounded-sm"
+              className="absolute flex items-center justify-center"
               style={{
                 left: isLeft ? offset : undefined,
                 right: !isLeft ? offset : undefined,
                 top: isTop ? offset : undefined,
                 bottom: !isTop ? offset : undefined,
-                width: sizePx,
-                height: sizePx,
+                width: touchPx,
+                height: touchPx,
                 cursor: h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
                 touchAction: 'none',
               }}
-            />
+            >
+              <div
+                className="bg-sky-400 border border-white shadow-sm rounded-sm pointer-events-none"
+                style={{ width: visualPx, height: visualPx }}
+              />
+            </div>
           );
         })}
     </div>

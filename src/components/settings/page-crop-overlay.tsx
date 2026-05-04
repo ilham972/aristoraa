@@ -67,7 +67,7 @@ interface Props {
   badgesInside?: boolean;
 }
 
-const MIN_CROP_SIZE = 0.03; // 3% of image in either dimension
+const MIN_CROP_SIZE = 0.015; // 1.5% — lets very small questions be cropped
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 
@@ -738,7 +738,10 @@ function CropRect({
         const mg = moveGestureRef.current;
         if (!mg || mg.pid !== e.pointerId) return;
         if (!mg.active) {
-          if (Math.abs(e.clientX - mg.startClientX) > 8 || Math.abs(e.clientY - mg.startClientY) > 8) {
+          // Cancel long-press if finger drifts more than 14 px before the
+          // 450 ms threshold — generous enough to forgive natural finger
+          // tremor while still distinguishing a tap from a deliberate drag.
+          if (Math.abs(e.clientX - mg.startClientX) > 14 || Math.abs(e.clientY - mg.startClientY) > 14) {
             if (mg.timerId) clearTimeout(mg.timerId);
             moveGestureRef.current = null;
           }
@@ -799,31 +802,40 @@ function CropRect({
         </button>
       )}
 
-      {/* Corner resize handles — visible when rect is selected in crop mode */}
+      {/* Corner resize handles — visible when rect is selected in crop mode.
+          Visible dot is small (12 px) but the touch target around it is much
+          larger (28 px) so handles are easy to grab on tiny crops. */}
       {showHandles && HANDLE_KINDS.map((h) => {
         const isTop = h === 'tl' || h === 'tr';
         const isLeft = h === 'tl' || h === 'bl';
-        const sizePx = 10 * invZoom;
-        const offset = -sizePx / 2;
+        const visualPx = 12 * invZoom;
+        const touchPx = 28 * invZoom;
+        const offset = -touchPx / 2;
         return (
           <div
             key={h}
             role="button"
             aria-label={`Resize ${h}`}
+            onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); startResize(h); }}
             onTouchStart={(e) => { e.stopPropagation(); startResize(h); }}
-            className="absolute rounded-[3px] bg-sky-400 border border-white shadow-sm"
+            className="absolute flex items-center justify-center"
             style={{
               left: isLeft ? offset : undefined,
               right: !isLeft ? offset : undefined,
               top: isTop ? offset : undefined,
               bottom: !isTop ? offset : undefined,
-              width: sizePx,
-              height: sizePx,
+              width: touchPx,
+              height: touchPx,
               cursor: h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
               touchAction: 'none',
             }}
-          />
+          >
+            <div
+              className="rounded-[3px] bg-sky-400 border border-white shadow-sm pointer-events-none"
+              style={{ width: visualPx, height: visualPx }}
+            />
+          </div>
         );
       })}
     </div>
