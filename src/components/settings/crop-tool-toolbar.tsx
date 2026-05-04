@@ -1,8 +1,8 @@
 'use client';
 
-import { Scissors, Maximize2, Trash2, Hash, type LucideIcon } from 'lucide-react';
+import { Scissors, Trash2, Hash, type LucideIcon } from 'lucide-react';
 
-export type CropTool = 'crop' | 'resize' | 'delete';
+export type CropTool = 'crop' | 'delete';
 
 interface Props {
   tool: CropTool;
@@ -20,12 +20,9 @@ const ITEMS: Array<{
   id: CropTool;
   label: string;
   Icon: LucideIcon;
-  // Visual flavour for the active state — Crop wears the primary colour,
-  // Delete wears destructive, Resize stays neutral.
-  flavour: 'neutral' | 'primary' | 'danger';
+  flavour: 'primary' | 'danger';
 }> = [
   { id: 'crop', label: 'Crop', Icon: Scissors, flavour: 'primary' },
-  { id: 'resize', label: 'Resize', Icon: Maximize2, flavour: 'neutral' },
   { id: 'delete', label: 'Delete', Icon: Trash2, flavour: 'danger' },
 ];
 
@@ -49,9 +46,7 @@ export function CropToolToolbar({
           const activeClass =
             flavour === 'danger'
               ? 'bg-destructive text-destructive-foreground shadow-sm'
-              : flavour === 'primary'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'bg-card text-foreground shadow-sm';
+              : 'bg-primary text-primary-foreground shadow-sm';
           return (
             <button
               key={id}

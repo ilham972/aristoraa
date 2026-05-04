@@ -561,14 +561,13 @@ export function PageCropOverlay({
 }
 
 // ─── A rendered crop rectangle overlay ───
-// When `isSelected` and the active tool is `resize`, four corner handles appear so
-// the user can drag a corner to resize the rect. During drag we keep an
-// optimistic `localBox` so the rect tracks the finger smoothly; on release
-// we commit via `onResize` and clear the override on the next prop sync.
+// Tapping in crop mode selects the rect and shows corner handles for resizing.
+// Long-pressing (~450 ms) enters move mode (violet highlight) so the rect can
+// be dragged to a new position without changing its size.
 
 const HANDLE_KINDS = ['tl', 'tr', 'bl', 'br'] as const;
 type HandleKind = (typeof HANDLE_KINDS)[number];
-const RESIZE_MIN_DIM = 0.02; // 2% of image — keep the box from collapsing
+const RESIZE_MIN_DIM = 0.02;
 
 function CropRect({
   crop,
@@ -597,39 +596,46 @@ function CropRect({
   onDelete: () => void;
   badgesInside?: boolean;
 }) {
-  // Per-tool interactivity:
-  //   - crop/resize: taps select the rect and sync the active question pill.
-  //   - delete: red X handles deletion.
-  const interactive = tool === 'crop' || tool === 'resize' || tool === 'delete';
-  const showHandles = tool === 'resize' && !!isSelected;
+  const interactive = tool === 'crop' || tool === 'delete';
+  // Handles appear whenever the rect is selected in crop mode.
+  const showHandles = tool === 'crop' && !!isSelected;
   const showDeleteX = tool === 'delete';
   const invZoom = 1 / Math.max(1, zoomScale);
   const savedBox = crop.cropBox!;
-  // Optimistic resize override. We tag the override with the savedBox values
-  // it was last applied against; once the server echoes back a different
-  // savedBox, the tag mismatches and the override is naturally discarded —
-  // no setState-in-effect needed.
   const savedKey = `${savedBox.x},${savedBox.y},${savedBox.w},${savedBox.h}`;
-  const [override, setOverride] = useState<
-    { savedKey: string; box: CropBox } | null
-  >(null);
-  const localBox =
-    override && override.savedKey === savedKey ? override.box : null;
+  const [override, setOverride] = useState<{ savedKey: string; box: CropBox } | null>(null);
+  const localBox = override && override.savedKey === savedKey ? override.box : null;
   const b = localBox ?? savedBox;
+
+  // ── Long-press move gesture ──
+  const [isMoveMode, setIsMoveMode] = useState(false);
+  const justMovedRef = useRef(false);
+  const moveGestureRef = useRef<{
+    timerId: ReturnType<typeof setTimeout> | null;
+    startClientX: number;
+    startClientY: number;
+    startBox: CropBox;
+    pid: number;
+    active: boolean;
+  } | null>(null);
 
   const isLinked = !!crop.linkedExerciseId;
   const defaultLabel = isLinked && linkedExercise
     ? `${linkedExercise.name}${crop.linkedQuestionKey ? ` ${crop.linkedQuestionKey}` : ''}`
     : 'unlinked';
   const label = labelOverride ?? defaultLabel;
-  const colorClasses = isFlash
-    ? 'border-2 border-yellow-400 bg-yellow-400/30 ring-4 ring-yellow-400/50 animate-pulse'
-    : isSelected
-      ? 'border-2 border-sky-400 bg-sky-400/20 ring-2 ring-sky-400/40'
-      : isLinked
-        ? `border-2 border-emerald-500 ${badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10 hover:bg-emerald-500/20'}`
-        : `border-2 border-amber-500 ${badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10 hover:bg-amber-500/20'}`;
 
+  const colorClasses = isMoveMode
+    ? 'border-2 border-violet-400 bg-violet-400/30 ring-2 ring-violet-400/50'
+    : isFlash
+      ? 'border-2 border-yellow-400 bg-yellow-400/30 ring-4 ring-yellow-400/50 animate-pulse'
+      : isSelected
+        ? 'border-2 border-sky-400 bg-sky-400/20 ring-2 ring-sky-400/40'
+        : isLinked
+          ? `border-2 border-emerald-500 ${badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10 hover:bg-emerald-500/20'}`
+          : `border-2 border-amber-500 ${badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10 hover:bg-amber-500/20'}`;
+
+  // ── Corner-handle resize ──
   const startResize = (handle: HandleKind) => {
     const parent = parentRef?.current;
     if (!parent) return;
@@ -646,23 +652,18 @@ function CropRect({
       if (handle === 'tl') {
         x = Math.min(nx, right - RESIZE_MIN_DIM);
         y = Math.min(ny, bottom - RESIZE_MIN_DIM);
-        w = right - x;
-        h = bottom - y;
+        w = right - x; h = bottom - y;
       } else if (handle === 'tr') {
         const newRight = Math.max(nx, startBox.x + RESIZE_MIN_DIM);
         y = Math.min(ny, bottom - RESIZE_MIN_DIM);
-        w = newRight - startBox.x;
-        h = bottom - y;
+        w = newRight - startBox.x; h = bottom - y;
       } else if (handle === 'bl') {
         x = Math.min(nx, right - RESIZE_MIN_DIM);
         const newBottom = Math.max(ny, startBox.y + RESIZE_MIN_DIM);
-        w = right - x;
-        h = newBottom - startBox.y;
+        w = right - x; h = newBottom - startBox.y;
       } else {
-        const newRight = Math.max(nx, startBox.x + RESIZE_MIN_DIM);
-        const newBottom = Math.max(ny, startBox.y + RESIZE_MIN_DIM);
-        w = newRight - startBox.x;
-        h = newBottom - startBox.y;
+        w = Math.max(nx, startBox.x + RESIZE_MIN_DIM) - startBox.x;
+        h = Math.max(ny, startBox.y + RESIZE_MIN_DIM) - startBox.y;
       }
       return { x, y, w, h };
     };
@@ -679,20 +680,15 @@ function CropRect({
       window.removeEventListener('touchend', onTouchEnd);
       window.removeEventListener('touchcancel', onTouchEnd);
       if (onResize) onResize(lastBox);
-      // Override is automatically discarded once the saved box echoes back
-      // (savedKey changes → override.savedKey mismatch → falls back to
-      // savedBox in the render).
     };
     const onMouseMove = (e: MouseEvent) => onMove(e.clientX, e.clientY);
     const onMouseUp = () => onEnd();
     const onTouchMove = (e: TouchEvent) => {
-      const t = e.touches[0];
-      if (!t) return;
+      const t = e.touches[0]; if (!t) return;
       onMove(t.clientX, t.clientY);
       e.preventDefault();
     };
     const onTouchEnd = () => onEnd();
-
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -704,26 +700,80 @@ function CropRect({
     <div
       data-crop-rect="1"
       className={`absolute rounded-sm transition-colors z-30 ${colorClasses} ${
-        interactive
-          ? 'pointer-events-auto'
-          : 'pointer-events-none'
-      }`}
+        interactive ? 'pointer-events-auto' : 'pointer-events-none'
+      } ${isMoveMode ? 'cursor-grabbing' : ''}`}
       style={{
         left: `${b.x * 100}%`,
         top: `${b.y * 100}%`,
         width: `${b.w * 100}%`,
         height: `${b.h * 100}%`,
+        touchAction: isMoveMode ? 'none' : undefined,
       }}
       onClick={(e) => {
-        // Crop and Resize mode both let a tap select the rect. In Crop mode
-        // this is mainly for syncing the active question pill; in Resize it
-        // also exposes the handles.
-        if (tool !== 'crop' && tool !== 'resize') return;
+        if (justMovedRef.current) { justMovedRef.current = false; return; }
+        if (tool !== 'crop') return;
         e.stopPropagation();
         onEdit();
       }}
-      onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
-      onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
+      onPointerDown={(e) => {
+        if (!interactive) return;
+        e.stopPropagation();
+        if (tool !== 'crop' || !onResize) return;
+        const el = e.currentTarget;
+        const startClientX = e.clientX;
+        const startClientY = e.clientY;
+        const startBox = { ...b };
+        const pid = e.pointerId;
+        const timerId = setTimeout(() => {
+          const mg = moveGestureRef.current;
+          if (!mg || mg.pid !== pid) return;
+          mg.timerId = null;
+          mg.active = true;
+          el.setPointerCapture(pid);
+          setIsMoveMode(true);
+        }, 450);
+        moveGestureRef.current = { timerId, startClientX, startClientY, startBox, pid, active: false };
+      }}
+      onPointerMove={(e) => {
+        const mg = moveGestureRef.current;
+        if (!mg || mg.pid !== e.pointerId) return;
+        if (!mg.active) {
+          if (Math.abs(e.clientX - mg.startClientX) > 8 || Math.abs(e.clientY - mg.startClientY) > 8) {
+            if (mg.timerId) clearTimeout(mg.timerId);
+            moveGestureRef.current = null;
+          }
+          return;
+        }
+        e.preventDefault();
+        const parent = parentRef?.current;
+        if (!parent) return;
+        const rect = parent.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const dx = (e.clientX - mg.startClientX) / rect.width;
+        const dy = (e.clientY - mg.startClientY) / rect.height;
+        const newX = Math.max(0, Math.min(1 - mg.startBox.w, mg.startBox.x + dx));
+        const newY = Math.max(0, Math.min(1 - mg.startBox.h, mg.startBox.y + dy));
+        setOverride({ savedKey, box: { ...mg.startBox, x: newX, y: newY } });
+      }}
+      onPointerUp={(e) => {
+        const mg = moveGestureRef.current;
+        if (!mg || mg.pid !== e.pointerId) return;
+        if (mg.timerId) clearTimeout(mg.timerId);
+        const wasActive = mg.active;
+        moveGestureRef.current = null;
+        setIsMoveMode(false);
+        if (wasActive) {
+          justMovedRef.current = true;
+          if (localBox && onResize) void onResize(localBox);
+        }
+      }}
+      onPointerCancel={(e) => {
+        const mg = moveGestureRef.current;
+        if (!mg || mg.pid !== e.pointerId) return;
+        if (mg.timerId) clearTimeout(mg.timerId);
+        moveGestureRef.current = null;
+        setIsMoveMode(false);
+      }}
     >
       {/* Centered question number — floats inside the rect fill, no separate chip */}
       {badgesInside && (
@@ -737,7 +787,7 @@ function CropRect({
         </div>
       )}
 
-      {/* Delete button at top-right — only visible in Delete mode. */}
+      {/* Delete button — only in delete mode */}
       {showDeleteX && (
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -749,7 +799,7 @@ function CropRect({
         </button>
       )}
 
-      {/* Resize handles (only when selected) */}
+      {/* Corner resize handles — visible when rect is selected in crop mode */}
       {showHandles && HANDLE_KINDS.map((h) => {
         const isTop = h === 'tl' || h === 'tr';
         const isLeft = h === 'tl' || h === 'bl';
@@ -760,16 +810,9 @@ function CropRect({
             key={h}
             role="button"
             aria-label={`Resize ${h}`}
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              startResize(h);
-            }}
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              startResize(h);
-            }}
-            className="absolute rounded-[3px] bg-sky-400 border border-white shadow-sm cursor-nwse-resize"
+            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); startResize(h); }}
+            onTouchStart={(e) => { e.stopPropagation(); startResize(h); }}
+            className="absolute rounded-[3px] bg-sky-400 border border-white shadow-sm"
             style={{
               left: isLeft ? offset : undefined,
               right: !isLeft ? offset : undefined,
@@ -777,8 +820,7 @@ function CropRect({
               bottom: !isTop ? offset : undefined,
               width: sizePx,
               height: sizePx,
-              cursor:
-                h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
+              cursor: h === 'tl' || h === 'br' ? 'nwse-resize' : 'nesw-resize',
               touchAction: 'none',
             }}
           />

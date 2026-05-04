@@ -291,19 +291,9 @@ export default function PastPaperCropPage() {
   const handleToolChange = useCallback(
     (next: CropTool) => {
       setTool(next);
-      if (next === 'resize') {
-        setSelectedCropId((cur) => {
-          if (cur) return cur;
-          const fallback = lastTouchedCropIdRef.current;
-          if (!fallback) return null;
-          const stillExists = (paperCrops || []).some((c) => c._id === fallback);
-          return stillExists ? fallback : null;
-        });
-      } else if (next === 'crop') {
-        setSelectedCropId(null);
-      }
+      if (next === 'crop') setSelectedCropId(null);
     },
-    [paperCrops],
+    [],
   );
 
   const handleCropDelete = useCallback(

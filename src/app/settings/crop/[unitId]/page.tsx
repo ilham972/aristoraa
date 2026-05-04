@@ -327,32 +327,12 @@ export default function UnitCropPage() {
     [pageCrops],
   );
 
-  // Tool-change handler: switching into Resize mode auto-selects whichever
-  // crop was last drawn or tapped, so the user gets handles immediately
-  // without a separate select-step. Other transitions are pure mode swaps.
   const handleToolChange = useCallback(
     (next: CropTool) => {
       setTool(next);
-      if (next === 'resize') {
-        // Default to the last-touched crop if nothing is currently selected
-        // and that crop still exists in the live list (it may have been
-        // deleted before we get here).
-        setSelectedCropId((cur) => {
-          if (cur) return cur;
-          const fallback = lastTouchedCropIdRef.current;
-          if (!fallback) return null;
-          const stillExists = (pageCrops || []).some(
-            (c) => c._id === fallback,
-          );
-          return stillExists ? fallback : null;
-        });
-      } else if (next === 'crop') {
-        // Leaving select-style modes: clear the highlight so the next
-        // pill-tap doesn't accidentally re-key a previously-selected crop.
-        setSelectedCropId(null);
-      }
+      if (next === 'crop') setSelectedCropId(null);
     },
-    [pageCrops],
+    [],
   );
 
   // Shared delete handler — used by the zoom view's red X. The inline

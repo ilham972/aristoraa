@@ -689,39 +689,48 @@ function CropRectZ({
   onDelete?: () => void;
   badgesInside?: boolean;
 }) {
-  // Per-tool interactivity:
-  //   - crop/resize: body-tap selects and syncs the active question pill.
-  //   - delete: show the red X badge.
-  const showHandles = tool === 'resize' && isSelected;
+  const showHandles = tool === 'crop' && isSelected;
   const showDeleteX = tool === 'delete';
-  const interactive = tool === 'crop' || tool === 'resize' || tool === 'delete';
+  const interactive = tool === 'crop' || tool === 'delete';
   const savedBox = crop.cropBox!;
-  // Optimistic resize override, tagged with the savedBox values it was
-  // applied against. Once the server echoes a different savedBox the tag
-  // mismatches and the override is discarded — no setState-in-effect.
   const savedKey = `${savedBox.x},${savedBox.y},${savedBox.w},${savedBox.h}`;
-  const [override, setOverride] = useState<
-    { savedKey: string; box: CropBox } | null
-  >(null);
-  const localBox =
-    override && override.savedKey === savedKey ? override.box : null;
+  const [override, setOverride] = useState<{ savedKey: string; box: CropBox } | null>(null);
+  const localBox = override && override.savedKey === savedKey ? override.box : null;
   const b = localBox ?? savedBox;
 
+  // ── Long-press move gesture ──
+  const [isMoveMode, setIsMoveMode] = useState(false);
+  const justMovedRef = useRef(false);
+  const moveGestureRef = useRef<{
+    timerId: ReturnType<typeof setTimeout> | null;
+    startClientX: number;
+    startClientY: number;
+    startNX: number;
+    startNY: number;
+    startBox: CropBox;
+    pid: number;
+    active: boolean;
+  } | null>(null);
+
   const isLinked = !!crop.linkedExerciseId;
-  const baseColor = isFlash
-    ? 'bg-yellow-400/30'
-    : isSelected
-      ? 'bg-sky-400/20'
-      : isLinked
-        ? (badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10')
-        : (badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10');
-  const borderColor = isFlash
-    ? '#facc15'
-    : isSelected
-      ? '#38bdf8'
-      : isLinked
-        ? '#10b981'
-        : '#f59e0b';
+  const baseColor = isMoveMode
+    ? 'bg-violet-400/30'
+    : isFlash
+      ? 'bg-yellow-400/30'
+      : isSelected
+        ? 'bg-sky-400/20'
+        : isLinked
+          ? (badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10')
+          : (badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10');
+  const borderColor = isMoveMode
+    ? '#a78bfa'
+    : isFlash
+      ? '#facc15'
+      : isSelected
+        ? '#38bdf8'
+        : isLinked
+          ? '#10b981'
+          : '#f59e0b';
 
   const startResize = (handle: HandleKindZ) => {
     const container = containerRef.current;
@@ -801,29 +810,91 @@ function CropRectZ({
       data-crop-rect="1"
       className={`absolute rounded-sm transition-colors ${baseColor} ${
         isFlash ? 'animate-pulse' : ''
-      }`}
+      } ${isMoveMode ? 'cursor-grabbing' : ''}`}
       style={{
         left: `${b.x * 100}%`,
         top: `${b.y * 100}%`,
         width: `${b.w * 100}%`,
         height: `${b.h * 100}%`,
-        // Counter-scale border thickness so it stays ~2px on screen at any
-        // zoom. Outline is unaffected by transform: scale on parent in
-        // most browsers, so we use a thicker outline as a fallback.
         outline: `${2 * invScale}px solid ${borderColor}`,
         outlineOffset: 0,
-        // Only intercept events in tool modes that act on rects directly.
-        // In crop mode the rect must be inert so the parent's draw gesture
-        // can capture without being eaten by stopPropagation.
         pointerEvents: interactive ? 'auto' : 'none',
+        touchAction: isMoveMode ? 'none' : undefined,
       }}
       onClick={(e) => {
-        if (tool !== 'crop' && tool !== 'resize') return;
+        if (justMovedRef.current) { justMovedRef.current = false; return; }
+        if (tool !== 'crop') return;
         e.stopPropagation();
         onTap();
       }}
-      onTouchStart={(e) => { if (interactive) e.stopPropagation(); }}
-      onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
+      onPointerDown={(e) => {
+        if (!interactive) return;
+        e.stopPropagation();
+        if (tool !== 'crop' || !onResize) return;
+        const el = e.currentTarget;
+        const startClientX = e.clientX;
+        const startClientY = e.clientY;
+        const startBox = { ...b };
+        const pid = e.pointerId;
+        const timerId = setTimeout(() => {
+          const mg = moveGestureRef.current;
+          if (!mg || mg.pid !== pid) return;
+          // Compute start normalized position at long-press activation.
+          const container = containerRef.current;
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          const startNorm = screenToNormRef.current?.(mg.startClientX - rect.left, mg.startClientY - rect.top);
+          if (!startNorm) return;
+          mg.timerId = null;
+          mg.active = true;
+          mg.startNX = startNorm.x;
+          mg.startNY = startNorm.y;
+          el.setPointerCapture(pid);
+          setIsMoveMode(true);
+        }, 450);
+        moveGestureRef.current = { timerId, startClientX, startClientY, startNX: 0, startNY: 0, startBox, pid, active: false };
+      }}
+      onPointerMove={(e) => {
+        const mg = moveGestureRef.current;
+        if (!mg || mg.pid !== e.pointerId) return;
+        if (!mg.active) {
+          if (Math.abs(e.clientX - mg.startClientX) > 8 || Math.abs(e.clientY - mg.startClientY) > 8) {
+            if (mg.timerId) clearTimeout(mg.timerId);
+            moveGestureRef.current = null;
+          }
+          return;
+        }
+        e.preventDefault();
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const norm = screenToNormRef.current?.(e.clientX - rect.left, e.clientY - rect.top);
+        if (!norm) return;
+        const dx = norm.x - mg.startNX;
+        const dy = norm.y - mg.startNY;
+        const newX = Math.max(0, Math.min(1 - mg.startBox.w, mg.startBox.x + dx));
+        const newY = Math.max(0, Math.min(1 - mg.startBox.h, mg.startBox.y + dy));
+        setOverride({ savedKey, box: { ...mg.startBox, x: newX, y: newY } });
+      }}
+      onPointerUp={(e) => {
+        const mg = moveGestureRef.current;
+        if (!mg || mg.pid !== e.pointerId) return;
+        if (mg.timerId) clearTimeout(mg.timerId);
+        const wasActive = mg.active;
+        moveGestureRef.current = null;
+        setIsMoveMode(false);
+        if (wasActive) {
+          justMovedRef.current = true;
+          if (localBox && onResize) void onResize(localBox);
+        }
+      }}
+      onPointerCancel={(e) => {
+        const mg = moveGestureRef.current;
+        if (!mg || mg.pid !== e.pointerId) return;
+        if (mg.timerId) clearTimeout(mg.timerId);
+        moveGestureRef.current = null;
+        setIsMoveMode(false);
+      }}
     >
       {/* Centered question number — zooms with the rect, no counter-scaling */}
       {badgesInside && (
