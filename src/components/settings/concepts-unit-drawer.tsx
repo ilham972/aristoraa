@@ -1,8 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useMutation } from 'convex/react';
-import { Plus, Trash2, Video, Link2, X, Search, Check } from 'lucide-react';
+import { useMutation, useQuery } from 'convex/react';
+import { Plus, Trash2, Video, Link2, X, Search, Check, Layers } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -48,24 +48,70 @@ export function ConceptsUnitDrawer({ open, onOpenChange, unit, unitMeta, allExer
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newConceptName, setNewConceptName] = useState('');
 
-  // Concept-type rows for the active unit
-  const unitConcepts = useMemo(() => {
+  // Backend mapping: exercise → concept list, orphans, duplicate-order warnings.
+  const unitMapping = useQuery(
+    api.learningEngine.derivedConcepts.getUnitMapping,
+    unit ? { unitId: unit.id } : 'skip',
+  );
+
+  // All rows for the unit sorted by order (both types) — used for grouping.
+  const unitAllRows = useMemo(() => {
     if (!unit) return [] as Exercise[];
     return allExercises
-      .filter((e) => e.unitId === unit.id && e.type === 'concept')
+      .filter((e) => e.unitId === unit.id)
       .sort((a, b) => a.order - b.order);
   }, [allExercises, unit]);
 
-  // All concept-type rows globally — for the prereq picker
+  // Exercise-type rows only (in order).
+  const unitExerciseRows = useMemo(
+    () => unitAllRows.filter((e) => e.type !== 'concept'),
+    [unitAllRows],
+  );
+
+  // Concept-type rows for the active unit (for "Add concept" logic and prereq picker).
+  const unitConcepts = useMemo(
+    () => unitAllRows.filter((e) => e.type === 'concept'),
+    [unitAllRows],
+  );
+
+  // All concept-type rows globally — for the prereq picker.
   const allConcepts = useMemo(
     () => allExercises.filter((e) => e.type === 'concept'),
     [allExercises],
   );
 
+  // Fast lookup by ID.
+  const exerciseById = useMemo(() => {
+    const m = new Map<string, Exercise>();
+    for (const e of allExercises) m.set(e._id, e);
+    return m;
+  }, [allExercises]);
+
+  // exerciseId → conceptIds (from backend).
+  const exToConceptIds = useMemo(() => {
+    const m = new Map<string, Id<'exercises'>[]>();
+    for (const row of (unitMapping?.exerciseToConcepts ?? [])) {
+      m.set(row.exerciseId as string, row.conceptIds as Id<'exercises'>[]);
+    }
+    return m;
+  }, [unitMapping]);
+
+  // Set of orphan concept IDs (from backend).
+  const orphanSet = useMemo(
+    () => new Set<string>((unitMapping?.orphanConceptIds ?? []) as string[]),
+    [unitMapping],
+  );
+
+  // Concepts that are orphaned (trailing after the last exercise).
+  const orphanConcepts = useMemo(
+    () => unitConcepts.filter((c) => orphanSet.has(c._id as string)),
+    [unitConcepts, orphanSet],
+  );
+
   const handleAdd = async () => {
     if (!unit || !newConceptName.trim()) return;
-    const maxOrder = unitConcepts.length
-      ? Math.max(...allExercises.filter((e) => e.unitId === unit.id).map((e) => e.order))
+    const maxOrder = unitAllRows.length
+      ? Math.max(...unitAllRows.map((e) => e.order))
       : -1;
     try {
       await addConceptMut({
@@ -93,6 +139,38 @@ export function ConceptsUnitDrawer({ open, onOpenChange, unit, unitMeta, allExer
     }
   };
 
+  const conceptCardProps = (c: Exercise) => ({
+    concept: c,
+    allConcepts,
+    onRename: async (name: string) => {
+      try {
+        await renameMut({ id: c._id, name });
+        toast.success('Renamed');
+      } catch (e) { console.error(e); toast.error('Rename failed'); }
+    },
+    onPageChange: async (start: number, end?: number) => {
+      try {
+        await updatePageMut({ id: c._id, pageNumber: start, pageNumberEnd: end });
+      } catch (e) { console.error(e); toast.error('Could not save pages'); }
+    },
+    onVideoChange: async (videoUrl?: string, summary?: string) => {
+      try {
+        await setVideoMut({ id: c._id, videoUrl, conceptSummary: summary });
+      } catch (e) { console.error(e); toast.error('Could not save video'); }
+    },
+    onPrereqsChange: async (ids: Id<'exercises'>[]) => {
+      try {
+        await setPrereqsMut({ id: c._id, prerequisiteExerciseIds: ids });
+      } catch (e) { console.error(e); toast.error('Could not save prerequisites'); }
+    },
+    onDelete: () => handleDelete(c),
+  });
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  // Determine if we have a mapping loaded.
+  const mappingReady = unitMapping !== undefined;
+
   return (
     <Drawer direction="right" open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
@@ -118,43 +196,105 @@ export function ConceptsUnitDrawer({ open, onOpenChange, unit, unitMeta, allExer
             <Plus className="w-3.5 h-3.5" /> Add concept
           </Button>
 
-          {/* Concept cards */}
-          {unitConcepts.length === 0 ? (
+          {/* Empty state — no concepts at all */}
+          {unitConcepts.length === 0 && (
             <div className="rounded-xl border border-dashed border-border/60 bg-muted/30 px-4 py-8 text-center">
               <p className="text-xs text-muted-foreground">
                 No concepts yet. Add one above, or add theory chunks inline via the Details subtab.
               </p>
             </div>
-          ) : (
-            unitConcepts.map((c) => (
-              <ConceptCard
-                key={c._id}
-                concept={c}
-                allConcepts={allConcepts}
-                onRename={async (name) => {
-                  try {
-                    await renameMut({ id: c._id, name });
-                    toast.success('Renamed');
-                  } catch (e) { console.error(e); toast.error('Rename failed'); }
-                }}
-                onPageChange={async (start, end) => {
-                  try {
-                    await updatePageMut({ id: c._id, pageNumber: start, pageNumberEnd: end });
-                  } catch (e) { console.error(e); toast.error('Could not save pages'); }
-                }}
-                onVideoChange={async (videoUrl, summary) => {
-                  try {
-                    await setVideoMut({ id: c._id, videoUrl, conceptSummary: summary });
-                  } catch (e) { console.error(e); toast.error('Could not save video'); }
-                }}
-                onPrereqsChange={async (ids) => {
-                  try {
-                    await setPrereqsMut({ id: c._id, prerequisiteExerciseIds: ids });
-                  } catch (e) { console.error(e); toast.error('Could not save prerequisites'); }
-                }}
-                onDelete={() => handleDelete(c)}
-              />
-            ))
+          )}
+
+          {/* ── Layout when exercise rows exist ── */}
+          {unitExerciseRows.length > 0 && unitConcepts.length > 0 && (
+            <>
+              {unitExerciseRows.map((ex) => {
+                const conceptIds = exToConceptIds.get(ex._id as string) ?? [];
+                const concepts = conceptIds
+                  .map((cid) => exerciseById.get(cid as string))
+                  .filter(Boolean) as Exercise[];
+
+                return (
+                  <div key={ex._id} className="space-y-2">
+                    {/* Exercise header */}
+                    <div className="rounded-lg bg-muted/40 border border-border/50 px-3 py-2 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <Layers className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span className="text-[11px] font-medium text-foreground truncate">
+                          {ex.name}
+                        </span>
+                      </div>
+                      {mappingReady && (
+                        conceptIds.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground shrink-0">Tests concepts:</span>
+                            {conceptIds.map((cid) => {
+                              const concept = exerciseById.get(cid as string);
+                              return (
+                                <span
+                                  key={cid as string}
+                                  className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium"
+                                >
+                                  {concept?.name ?? '?'}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-muted-foreground/60 italic">
+                            No concepts before this exercise — add concept rows above it on the Details page.
+                          </p>
+                        )
+                      )}
+                    </div>
+
+                    {/* Editable concept cards for this exercise group */}
+                    {concepts.map((c) => (
+                      <ConceptCard key={c._id} {...conceptCardProps(c)} />
+                    ))}
+                  </div>
+                );
+              })}
+
+              {/* Orphan section — concepts after the last exercise */}
+              {orphanConcepts.length > 0 && (
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                    <p className="text-[11px] font-medium text-amber-600">Trailing concepts</p>
+                    <p className="text-[10px] text-amber-600/80 mt-0.5">
+                      Not covered by any exercise — move above an exercise on the Details page.
+                    </p>
+                  </div>
+                  {orphanConcepts.map((c) => (
+                    <div key={c._id} className="rounded-xl border border-amber-500/40 overflow-hidden">
+                      <div className="bg-amber-500/10 px-3 py-1.5 flex items-center gap-1.5">
+                        <span className="text-[10px] text-amber-600 font-medium">Trailing concept</span>
+                      </div>
+                      <div className="p-0">
+                        <ConceptCard {...conceptCardProps(c)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Layout when NO exercise rows exist but concepts do ── */}
+          {unitExerciseRows.length === 0 && unitConcepts.length > 0 && (
+            <>
+              {mappingReady && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                  <p className="text-[11px] font-medium text-amber-600">No exercise rows in this unit</p>
+                  <p className="text-[10px] text-amber-600/80 mt-0.5">
+                    All concepts are unlinked. Add exercise rows on the Details page so concepts can be assigned to them.
+                  </p>
+                </div>
+              )}
+              {unitConcepts.map((c) => (
+                <ConceptCard key={c._id} {...conceptCardProps(c)} />
+              ))}
+            </>
           )}
         </div>
 

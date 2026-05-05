@@ -31,7 +31,10 @@
       "Bash(cat vercel.json)",
       "Bash(git commit -m 'Update data entry tab *)",
       "Bash(git commit -m 'Update settings and generated API types *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Ilham\\\\aaa projects\\\\math-tracker\\\\convex\" -Depth 0)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)"
     ]
   }
 }
