@@ -43,6 +43,8 @@ interface Props {
   pillHeader?: React.ReactNode;
   badgesInside?: boolean;
   onToggleBadgesInside?: () => void;
+  // Phase 0.6b: per-crop completeness predicate. Incomplete crops render red.
+  isCropIncomplete?: (crop: QuestionBankRow) => boolean;
 }
 
 const MIN_CROP_SIZE = 0.01; // 1% — generous threshold so very small Qs crop
@@ -75,6 +77,7 @@ export function ZoomedPageView({
   pillHeader,
   badgesInside,
   onToggleBadgesInside,
+  isCropIncomplete,
 }: Props) {
   const canCrop = !!onDrawComplete;
   // Convenience flags from the active tool. The pan-default catches every
@@ -611,6 +614,7 @@ export function ZoomedPageView({
                     label={cropLabelFor ? cropLabelFor(c) : c.linkedQuestionKey ? c.linkedQuestionKey : 'unlinked'}
                     isSelected={selectedCropId === c._id}
                     isFlash={flashCropId === c._id}
+                    isIncomplete={isCropIncomplete ? isCropIncomplete(c) : false}
                     invScale={1 / scale}
                     tool={tool}
                     screenToNormRef={screenToNormRef}
@@ -665,6 +669,7 @@ function CropRectZ({
   label,
   isSelected,
   isFlash,
+  isIncomplete,
   invScale,
   tool,
   screenToNormRef,
@@ -678,6 +683,7 @@ function CropRectZ({
   label: string;
   isSelected: boolean;
   isFlash: boolean;
+  isIncomplete?: boolean;
   invScale: number;
   tool: CropTool;
   screenToNormRef: React.RefObject<
@@ -719,18 +725,22 @@ function CropRectZ({
       ? 'bg-yellow-400/30'
       : isSelected
         ? 'bg-sky-400/20'
-        : isLinked
-          ? (badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10')
-          : (badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10');
+        : isIncomplete
+          ? (badgesInside ? 'bg-red-500/40' : 'bg-red-500/15')
+          : isLinked
+            ? (badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10')
+            : (badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10');
   const borderColor = isMoveMode
     ? '#a78bfa'
     : isFlash
       ? '#facc15'
       : isSelected
         ? '#38bdf8'
-        : isLinked
-          ? '#10b981'
-          : '#f59e0b';
+        : isIncomplete
+          ? '#ef4444'
+          : isLinked
+            ? '#10b981'
+            : '#f59e0b';
 
   const startResize = (handle: HandleKindZ) => {
     const container = containerRef.current;

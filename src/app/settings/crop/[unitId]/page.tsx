@@ -175,6 +175,27 @@ export default function UnitCropPage() {
       : 'skip',
   );
 
+  // Phase 0.6b: per-crop completeness for the red-overlay rendering.
+  const cropIdList = useMemo(
+    () => (pageCrops ?? []).map((c) => c._id).sort() as Id<'questionBank'>[],
+    [pageCrops],
+  );
+  const completenessRows = useQuery(
+    api.learningEngine.difficultyTab.getCompletenessForCrops,
+    cropIdList.length > 0 ? { cropIds: cropIdList } : 'skip',
+  );
+  const incompleteCropIdSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of completenessRows ?? []) {
+      if (!r.hasConcept || !r.hasDifficulty) s.add(r.cropId as string);
+    }
+    return s;
+  }, [completenessRows]);
+  const isCropIncomplete = useCallback(
+    (c: { _id: Id<'questionBank'> }) => incompleteCropIdSet.has(c._id as string),
+    [incompleteCropIdSet],
+  );
+
   type PageCrop = NonNullable<typeof pageCrops>[number];
   const cropsByPage = useMemo(() => {
     const map = new Map<string, PageCrop[]>();
@@ -608,6 +629,7 @@ export default function UnitCropPage() {
                       cropLabelFor={cropLabelFor}
                       flashCropId={liveFlashCropId}
                       badgesInside={badgesInside}
+                      isCropIncomplete={isCropIncomplete}
                       onZoom={
                         pageId && selectedFastPage.url
                           ? (id, na) =>
@@ -674,6 +696,7 @@ export default function UnitCropPage() {
                       cropLabelFor={undefined}
                       flashCropId={liveFlashCropId}
                       badgesInside={badgesInside}
+                      isCropIncomplete={isCropIncomplete}
                       onZoom={
                         pageId && pg.url
                           ? (id, na) =>
@@ -709,6 +732,7 @@ export default function UnitCropPage() {
           flashCropId={liveFlashCropId}
           badgesInside={badgesInside}
           onToggleBadgesInside={() => setBadgesInside((b) => !b)}
+          isCropIncomplete={isCropIncomplete}
           tool={tool}
           onToolChange={handleToolChange}
           onClose={() => setZoomState(null)}

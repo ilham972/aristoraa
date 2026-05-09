@@ -65,6 +65,10 @@ interface Props {
   // If true, the question badge is rendered inside the crop box instead of
   // outside, to avoid obscuring nearby questions when cropping small areas.
   badgesInside?: boolean;
+  // Phase 0.6b: per-crop completeness predicate. When a crop is "incomplete"
+  // (missing concept tag and/or difficulty rating), the rect renders red as
+  // a visual prompt that the user should rate it in the Difficulty subtab.
+  isCropIncomplete?: (crop: QuestionBankRow) => boolean;
 }
 
 const MIN_CROP_SIZE = 0.015; // 1.5% — lets very small questions be cropped
@@ -85,6 +89,7 @@ export function PageCropOverlay({
   onZoom,
   flashCropId,
   badgesInside,
+  isCropIncomplete,
 }: Props) {
   // Convenience flags derived from the active tool. `resizeMode` is gated
   // per-rect inside CropRect, not here.
@@ -515,6 +520,7 @@ export function PageCropOverlay({
                 tool={tool}
                 isSelected={selectedCropId === c._id}
                 isFlash={flashCropId === c._id}
+                isIncomplete={isCropIncomplete ? isCropIncomplete(c) : false}
                 labelOverride={cropLabelFor ? cropLabelFor(c) : undefined}
                 parentRef={captureRef}
                 zoomScale={zoom.scale}
@@ -575,6 +581,7 @@ function CropRect({
   tool,
   isSelected,
   isFlash,
+  isIncomplete,
   labelOverride,
   parentRef,
   zoomScale,
@@ -588,6 +595,7 @@ function CropRect({
   tool: CropTool;
   isSelected?: boolean;
   isFlash?: boolean;
+  isIncomplete?: boolean;
   labelOverride?: string;
   parentRef?: React.RefObject<HTMLDivElement | null>;
   zoomScale: number;
@@ -631,9 +639,11 @@ function CropRect({
       ? 'border-2 border-yellow-400 bg-yellow-400/30 ring-4 ring-yellow-400/50 animate-pulse'
       : isSelected
         ? 'border-2 border-sky-400 bg-sky-400/20 ring-2 ring-sky-400/40'
-        : isLinked
-          ? `border-2 border-emerald-500 ${badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10 hover:bg-emerald-500/20'}`
-          : `border-2 border-amber-500 ${badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10 hover:bg-amber-500/20'}`;
+        : isIncomplete
+          ? `border-2 border-red-500 ${badgesInside ? 'bg-red-500/40' : 'bg-red-500/15 hover:bg-red-500/25'}`
+          : isLinked
+            ? `border-2 border-emerald-500 ${badgesInside ? 'bg-emerald-500/40' : 'bg-emerald-500/10 hover:bg-emerald-500/20'}`
+            : `border-2 border-amber-500 ${badgesInside ? 'bg-amber-500/40' : 'bg-amber-500/10 hover:bg-amber-500/20'}`;
 
   // ── Corner-handle resize ──
   const startResize = (handle: HandleKind) => {

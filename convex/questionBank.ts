@@ -8,6 +8,15 @@ const cropBoxValidator = v.object({
   h: v.number(),
 });
 
+// Phase 0.6b: difficulty must be an integer 1..5. Throws if violated;
+// undefined is allowed (means "not yet rated" — surfaced in UI as red).
+function assertDifficulty(d: number | undefined): void {
+  if (d === undefined) return;
+  if (!Number.isInteger(d) || d < 1 || d > 5) {
+    throw new Error("difficulty must be an integer in [1, 5]");
+  }
+}
+
 export const listByPage = query({
   args: { textbookPageId: v.id("textbookPages") },
   handler: async (ctx, args) => {
@@ -432,6 +441,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertDifficulty(args.difficulty);
     return await ctx.db.insert("questionBank", {
       ...args,
       createdAt: Date.now(),
@@ -534,8 +544,24 @@ export const update = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertDifficulty(args.difficulty);
     const { id, ...patch } = args;
     await ctx.db.patch(id, patch);
+  },
+});
+
+// Patch a single crop's difficulty. Phase 0.6b: used by the Difficulty subtab
+// to bulk-rate already-cropped questions.
+export const setDifficulty = mutation({
+  args: {
+    id: v.id("questionBank"),
+    difficulty: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    assertDifficulty(args.difficulty);
+    await ctx.db.patch(args.id, { difficulty: args.difficulty });
   },
 });
 

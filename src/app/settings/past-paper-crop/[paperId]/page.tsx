@@ -63,6 +63,29 @@ export default function PastPaperCropPage() {
   const resolved = useQuery(api.paperStructures.getResolvedForPaper, { paperId });
   const allTags = useQuery(api.topicTags.list);
 
+  // Phase 0.6b: per-crop completeness for the red-overlay rendering. We only
+  // need to query when there are crops; key the query on the sorted id list
+  // so it doesn't refetch on every render while the same crops are present.
+  const cropIdList = useMemo(
+    () => (paperCrops ?? []).map((c) => c._id).sort() as Id<'questionBank'>[],
+    [paperCrops],
+  );
+  const completenessRows = useQuery(
+    api.learningEngine.difficultyTab.getCompletenessForCrops,
+    cropIdList.length > 0 ? { cropIds: cropIdList } : 'skip',
+  );
+  const incompleteCropIdSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of completenessRows ?? []) {
+      if (!r.hasConcept || !r.hasDifficulty) s.add(r.cropId as string);
+    }
+    return s;
+  }, [completenessRows]);
+  const isCropIncomplete = useCallback(
+    (c: { _id: Id<'questionBank'> }) => incompleteCropIdSet.has(c._id as string),
+    [incompleteCropIdSet],
+  );
+
   type PaperCrop = NonNullable<typeof paperCrops>[number];
 
   const cropsByPage = useMemo(() => {
@@ -475,6 +498,7 @@ export default function PastPaperCropPage() {
                   badgesInside={badgesInside}
                   onDraw={handleDraw}
                   onCropTap={handleCropTap}
+                  isCropIncomplete={isCropIncomplete}
                   onZoom={(fakeId, pageNumber, imageUrl, na) =>
                     setZoomState({ pageId: fakeId, pageNumber, imageUrl, naturalAspect: na })
                   }
@@ -514,6 +538,7 @@ export default function PastPaperCropPage() {
           }}
           onCropDelete={handleCropDelete}
           pillHeader={renderHeader()}
+          isCropIncomplete={isCropIncomplete}
         />
       )}
 
@@ -546,6 +571,7 @@ function PaperPageRow({
   onDraw,
   onCropTap,
   onZoom,
+  isCropIncomplete,
 }: {
   pg: { _id: Id<'pastPaperPages'>; pageNumber: number };
   paperId: Id<'pastPapers'>;
@@ -557,6 +583,7 @@ function PaperPageRow({
   onDraw: (pageId: Id<'pastPaperPages'>, box: CropBox) => void;
   onCropTap: (cropId: Id<'questionBank'>) => void;
   onZoom: (fakeId: FakePageId, pageNumber: number, imageUrl: string, naturalAspect: number | null) => void;
+  isCropIncomplete?: (c: { _id: Id<'questionBank'> }) => boolean;
 }) {
   const imageUrl = useQuery(api.pastPaperPages.getPageImage, {
     pastPaperId: paperId,
@@ -579,6 +606,7 @@ function PaperPageRow({
       cropLabelFor={cropLabelFor}
       flashCropId={null}
       badgesInside={badgesInside}
+      isCropIncomplete={isCropIncomplete}
       onZoom={
         imageUrl
           ? (id, na) => onZoom(id, pg.pageNumber, imageUrl, na)

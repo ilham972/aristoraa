@@ -17,9 +17,10 @@ import type { Id } from '@/lib/convex';
 import { toast } from 'sonner';
 import { SubQuestionInline } from '@/components/sub-question-inline';
 import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
-import { ConceptsUnitDrawer } from '@/components/settings/concepts-unit-drawer';
+import { ConceptsUnitView } from '@/components/settings/concepts-unit-drawer';
+import { DifficultyTab } from '@/components/settings/difficulty-tab';
 
-type Layer = 'exercises' | 'pages' | 'details' | 'concepts' | 'past-papers';
+type Layer = 'exercises' | 'pages' | 'details' | 'concepts' | 'past-papers' | 'difficulty';
 
 interface BookUnit {
   id: string;
@@ -33,9 +34,10 @@ interface BookUnit {
 const SS_BOOK = 'dataEntry.selectedBookId';
 const SS_LAYER = 'dataEntry.activeLayer';
 const SS_DETAIL = 'dataEntry.detailUnitId';
+const SS_CONCEPTS = 'dataEntry.conceptsUnitId';
 
 const isLayer = (v: string | null): v is Layer =>
-  v === 'exercises' || v === 'pages' || v === 'details' || v === 'concepts' || v === 'past-papers';
+  v === 'exercises' || v === 'pages' || v === 'details' || v === 'concepts' || v === 'past-papers' || v === 'difficulty';
 
 export function DataEntryTab() {
   const router = useRouter();
@@ -87,6 +89,10 @@ export function DataEntryTab() {
     if (typeof window === 'undefined') return null;
     return window.sessionStorage.getItem(SS_DETAIL);
   });
+  const [conceptsUnitId, setConceptsUnitId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage.getItem(SS_CONCEPTS);
+  });
   const [conceptDialogOpen, setConceptDialogOpen] = useState(false);
   const [conceptName, setConceptName] = useState('');
   const [conceptAfterOrder, setConceptAfterOrder] = useState(-1);
@@ -97,8 +103,7 @@ export function DataEntryTab() {
   // === Sub-question inline expansion ===
   const [expandedSubQId, setExpandedSubQId] = useState<Id<'exercises'> | null>(null);
 
-  // === LAYER 4 — Concepts drawer ===
-  const [conceptsDrawerUnit, setConceptsDrawerUnit] = useState<BookUnit | null>(null);
+  // === LAYER 4 — Concepts page ===
   const [pagesDrawerUnit, setPagesDrawerUnit] = useState<BookUnit | null>(null);
 
   // === DERIVED ===
@@ -120,6 +125,11 @@ export function DataEntryTab() {
     if (detailUnitId) window.sessionStorage.setItem(SS_DETAIL, detailUnitId);
     else window.sessionStorage.removeItem(SS_DETAIL);
   }, [detailUnitId]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (conceptsUnitId) window.sessionStorage.setItem(SS_CONCEPTS, conceptsUnitId);
+    else window.sessionStorage.removeItem(SS_CONCEPTS);
+  }, [conceptsUnitId]);
 
   const bookUnits = useMemo(() => {
     if (!selectedBook?.startUnit || !selectedBook?.endUnit) return [];
@@ -133,6 +143,12 @@ export function DataEntryTab() {
     () =>
       detailUnitId ? bookUnits.find(b => b.id === detailUnitId) ?? null : null,
     [detailUnitId, bookUnits],
+  );
+
+  const conceptsUnit = useMemo<BookUnit | null>(
+    () =>
+      conceptsUnitId ? bookUnits.find(b => b.id === conceptsUnitId) ?? null : null,
+    [conceptsUnitId, bookUnits],
   );
 
   // === Crop counts per exercise (only loaded while in Details view) ===
@@ -256,7 +272,7 @@ export function DataEntryTab() {
       setPgEnd(meta?.endPage?.toString() || '');
       setPgDialogUnit(unit);
     } else if (activeLayer === 'concepts') {
-      setConceptsDrawerUnit(unit);
+      setConceptsUnitId(unit.id);
     } else {
       setDetailUnitId(unit.id);
     }
@@ -579,12 +595,46 @@ export function DataEntryTab() {
   }
 
   // ────────────────────────────────────────────────
+  // CONCEPTS INLINE VIEW (mirrors the detail view pattern)
+  // ────────────────────────────────────────────────
+  if (conceptsUnit && activeLayer === 'concepts') {
+    const meta = getUnitMeta(conceptsUnit.id);
+    return (
+      <>
+        {/* Header */}
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            className="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-muted transition-colors"
+            onClick={() => setConceptsUnitId(null)}
+          >
+            <ChevronLeft className="w-5 h-5 text-muted-foreground" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground truncate">{conceptsUnit.name}</p>
+            {meta?.startPage != null && meta?.endPage != null && (
+              <p className="text-xs text-muted-foreground">
+                Pages {meta.startPage} – {meta.endPage}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Inline concept content */}
+        <ConceptsUnitView
+          unit={conceptsUnit}
+          allExercises={allExercises || []}
+        />
+      </>
+    );
+  }
+
+  // ────────────────────────────────────────────────
   // MAIN VIEW — Book badges + Layer buttons + Grid
   // ────────────────────────────────────────────────
   return (
     <>
-      {/* Book badges — hidden on past-papers tab */}
-      {activeLayer !== 'past-papers' && <div className="flex gap-2 overflow-x-auto pb-2 mb-3 no-scrollbar">
+      {/* Book badges — hidden on past-papers and difficulty tabs */}
+      {activeLayer !== 'past-papers' && activeLayer !== 'difficulty' && <div className="flex gap-2 overflow-x-auto pb-2 mb-3 no-scrollbar">
         {sortedBooks.length === 0 && (
           <p className="text-sm text-muted-foreground">No books yet. Create them in Content tab.</p>
         )}
@@ -634,10 +684,12 @@ export function DataEntryTab() {
             { key: 'details', label: 'Details' },
             { key: 'concepts', label: 'Concepts' },
             { key: 'past-papers', label: 'Past Papers' },
+            { key: 'difficulty', label: 'Difficulty' },
           ] as { key: Layer; label: string }[]
         ).map(layer => {
-          const done = layer.key !== 'past-papers' ? layerDoneCount(layer.key) : 0;
-          const total = layer.key !== 'past-papers' ? bookUnits.length : 0;
+          const showCount = layer.key !== 'past-papers' && layer.key !== 'difficulty';
+          const done = showCount ? layerDoneCount(layer.key) : 0;
+          const total = showCount ? bookUnits.length : 0;
           const isActive = activeLayer === layer.key;
           return (
             <button
@@ -645,6 +697,7 @@ export function DataEntryTab() {
               onClick={() => {
                 setActiveLayer(layer.key);
                 setDetailUnitId(null);
+                setConceptsUnitId(null);
               }}
               className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all ${
                 isActive ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -770,8 +823,11 @@ export function DataEntryTab() {
         );
       })()}
 
+      {/* ─── DIFFICULTY SECTION ─── */}
+      {activeLayer === 'difficulty' && <DifficultyTab />}
+
       {/* ─── BOOK-BASED SECTIONS ─── */}
-      {activeLayer !== 'past-papers' && (
+      {activeLayer !== 'past-papers' && activeLayer !== 'difficulty' && (
         !selectedBook ? (
           <p className="text-sm text-muted-foreground text-center py-8">Select a book to start</p>
         ) : (
@@ -869,15 +925,6 @@ export function DataEntryTab() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* ─── LAYER 4: Concepts Drawer ─── */}
-        <ConceptsUnitDrawer
-          open={!!conceptsDrawerUnit}
-          onOpenChange={(o) => { if (!o) setConceptsDrawerUnit(null); }}
-          unit={conceptsDrawerUnit}
-          unitMeta={conceptsDrawerUnit ? getUnitMeta(conceptsDrawerUnit.id) : undefined}
-          allExercises={allExercises || []}
-        />
 
         <PagesOverviewDrawer
           open={!!pagesDrawerUnit}
