@@ -6,6 +6,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Book, FileText } from 'lucide-react';
+import { toast } from 'sonner';
 import { findUnit } from '@/lib/curriculum-data';
 import { MODULE_COLORS } from '@/lib/types';
 import { api } from '@/lib/convex';
@@ -35,6 +36,15 @@ export function ConceptDetailPanel({ row, threshold, onClose }: Props) {
   const parentExId = useQuery(
     api.learningEngine.derivedConcepts.getUnitMapping,
     row ? { unitId: row.unitId } : 'skip',
+  );
+
+  // Past papers whose grade has slot-tags linking to this concept's unit —
+  // used by the "Crop more from past papers" deep-link. Empty array means
+  // there are no topic-tag → slot relationships configured for this unit,
+  // in which case we fall back to /settings with a toast.
+  const relevantPapers = useQuery(
+    api.learningEngine.coverage.papersRelevantToConcept,
+    row ? { conceptExerciseId: row.conceptId } : 'skip',
   );
 
   if (!row) {
@@ -75,10 +85,21 @@ export function ConceptDetailPanel({ row, threshold, onClose }: Props) {
   }
 
   function goPastPaper() {
-    // No paper context known here — route to lead's past-paper management
-    // (Settings → Data Entry). This is intentional: 0.6c doesn't pre-filter
-    // papers by topic linkage. Phase D will refine routing if needed.
-    router.push('/settings');
+    const papers = relevantPapers ?? [];
+    if (papers.length === 0) {
+      toast.info(
+        'No past papers configured for this unit yet. Open Settings → Tags / Exam to link topics to slots first.',
+      );
+      router.push('/settings');
+      return;
+    }
+    const first = papers[0];
+    if (papers.length > 1) {
+      toast.success(
+        `${papers.length} relevant papers — opening most recent (G${first.grade} T${first.term} ${first.year}).`,
+      );
+    }
+    router.push(`/settings/past-paper-crop/${first._id}`);
   }
 
   return (

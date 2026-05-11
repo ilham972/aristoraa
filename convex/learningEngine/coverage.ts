@@ -124,6 +124,97 @@ export const coverageByGradeTerm = query({
   },
 });
 
+// Find past papers relevant to a concept's unit, for the "Crop more from past
+// papers" deep-link from the coverage detail panel. A paper is "relevant" when
+// its grade has at least one paper-structure slot tagged with a topic tag that
+// links to the concept's unit — i.e. someone has declared "papers of grade G
+// reserve a slot for topics covering this unit." Sorted most-recent first
+// (year desc, term desc, uploadedAt desc) so the deep-link lands on the
+// freshest paper the user is likely to be cropping.
+export const papersRelevantToConcept = query({
+  args: { conceptExerciseId: v.id("exercises") },
+  handler: async (ctx, { conceptExerciseId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const concept = await ctx.db.get(conceptExerciseId);
+    if (!concept || concept.type !== "concept") return [];
+
+    // Tags linked to this concept's unit.
+    const links = await ctx.db
+      .query("examTopicTagLinks")
+      .withIndex("by_unit", (q) => q.eq("unitId", concept.unitId))
+      .collect();
+    if (links.length === 0) return [];
+    const tagIds = Array.from(
+      new Set(links.map((l) => l.tagId as unknown as string)),
+    );
+
+    // Grades whose paper-structure slots reference those tags. We collect grade
+    // numbers from paperStructureSlotTags → paperStructureParts → paperStructures.
+    const slotTagRows: Array<{ partId: Id<"paperStructureParts"> }> = [];
+    for (const tagIdStr of tagIds) {
+      const rows = await ctx.db
+        .query("paperStructureSlotTags")
+        .withIndex("by_tag", (q) =>
+          q.eq("tagId", tagIdStr as unknown as Id<"examTopicTags">),
+        )
+        .collect();
+      for (const r of rows) slotTagRows.push({ partId: r.partId });
+    }
+
+    const partIds = Array.from(
+      new Set(slotTagRows.map((s) => s.partId as unknown as string)),
+    );
+    const structureIdSet = new Set<string>();
+    for (const partIdStr of partIds) {
+      const part = await ctx.db.get(partIdStr as unknown as Id<"paperStructureParts">);
+      if (part) structureIdSet.add(part.structureId as unknown as string);
+    }
+    const structureIds = Array.from(structureIdSet);
+    const gradeSet = new Set<number>();
+    for (const sIdStr of structureIds) {
+      const s = await ctx.db.get(sIdStr as unknown as Id<"paperStructures">);
+      if (s) gradeSet.add(s.grade);
+    }
+    const grades = Array.from(gradeSet);
+
+    if (grades.length === 0) return [];
+
+    // Pull all past papers for those grades, sorted by recency.
+    const papers: Array<{
+      _id: Id<"pastPapers">;
+      grade: number;
+      term: number;
+      year: number;
+      schoolName?: string;
+      uploadedAt: number;
+    }> = [];
+    for (const g of grades) {
+      const rows = await ctx.db
+        .query("pastPapers")
+        .withIndex("by_grade", (q) => q.eq("grade", g))
+        .collect();
+      for (const p of rows) {
+        papers.push({
+          _id: p._id,
+          grade: p.grade,
+          term: p.term,
+          year: p.year,
+          schoolName: p.schoolName,
+          uploadedAt: p.uploadedAt,
+        });
+      }
+    }
+    papers.sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      if (a.term !== b.term) return b.term - a.term;
+      return b.uploadedAt - a.uploadedAt;
+    });
+    return papers;
+  },
+});
+
 // Resolve orphan concept rows (id + name + unitId) for the orphan list UI.
 // Keeps the main coverageByGradeTerm payload small while letting the page
 // render full concept identities under the orphan section.
