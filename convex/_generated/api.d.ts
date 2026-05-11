@@ -15,6 +15,8 @@ import type * as doubts from "../doubts.js";
 import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as lead from "../lead.js";
+import type * as learningEngine_config from "../learningEngine/config.js";
+import type * as learningEngine_coverage from "../learningEngine/coverage.js";
 import type * as learningEngine_derivedConcepts from "../learningEngine/derivedConcepts.js";
 import type * as learningEngine_difficultyTab from "../learningEngine/difficultyTab.js";
 import type * as migrations from "../migrations.js";
@@ -54,6 +56,8 @@ declare const fullApi: ApiFromModules<{
   entries: typeof entries;
   exercises: typeof exercises;
   lead: typeof lead;
+  "learningEngine/config": typeof learningEngine_config;
+  "learningEngine/coverage": typeof learningEngine_coverage;
   "learningEngine/derivedConcepts": typeof learningEngine_derivedConcepts;
   "learningEngine/difficultyTab": typeof learningEngine_difficultyTab;
   migrations: typeof migrations;
