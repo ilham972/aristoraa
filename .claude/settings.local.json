@@ -36,7 +36,13 @@
       "Bash(Select-Object Name, PSIsContainer)",
       "Bash(Format-Table -AutoSize)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Ilham\\\\aaa projects\\\\math-tracker\\\\convex\\\\learningEngine\" -ErrorAction SilentlyContinue)",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "Bash(git commit -m 'feat\\(0.6d\\): wire '\\\\''Crop more from past papers'\\\\'' deep-link to relevant paper *)",
+      "Bash(git commit -m 'feat\\(algo-A.1\\): memoryState + attemptLog schema for FSRS-lite memory model *)",
+      "Bash(git commit -m 'feat\\(algo-A.2\\): recordAttempt mutation + FSRS-lite memory update *)",
+      "Bash(git commit -m 'feat\\(algo-A.3\\): mastery derivation queries \\(masteryFor / masteryAll\\) *)",
+      "Bash(git commit -m 'feat\\(algo-A.4\\): backfillStudent mutation + backfillStatus query *)",
+      "Bash(git commit -m 'feat\\(algo-A.5\\): per-student mastery dashboard at /algorithm/mastery *)"
     ]
   }
 }
