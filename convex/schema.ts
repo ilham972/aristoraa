@@ -354,6 +354,51 @@ export default defineSchema({
     .index("by_part", ["partId"])
     .index("by_tag", ["tagId"]),
 
+  // ─── Learning engine Phase A.1 ────────────────────────────────────────
+  // Per (student, concept) FSRS-lite memory state. One row per pairing,
+  // lazily created by A.2's recordAttempt when a student first hits a
+  // concept. Mutated only by attempt ingestion; mastery is a *derived*
+  // view over this row (see A.3) and is never stored.
+  //   D (difficulty) ∈ [1, 10]  — learner-specific difficulty for the concept
+  //   S (stability)  ≥ 0 days   — interval at which retrievability R = 0.9
+  //   correctWeighted / wrongWeighted accumulate per-attempt difficulty
+  //     weight = 0.6 + 0.2 * questionDifficulty   (range 0.8..1.6)
+  memoryState: defineTable({
+    studentId: v.id("students"),
+    conceptExerciseId: v.id("exercises"),     // points at exercises row where type === "concept"
+    difficulty: v.number(),                    // 1..10  (FSRS D, init 5.0)
+    stability: v.number(),                     // days   (FSRS S, init DEFAULT_INIT_STABILITY = 1.0)
+    lastReviewAt: v.number(),                  // ms epoch of the most recent attempt
+    lastResponse: v.string(),                  // "good" | "again" | "hard"
+    attemptCount: v.number(),
+    correctWeighted: v.number(),               // Σ weight(q) on correct attempts
+    wrongWeighted: v.number(),                 // Σ weight(q) on wrong attempts
+    initializedAt: v.number(),
+  })
+    .index("by_student", ["studentId"])
+    .index("by_student_concept", ["studentId", "conceptExerciseId"])
+    .index("by_student_lastReview", ["studentId", "lastReviewAt"]),
+
+  // Append-only log of every scored attempt. Drives A.4 backfill from legacy
+  // entries, F.3 calibration replay (snapshot mastery as-of an exam date),
+  // and Phase G experiment auditing. Never mutated after insert.
+  //   source: "session" | "homework" | "diagnostic" | "exam"
+  //           | "backfill" | "legacy-unit-fallback"
+  attemptLog: defineTable({
+    studentId: v.id("students"),
+    conceptExerciseId: v.id("exercises"),
+    questionId: v.optional(v.id("questionBank")), // null for legacy attempts pre-question-bank
+    exerciseId: v.optional(v.id("exercises")),
+    questionKey: v.optional(v.string()),
+    response: v.string(),                          // "good" | "again" | "skipped"
+    difficulty: v.number(),                        // q.difficulty 1..5, default 3 when unknown
+    weight: v.number(),                            // computed weight(q) = 0.6 + 0.2 * difficulty
+    occurredAt: v.number(),                        // ms epoch
+    source: v.string(),
+  })
+    .index("by_student_time", ["studentId", "occurredAt"])
+    .index("by_student_concept_time", ["studentId", "conceptExerciseId", "occurredAt"]),
+
   // Lead's per-student "next task" for a given day. Upserted by (studentId, date).
   // Phase 4 (student tablet) reads this for the student's home screen.
   currentAssignments: defineTable({
