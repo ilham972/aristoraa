@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap } from 'lucide-react';
+import { BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -267,6 +267,11 @@ export default function StudentsPage() {
                     <Link href={`/timeline/student/${student._id}`}>
                       <Button variant="ghost" size="icon-xs" title="Timeline">
                         <Activity className="w-3.5 h-3.5" />
+                      </Button>
+                    </Link>
+                    <Link href={`/students/${student._id}/mastery`}>
+                      <Button variant="ghost" size="icon-xs" title="Mastery">
+                        <Brain className="w-3.5 h-3.5" />
                       </Button>
                     </Link>
                     <Button
