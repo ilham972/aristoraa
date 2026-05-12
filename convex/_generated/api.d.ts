@@ -16,6 +16,7 @@ import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as lead from "../lead.js";
 import type * as learningEngine_backfill from "../learningEngine/backfill.js";
+import type * as learningEngine_calendar from "../learningEngine/calendar.js";
 import type * as learningEngine_config from "../learningEngine/config.js";
 import type * as learningEngine_coverage from "../learningEngine/coverage.js";
 import type * as learningEngine_derivedConcepts from "../learningEngine/derivedConcepts.js";
@@ -23,6 +24,7 @@ import type * as learningEngine_difficultyTab from "../learningEngine/difficulty
 import type * as learningEngine_importance from "../learningEngine/importance.js";
 import type * as learningEngine_mastery from "../learningEngine/mastery.js";
 import type * as learningEngine_memory from "../learningEngine/memory.js";
+import type * as learningEngine_profile from "../learningEngine/profile.js";
 import type * as learningEngine_studentDashboard from "../learningEngine/studentDashboard.js";
 import type * as migrations from "../migrations.js";
 import type * as paperStructures from "../paperStructures.js";
@@ -62,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   exercises: typeof exercises;
   lead: typeof lead;
   "learningEngine/backfill": typeof learningEngine_backfill;
+  "learningEngine/calendar": typeof learningEngine_calendar;
   "learningEngine/config": typeof learningEngine_config;
   "learningEngine/coverage": typeof learningEngine_coverage;
   "learningEngine/derivedConcepts": typeof learningEngine_derivedConcepts;
@@ -69,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/importance": typeof learningEngine_importance;
   "learningEngine/mastery": typeof learningEngine_mastery;
   "learningEngine/memory": typeof learningEngine_memory;
+  "learningEngine/profile": typeof learningEngine_profile;
   "learningEngine/studentDashboard": typeof learningEngine_studentDashboard;
   migrations: typeof migrations;
   paperStructures: typeof paperStructures;

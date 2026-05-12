@@ -6,6 +6,7 @@ import { useQuery } from 'convex/react';
 import { Brain, ChevronLeft } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { StudentMastery } from '@/components/learning/student-mastery';
+import { StudentExamOutlook } from '@/components/learning/student-exam-outlook';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -69,6 +70,7 @@ export default function StudentMasteryPage({ params }: PageProps) {
                 )}
             </div>
           </div>
+          <StudentExamOutlook studentId={studentId} />
           <StudentMastery studentId={studentId} />
         </>
       )}

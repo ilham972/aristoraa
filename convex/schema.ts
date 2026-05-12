@@ -424,6 +424,26 @@ export default defineSchema({
     .index("by_grade_term_concept", ["grade", "term", "conceptExerciseId"])
     .index("by_grade_term", ["grade", "term"]),
 
+  // ─── Phase C.3: exam calendar ─────────────────────────────────────────────
+  // Scheduled term-exam dates per (grade, term, year). Drives the SR exam-date
+  // backstop (Phase D.5), retention-debt "marks at risk in upcoming exam"
+  // (Phase C.2), and the predictor (Phase G.1). One row per (grade, term, year)
+  // — composite key enforced in the upsert mutation, not via DB constraint.
+  //   examDate stored as YYYY-MM-DD string for cheap lexicographic ordering.
+  //   totalMarks is preferred by C.2 retention-debt over the most-recent past
+  //   paper's totalMarks; both are optional and the consumer falls back to 100.
+  examCalendar: defineTable({
+    grade: v.number(),
+    term: v.number(), // 1 | 2 | 3
+    year: v.number(),
+    examDate: v.string(), // YYYY-MM-DD
+    totalMarks: v.optional(v.number()),
+    notes: v.optional(v.string()),
+  })
+    .index("by_grade_term_year", ["grade", "term", "year"])
+    .index("by_examDate", ["examDate"])
+    .index("by_grade", ["grade"]),
+
   // Lead's per-student "next task" for a given day. Upserted by (studentId, date).
   // Phase 4 (student tablet) reads this for the student's home screen.
   currentAssignments: defineTable({
