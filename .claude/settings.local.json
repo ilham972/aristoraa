@@ -42,7 +42,8 @@
       "Bash(git commit -m 'feat\\(algo-A.2\\): recordAttempt mutation + FSRS-lite memory update *)",
       "Bash(git commit -m 'feat\\(algo-A.3\\): mastery derivation queries \\(masteryFor / masteryAll\\) *)",
       "Bash(git commit -m 'feat\\(algo-A.4\\): backfillStudent mutation + backfillStatus query *)",
-      "Bash(git commit -m 'feat\\(algo-A.5\\): per-student mastery dashboard at /algorithm/mastery *)"
+      "Bash(git commit -m 'feat\\(algo-A.5\\): per-student mastery dashboard at /algorithm/mastery *)",
+      "Bash(git commit *)"
     ]
   }
 }
