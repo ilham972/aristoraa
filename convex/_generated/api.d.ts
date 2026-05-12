@@ -20,6 +20,7 @@ import type * as learningEngine_config from "../learningEngine/config.js";
 import type * as learningEngine_coverage from "../learningEngine/coverage.js";
 import type * as learningEngine_derivedConcepts from "../learningEngine/derivedConcepts.js";
 import type * as learningEngine_difficultyTab from "../learningEngine/difficultyTab.js";
+import type * as learningEngine_importance from "../learningEngine/importance.js";
 import type * as learningEngine_mastery from "../learningEngine/mastery.js";
 import type * as learningEngine_memory from "../learningEngine/memory.js";
 import type * as learningEngine_studentDashboard from "../learningEngine/studentDashboard.js";
@@ -65,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/coverage": typeof learningEngine_coverage;
   "learningEngine/derivedConcepts": typeof learningEngine_derivedConcepts;
   "learningEngine/difficultyTab": typeof learningEngine_difficultyTab;
+  "learningEngine/importance": typeof learningEngine_importance;
   "learningEngine/mastery": typeof learningEngine_mastery;
   "learningEngine/memory": typeof learningEngine_memory;
   "learningEngine/studentDashboard": typeof learningEngine_studentDashboard;

@@ -399,6 +399,31 @@ export default defineSchema({
     .index("by_student_time", ["studentId", "occurredAt"])
     .index("by_student_concept_time", ["studentId", "conceptExerciseId", "occurredAt"]),
 
+  // ─── Phase B: concept importance (exam blueprint) ────────────────────────
+  // Normalized exam-paper emphasis per (grade, term, concept). Recomputed on
+  // demand by the recomputeForGradeTerm mutation in
+  // convex/learningEngine/importance.ts when a paper is added / edited / its
+  // tags change. Cumulative term semantics: a Term 2 paper question testing a
+  // Term 1 concept pushes that concept's importance under (grade, term=2),
+  // separately from the same concept's (grade, term=1) row driven by Term 1
+  // papers. Holdout papers are NEVER included (filter on isHoldout=false +
+  // useAsTrainingSignal=true).
+  //   source: "data" if any training-paper marks contributed; "prior" if the
+  //           fallback (count-of-unit-exercises) was used because no tagged
+  //           training papers exist yet for (grade, term).
+  conceptImportance: defineTable({
+    grade: v.number(),
+    term: v.number(),                          // 1 | 2 | 3
+    conceptExerciseId: v.id("exercises"),      // concept-type exercises row
+    importance: v.number(),                    // 0..1, Σ importance = 1.0 within (grade, term)
+    rawMarks: v.number(),                      // sum of marks across training papers
+    paperCount: v.number(),                    // number of training papers that contributed marks
+    source: v.string(),                        // "data" | "prior"
+    computedAt: v.number(),
+  })
+    .index("by_grade_term_concept", ["grade", "term", "conceptExerciseId"])
+    .index("by_grade_term", ["grade", "term"]),
+
   // Lead's per-student "next task" for a given day. Upserted by (studentId, date).
   // Phase 4 (student tablet) reads this for the student's home screen.
   currentAssignments: defineTable({

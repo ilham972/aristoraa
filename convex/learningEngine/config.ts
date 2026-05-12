@@ -38,3 +38,10 @@ export const DIFFICULTY_MIN = 1.0;
 export const DIFFICULTY_MAX = 10.0;
 export const STABILITY_MIN = 0.1;
 export const STABILITY_MAX = 365.0;
+
+// ─── Phase B: concept importance (exam blueprint) ─────────────────────────
+// Every concept in a (grade, term) scope gets at least this much importance
+// after normalization so genuinely-absent concepts still get a sliver of
+// weight when the planner ranks candidates. Re-normalization after the floor
+// is applied keeps Σ importance = 1.0 within (grade, term).
+export const MIN_IMPORTANCE_FLOOR = 0.005;
