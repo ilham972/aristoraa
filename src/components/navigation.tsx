@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardPen, Trophy, Users, Settings, Radio, Layers, BarChart3, CalendarDays } from 'lucide-react';
+import { ClipboardPen, Trophy, Users, Settings, Radio, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
@@ -12,9 +12,7 @@ type NavItem = { href: string; label: string; icon: typeof ClipboardPen; leadOnl
 const NAV_ITEMS: NavItem[] = [
   { href: '/score-entry', label: 'Scores', icon: ClipboardPen },
   { href: '/lead', label: 'Lead', icon: Radio, leadOnly: true },
-  { href: '/algorithm/coverage', label: 'Coverage', icon: Layers, leadOnly: true },
-  { href: '/algorithm/blueprint', label: 'Blueprint', icon: BarChart3, leadOnly: true },
-  { href: '/algorithm/exam-calendar', label: 'Exams', icon: CalendarDays, leadOnly: true },
+  { href: '/algorithm', label: 'Insights', icon: BarChart3, leadOnly: true },
   { href: '/leaderboard', label: 'Board', icon: Trophy },
   { href: '/students', label: 'Students', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },
