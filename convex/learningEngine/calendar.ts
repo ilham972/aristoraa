@@ -167,6 +167,69 @@ export const upsert = mutation({
   },
 });
 
+// Edit an existing row by id. Unlike upsert (which keys on grade/term/year),
+// this lets the user change the composite key too — guarding against
+// conflicts at the new key before patching. The form pre-fills with the row
+// being edited and posts back here; on a key change with a conflict, the user
+// gets a clear error and decides whether to delete the conflicting row first.
+export const updateById = mutation({
+  args: {
+    id: v.id("examCalendar"),
+    grade: v.number(),
+    term: v.number(),
+    year: v.number(),
+    examDate: v.string(),
+    totalMarks: v.optional(v.number()),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(args.examDate)) {
+      throw new Error("examDate must be YYYY-MM-DD");
+    }
+    if (![1, 2, 3].includes(args.term)) {
+      throw new Error("term must be 1, 2, or 3");
+    }
+    if (args.grade < 6 || args.grade > 11) {
+      throw new Error("grade must be 6..11");
+    }
+
+    const current = await ctx.db.get(args.id);
+    if (!current) throw new Error("Exam row not found");
+
+    const keyChanged =
+      current.grade !== args.grade ||
+      current.term !== args.term ||
+      current.year !== args.year;
+
+    if (keyChanged) {
+      const conflict = await ctx.db
+        .query("examCalendar")
+        .withIndex("by_grade_term_year", (q) =>
+          q.eq("grade", args.grade).eq("term", args.term).eq("year", args.year),
+        )
+        .unique();
+      if (conflict && conflict._id !== args.id) {
+        throw new Error(
+          `Another exam already exists for G${args.grade} Term ${args.term} ${args.year}. Delete it first or pick a different key.`,
+        );
+      }
+    }
+
+    await ctx.db.patch(args.id, {
+      grade: args.grade,
+      term: args.term,
+      year: args.year,
+      examDate: args.examDate,
+      totalMarks: args.totalMarks,
+      notes: args.notes,
+    });
+    return args.id;
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("examCalendar") },
   handler: async (ctx, { id }) => {

@@ -112,7 +112,11 @@ export function StudentExamOutlook({ studentId }: Props) {
   const debt = data.retentionDebtByGradeTerm;
 
   // Bucket list to render — only (G, T) where we have *any* importance data.
-  // Sort by grade then term so the layout is predictable.
+  // Sort: the student's own schoolGrade comes first (it's the exam they will
+  // actually sit), downgrade grades follow. Within a grade, ascending term.
+  // Without this, a downgraded G11 student sees the G10 row above G11 and may
+  // misread the predicted % as their primary signal.
+  const schoolGrade = data.student.schoolGrade;
   const buckets = Object.keys(predicted)
     .map((k) => {
       const m = /^G(\d+)T(\d+)$/.exec(k);
@@ -120,9 +124,26 @@ export function StudentExamOutlook({ studentId }: Props) {
       return { key: k, grade: Number(m[1]), term: Number(m[2]) };
     })
     .filter((b): b is { key: string; grade: number; term: number } => b !== null)
-    .sort((a, b) => a.grade - b.grade || a.term - b.term);
+    .sort((a, b) => {
+      const aIsSchool = a.grade === schoolGrade ? 0 : 1;
+      const bIsSchool = b.grade === schoolGrade ? 0 : 1;
+      if (aIsSchool !== bIsSchool) return aIsSchool - bIsSchool;
+      // After schoolGrade group: descending grade so higher (closer to school
+      // grade) downgrades show before deeper remediation.
+      if (a.grade !== b.grade) return b.grade - a.grade;
+      return a.term - b.term;
+    });
 
   const top5AtRisk = data.atRiskConcepts.slice(0, 5);
+
+  // The student sits the exam at their schoolGrade. Surface a clear hint when
+  // we have buckets for downgrade grades but none for the school grade — that
+  // almost always means "Recompute importance for the actual exam grade has
+  // not been run yet."
+  const hasSchoolGradeBucket = buckets.some((b) => b.grade === schoolGrade);
+  const hasOtherBucket = buckets.some((b) => b.grade !== schoolGrade);
+  const missingSchoolGradeImportance =
+    buckets.length > 0 && !hasSchoolGradeBucket && hasOtherBucket;
 
   return (
     <div className="space-y-3 mb-4">
@@ -182,6 +203,20 @@ export function StudentExamOutlook({ studentId }: Props) {
               Exam outlook
             </h2>
           </div>
+          {missingSchoolGradeImportance && (
+            <Link
+              href={`/algorithm/blueprint?g=${schoolGrade}&t=1`}
+              className="block mb-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 hover:bg-amber-500/10"
+            >
+              <div className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                No G{schoolGrade} importance computed yet
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                This student sits the G{schoolGrade} exam. Recompute the
+                blueprint for that grade to see their primary prediction →
+              </div>
+            </Link>
+          )}
           <div className="rounded-xl border border-border bg-card divide-y divide-border">
             {buckets.map((b) => {
               const pct = predicted[b.key] ?? 0;
@@ -195,6 +230,7 @@ export function StudentExamOutlook({ studentId }: Props) {
                   predictedPct={pct}
                   studiedShare={share}
                   debt={d}
+                  isSchoolGrade={b.grade === schoolGrade}
                 />
               );
             })}
@@ -253,11 +289,13 @@ function BucketRow({
   predictedPct,
   studiedShare,
   debt,
+  isSchoolGrade,
 }: {
   grade: number;
   term: number;
   predictedPct: number;
   studiedShare: number;
+  isSchoolGrade: boolean;
   debt:
     | {
         grade: number;
@@ -282,8 +320,20 @@ function BucketRow({
     <div className="px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xs font-semibold text-foreground">
-            G{grade} · Term {term}
+          <div className="flex items-center gap-1.5">
+            <div className="text-xs font-semibold text-foreground">
+              G{grade} · Term {term}
+            </div>
+            {isSchoolGrade && (
+              <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/15 text-primary font-bold">
+                Actual
+              </span>
+            )}
+            {!isSchoolGrade && (
+              <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-semibold">
+                Remediation
+              </span>
+            )}
           </div>
           {debt && debt.nextExamDate ? (
             <div className="text-[10px] text-muted-foreground">

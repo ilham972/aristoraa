@@ -73,6 +73,7 @@ function daysFromNow(ymd: string): number | null {
 export default function ExamCalendarPage() {
   const rows = useQuery(api.learningEngine.calendar.list, {});
   const upsert = useMutation(api.learningEngine.calendar.upsert);
+  const updateById = useMutation(api.learningEngine.calendar.updateById);
   const remove = useMutation(api.learningEngine.calendar.remove);
 
   const [openGrade, setOpenGrade] = useState<number | null>(7);
@@ -123,22 +124,37 @@ export default function ExamCalendarPage() {
     }
     setSaving(true);
     try {
-      await upsert({
-        grade: draft.grade,
-        term: draft.term,
-        year: draft.year,
-        examDate: draft.examDate,
-        totalMarks,
-        notes: draft.notes.trim() ? draft.notes.trim() : undefined,
-      });
-      toast.success(draft.id ? 'Updated' : 'Added');
+      if (draft.id) {
+        // Edit path: id-keyed update so the user can change grade/term/year
+        // too. updateById enforces composite-key uniqueness server-side.
+        await updateById({
+          id: draft.id,
+          grade: draft.grade,
+          term: draft.term,
+          year: draft.year,
+          examDate: draft.examDate,
+          totalMarks,
+          notes: draft.notes.trim() ? draft.notes.trim() : undefined,
+        });
+        toast.success('Updated');
+      } else {
+        await upsert({
+          grade: draft.grade,
+          term: draft.term,
+          year: draft.year,
+          examDate: draft.examDate,
+          totalMarks,
+          notes: draft.notes.trim() ? draft.notes.trim() : undefined,
+        });
+        toast.success('Added');
+      }
       setDraft(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSaving(false);
     }
-  }, [draft, upsert]);
+  }, [draft, upsert, updateById]);
 
   const onDelete = useCallback(
     async (row: ExamRow) => {
@@ -337,9 +353,14 @@ function DraftDialog({
   saving: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-2">
+    <div
+      // On mobile, lift the dialog above the fixed bottom nav (h-16 = 4rem)
+      // plus iOS safe area; desktop centers normally with a small inset.
+      className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-2 pb-[calc(4rem+env(safe-area-inset-bottom,0px)+0.5rem)] sm:pb-2"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-md rounded-2xl bg-card border border-border p-4 shadow-xl"
+        className="w-full max-w-md rounded-2xl bg-card border border-border p-4 shadow-xl max-h-[75vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
@@ -364,12 +385,11 @@ function DraftDialog({
                 <button
                   key={g}
                   onClick={() => setDraft({ ...draft, grade: g })}
-                  disabled={!!draft.id}
                   className={`flex-1 py-1.5 px-2 rounded-md text-[11px] font-semibold transition-all whitespace-nowrap ${
                     g === draft.grade
                       ? 'bg-card text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  } ${draft.id ? 'opacity-60' : ''}`}
+                  }`}
                 >
                   G{g}
                 </button>
@@ -386,12 +406,11 @@ function DraftDialog({
                 <button
                   key={t}
                   onClick={() => setDraft({ ...draft, term: t })}
-                  disabled={!!draft.id}
                   className={`flex-1 py-1.5 px-2 rounded-md text-[11px] font-semibold transition-all ${
                     t === draft.term
                       ? 'bg-card text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
-                  } ${draft.id ? 'opacity-60' : ''}`}
+                  }`}
                 >
                   Term {t}
                 </button>
@@ -407,11 +426,10 @@ function DraftDialog({
               <input
                 type="number"
                 value={draft.year}
-                disabled={!!draft.id}
                 onChange={(e) =>
                   setDraft({ ...draft, year: Number(e.target.value) })
                 }
-                className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground disabled:opacity-60 border border-border"
+                className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border"
               />
             </div>
             <div>
@@ -459,8 +477,8 @@ function DraftDialog({
 
           {draft.id && (
             <p className="text-[10px] text-muted-foreground">
-              Grade / Term / Year are the composite key — to change them, delete
-              and re-create.
+              You can change grade / term / year too — saving will move this
+              row to the new key (errors if another exam already exists there).
             </p>
           )}
         </div>
