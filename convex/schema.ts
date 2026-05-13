@@ -16,6 +16,21 @@ export default defineSchema({
     // value = grade list. When a module has its own override, it takes
     // precedence over the global assignedGrades for that module.
     assignedGradesByModule: v.optional(v.any()),
+    // ─── Phase D.3: sheet-planner per-student knobs ────────────────────────
+    // Off-days for THIS student. Lowercase weekday names: "sunday", "monday",
+    // … "saturday". Different students may have different off-days (e.g.
+    // homeschooled student rests Wednesday; centre student rests Sunday).
+    // When unset, defaults to ["sunday"] inside the planner.
+    offDays: v.optional(v.array(v.string())),
+    // Manual override of the daily sheet's question count. When set, takes
+    // precedence over the auto-tuned budget (which reads recent completion
+    // history). Range enforced in the planner: clamped to [3, 20].
+    sheetLengthOverride: v.optional(v.number()),
+    // Manual override of the daily sheet's TIME budget in minutes. When set,
+    // takes precedence over the auto-tuned time budget. The slot allocator
+    // packs questions by summing expectedTimeMin until budget fills, then
+    // caps at sheetLengthOverride if also set. Range clamped to [10, 180].
+    sessionMinutesOverride: v.optional(v.number()),
   }).index("by_center", ["centerId"]),
 
   exercises: defineTable({
@@ -461,5 +476,25 @@ export default defineSchema({
   })
     .index("by_student_date", ["studentId", "date"])
     .index("by_slot_date", ["slotId", "date"])
+    .index("by_date", ["date"]),
+
+  // ─── Phase D.1: per-student daily sheet record ───────────────────────────
+  // One row per (student, date). Persists the three-strip sheet a student is
+  // expected to do today: warm-up (cross-module SR), main block (today's
+  // module, interleaved), exam-prep (past-paper mixed). D.1 only writes /
+  // reads the question id arrays — they're the input to the novelty cooldown
+  // filter (today's candidate pool excludes any question used in the last
+  // NOVELTY_COOLDOWN_DAYS days). D.6 will extend this row with status,
+  // alerts, scoringSnapshot, pdfStorageId — all optional so the D.1 shape is
+  // forward-compatible.
+  generatedSheets: defineTable({
+    studentId: v.id("students"),
+    date: v.string(),                                 // YYYY-MM-DD
+    generatedAt: v.number(),                          // ms epoch
+    warmupQuestionIds: v.array(v.id("questionBank")),
+    mainQuestionIds: v.array(v.id("questionBank")),
+    examPrepQuestionIds: v.array(v.id("questionBank")),
+  })
+    .index("by_student_date", ["studentId", "date"])
     .index("by_date", ["date"]),
 });

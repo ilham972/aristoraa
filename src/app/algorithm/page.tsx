@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import {
-  Layers, BarChart3, CalendarDays,
+  Layers, BarChart3, CalendarDays, FileSpreadsheet,
   RefreshCw, AlertTriangle, FileText,
   ChevronDown, ChevronRight, Pencil, Plus, Trash2,
 } from 'lucide-react';
@@ -16,6 +16,7 @@ import { CoverageBanner } from '@/components/coverage/coverage-banner';
 import { UnitCoverageCard, type CoverageRow } from '@/components/coverage/unit-coverage-card';
 import { ConceptDetailPanel } from '@/components/coverage/concept-detail-panel';
 import { OrphanList } from '@/components/coverage/orphan-list';
+import { SheetPlannerTab } from '@/components/algorithm/sheet-planner-tab';
 import { toast } from 'sonner';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -23,12 +24,13 @@ import { toast } from 'sonner';
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
 
-type TabId = 'coverage' | 'blueprint' | 'exams';
+type TabId = 'coverage' | 'blueprint' | 'exams' | 'sheet';
 
 const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Layers }[] = [
   { id: 'coverage',  label: 'Coverage',  fullLabel: 'Coverage',      icon: Layers },
   { id: 'blueprint', label: 'Blueprint', fullLabel: 'Exam Blueprint', icon: BarChart3 },
   { id: 'exams',     label: 'Exams',     fullLabel: 'Exam Calendar',  icon: CalendarDays },
+  { id: 'sheet',     label: 'Sheet',     fullLabel: 'Sheet Planner',  icon: FileSpreadsheet },
 ];
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -1024,7 +1026,7 @@ function AlgorithmPageInner() {
   const searchParams = useSearchParams();
 
   const rawTab = searchParams.get('tab') ?? 'coverage';
-  const tab: TabId = (['coverage', 'blueprint', 'exams'] as TabId[]).includes(rawTab as TabId)
+  const tab: TabId = (['coverage', 'blueprint', 'exams', 'sheet'] as TabId[]).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'coverage';
 
@@ -1096,6 +1098,7 @@ function AlgorithmPageInner() {
         <BlueprintTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
       )}
       {tab === 'exams' && <ExamCalendarTab />}
+      {tab === 'sheet' && <SheetPlannerTab />}
     </div>
   );
 }

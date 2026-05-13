@@ -24,6 +24,7 @@ import type * as learningEngine_difficultyTab from "../learningEngine/difficulty
 import type * as learningEngine_importance from "../learningEngine/importance.js";
 import type * as learningEngine_mastery from "../learningEngine/mastery.js";
 import type * as learningEngine_memory from "../learningEngine/memory.js";
+import type * as learningEngine_planner from "../learningEngine/planner.js";
 import type * as learningEngine_profile from "../learningEngine/profile.js";
 import type * as learningEngine_studentDashboard from "../learningEngine/studentDashboard.js";
 import type * as migrations from "../migrations.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/importance": typeof learningEngine_importance;
   "learningEngine/mastery": typeof learningEngine_mastery;
   "learningEngine/memory": typeof learningEngine_memory;
+  "learningEngine/planner": typeof learningEngine_planner;
   "learningEngine/profile": typeof learningEngine_profile;
   "learningEngine/studentDashboard": typeof learningEngine_studentDashboard;
   migrations: typeof migrations;

@@ -59,9 +59,23 @@
 
 import { query } from "../_generated/server";
 import { v } from "convex/values";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { GenericQueryCtx } from "convex/server";
+import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { masteryFromState } from "./mastery";
 import { MASTERY_THRESHOLD } from "./config";
+
+type QueryCtx = GenericQueryCtx<DataModel>;
+
+// Shared input shape for the profile builder. The unitIds + gradeByModule are
+// resolved client-side from src/lib/curriculum-data (backend cannot import
+// from src/lib). Phase D's planner reuses this exact shape so the caller
+// passes the same args to either layer.
+export type StudentProfileArgs = {
+  studentId: Id<"students">;
+  unitIds: string[];
+  gradeByModule: Record<string, number[]>;
+  asOf?: number;
+};
 
 // At-risk thresholds. Lifted from algorithm_plan.md Phase C.2:
 //   atRisk = importance >= 0.02 AND R < 0.5
@@ -105,30 +119,19 @@ function daysBetweenYmd(from: string, to: string): number {
   return Math.round((toMs - fromMs) / MS_PER_DAY);
 }
 
-export const studentProfile = query({
-  args: {
-    studentId: v.id("students"),
-    // Cumulative unit list across all the student's grades × all 3 terms,
-    // resolved client-side from src/lib/curriculum-data.ts (backend cannot
-    // import from src/lib). For a downgraded student studying G10 + G9, pass
-    // every unit ID across both grades, all terms.
-    unitIds: v.array(v.string()),
-    // Per-module grade scope (resolved client-side from student.assignedGrades
-    // + assignedGradesByModule + schoolGrade fallback). Keys are "M1".."M6";
-    // values are the grades the student studies on that module. Used to
-    // filter concepts so a downgraded G9-on-M1-only student doesn't get
-    // dragged down by unstudied G9 concepts on M2-M6.
-    gradeByModule: v.record(v.string(), v.array(v.number())),
-    asOf: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+// Phase C.1 + D.1 — pure helper that does the heavy lifting (memory lookups,
+// importance joins, prereq BFS, exam-calendar resolution). Exported so the
+// Phase D planner (`convex/learningEngine/planner.ts`) can reuse the exact
+// same profile rows the dashboards consume — single source of truth for
+// "is concept c masterable / gapped / studied?" lives here.
+export async function computeStudentProfile(
+  ctx: QueryCtx,
+  args: StudentProfileArgs,
+) {
+  const student = await ctx.db.get(args.studentId);
+  if (!student) return null;
 
-    const student = await ctx.db.get(args.studentId);
-    if (!student) return null;
-
-    const atTime = args.asOf ?? Date.now();
+  const atTime = args.asOf ?? Date.now();
 
     // ── 1. Concept-type exercises in scope. ─────────────────────────────
     // Build a (grade → Set<moduleId>) view for fast scope checks. A concept c
@@ -334,6 +337,12 @@ export const studentProfile = query({
       isAtRisk: boolean;
       prereqGap: boolean;
       firstBlockerId: Id<"exercises"> | null;
+      // Memory-state fields the Phase D scorer (D.2 onward) reads to compute
+      // urgency / overdue-by-N-days without re-querying memoryState. null
+      // when no attempt has happened yet (hasState === false).
+      stability: number | null;
+      lastReviewAt: number | null;
+      attemptCount: number;
     };
 
     const profile: ProfileRow[] = [];
@@ -348,6 +357,7 @@ export const studentProfile = query({
         ownImportance >= AT_RISK_IMPORTANCE_THRESHOLD &&
         m.R < AT_RISK_R_THRESHOLD;
       const { gap, firstBlockerId } = await hasUnmasteredPrereq(c._id);
+      const stateRow = stateByConcept.get(c._id as unknown as string);
       profile.push({
         conceptId: c._id,
         name: c.name,
@@ -359,13 +369,16 @@ export const studentProfile = query({
         mastery: m.mastery,
         R: m.R,
         accFactor: m.accFactor,
-        hasState: stateByConcept.has(c._id as unknown as string),
+        hasState: stateRow !== undefined,
         importance: ownImportance,
         expectedExamContribution: m.mastery * ownImportance,
         isMastered,
         isAtRisk,
         prereqGap: gap,
         firstBlockerId,
+        stability: stateRow?.stability ?? null,
+        lastReviewAt: stateRow?.lastReviewAt ?? null,
+        attemptCount: stateRow?.attemptCount ?? 0,
       });
     }
 
@@ -585,5 +598,29 @@ export const studentProfile = query({
       nextExam,
       generatedAt: atTime,
     };
+}
+
+// Phase C.1 query — thin auth wrapper around the helper above. Returns null
+// for unauthenticated callers (same legacy contract used by the dashboards).
+export const studentProfile = query({
+  args: {
+    studentId: v.id("students"),
+    // Cumulative unit list across all the student's grades × all 3 terms,
+    // resolved client-side from src/lib/curriculum-data.ts (backend cannot
+    // import from src/lib). For a downgraded student studying G10 + G9, pass
+    // every unit ID across both grades, all terms.
+    unitIds: v.array(v.string()),
+    // Per-module grade scope (resolved client-side from student.assignedGrades
+    // + assignedGradesByModule + schoolGrade fallback). Keys are "M1".."M6";
+    // values are the grades the student studies on that module. Used to
+    // filter concepts so a downgraded G9-on-M1-only student doesn't get
+    // dragged down by unstudied G9 concepts on M2-M6.
+    gradeByModule: v.record(v.string(), v.array(v.number())),
+    asOf: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return await computeStudentProfile(ctx, args);
   },
 });
