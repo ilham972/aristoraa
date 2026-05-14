@@ -202,6 +202,31 @@ export const EXAM_WEEK_RATIOS = {
 // student — past-paper questions are typically harder than textbook ones.
 export const EXAM_PREP_MASTERY_FLOOR = 0.5;
 
+// ─── Phase D.5: exam-date backstop ────────────────────────────────────────
+// "Force-review window" before an upcoming exam. A concept whose natural
+// FSRS-lite review interval (lastReviewAt + naturalInterval) would land
+// AFTER (examDate − EXAM_BACKSTOP_DAYS) is considered "would slip past the
+// exam" and gets its urgency factor forced to 1.0 in the scorer (replaces
+// the standard `1 - R + overdueBoost` urgency rather than stacking on top
+// — see `scoreCandidate.urgencyOverride`).
+//
+// Tuning rationale: 21 days = three weeks. Long enough that the planner can
+// schedule each at-risk concept ≥ once before the deadline (typical 3-class-
+// per-week student gets ~9 sessions in three weeks). Shorter (14d) collides
+// with the exam-week override; longer (28d+) starts disrupting normal
+// module-of-day learning too early.
+export const EXAM_BACKSTOP_DAYS = 21;
+
+// Natural-review interval as a function of FSRS-lite stability. R = 0.9 at
+// t = stability days (by FACTOR=9 calibration); we approximate "would the
+// student fall below mastery threshold before then?" by using stability
+// directly as the natural-interval estimate. Phase G can replace with an
+// actual R(t) inversion once tuning data lands.
+//   naturalIntervalDays(stability) = max(NATURAL_INTERVAL_FLOOR, stability)
+// Floor exists so a brand-new (stability ≈ 1d) concept doesn't trigger the
+// backstop on day-zero just because 1 day < 21.
+export const NATURAL_INTERVAL_FLOOR_DAYS = 3;
+
 // Underfill: when a slot can't be filled from its primary candidate set, the
 // allocator falls back through these stages. Reasons surface in planSheet's
 // `underFillReasons` for the Lead-dashboard "why this sheet is short" tip.

@@ -478,15 +478,19 @@ export default defineSchema({
     .index("by_slot_date", ["slotId", "date"])
     .index("by_date", ["date"]),
 
-  // ─── Phase D.1: per-student daily sheet record ───────────────────────────
+  // ─── Phase D.1 / D.6: per-student daily sheet record ─────────────────────
   // One row per (student, date). Persists the three-strip sheet a student is
   // expected to do today: warm-up (cross-module SR), main block (today's
-  // module, interleaved), exam-prep (past-paper mixed). D.1 only writes /
-  // reads the question id arrays — they're the input to the novelty cooldown
-  // filter (today's candidate pool excludes any question used in the last
-  // NOVELTY_COOLDOWN_DAYS days). D.6 will extend this row with status,
-  // alerts, scoringSnapshot, pdfStorageId — all optional so the D.1 shape is
-  // forward-compatible.
+  // module, interleaved), exam-prep (past-paper mixed). D.1 only used the
+  // question id arrays — they're the input to the novelty cooldown filter
+  // (today's candidate pool excludes any question used in the last
+  // NOVELTY_COOLDOWN_DAYS days). D.6 added status / alerts / scoringSnapshot
+  // / slot + teacher provenance / printedAt / completedAt — all optional so
+  // D.1-shape rows remain valid. Phase E will populate pdfStorageId.
+  //   status: undefined | "draft" — Lead can re-plan / overwrite freely
+  //           "printed"           — frozen; matches the paper sheet given out
+  //           "completed"         — submission done, locked
+  //           "skipped"           — student absent / off-day reclassified
   generatedSheets: defineTable({
     studentId: v.id("students"),
     date: v.string(),                                 // YYYY-MM-DD
@@ -494,7 +498,44 @@ export default defineSchema({
     warmupQuestionIds: v.array(v.id("questionBank")),
     mainQuestionIds: v.array(v.id("questionBank")),
     examPrepQuestionIds: v.array(v.id("questionBank")),
+    // D.6 additions — all optional for forward compatibility with D.1 rows.
+    status: v.optional(v.string()),
+    slotId: v.optional(v.id("scheduleSlots")),
+    generatedByTeacherId: v.optional(v.id("teachers")),
+    // D.4 prereq alerts surfaced at sheet save. Each entry =
+    //   { type: "prereqUnmet", questionId, conceptId, conceptName,
+    //     prereqId, prereqName, prereqMastery }
+    alerts: v.optional(v.any()),
+    // D.6 audit snapshot. Per-picked-Q score factors at gen time so the
+    // Lead "why this question?" tooltip + Phase F calibration replay can
+    // read the same numbers without re-deriving. Picked Qs only (8–12
+    // rows), not the full scored pool.
+    scoringSnapshot: v.optional(v.any()),
+    pdfStorageId: v.optional(v.id("_storage")),
+    printedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
   })
     .index("by_student_date", ["studentId", "date"])
-    .index("by_date", ["date"]),
+    .index("by_date", ["date"])
+    .index("by_status", ["status"])
+    .index("by_slot_date", ["slotId", "date"]),
+
+  // ─── Phase D.6: sheet-override journal ────────────────────────────────────
+  // Append-only audit trail of Lead's manual swaps on a generated sheet.
+  // Action vocabulary:
+  //   "swap"   — replaced questionIdBefore with questionIdAfter (same slot)
+  //   "remove" — removed questionIdBefore from the sheet
+  //   "add"    — added questionIdAfter (manual insert, no original)
+  // The mutating action also rewrites the corresponding question id array
+  // on the generatedSheets row in the same transaction.
+  sheetOverrides: defineTable({
+    sheetId: v.id("generatedSheets"),
+    action: v.string(),
+    slotName: v.optional(v.string()),                 // "warmup" | "main" | "examPrep"
+    questionIdBefore: v.optional(v.id("questionBank")),
+    questionIdAfter: v.optional(v.id("questionBank")),
+    byTeacherId: v.id("teachers"),
+    reason: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_sheet", ["sheetId"]),
 });

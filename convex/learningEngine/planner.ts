@@ -48,11 +48,12 @@
 // every tag in cooldown), we surface it via `plannerGaps` so the Lead
 // dashboard can react — but we DO NOT block the rest of the pool.
 
-import { query } from "../_generated/server";
+import { mutation, query } from "../_generated/server";
 import { v } from "convex/values";
-import type { GenericQueryCtx } from "convex/server";
+import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
+import { masteryFromState } from "./mastery";
 import {
   NOVELTY_COOLDOWN_DAYS,
   W_IMPORTANCE,
@@ -87,9 +88,18 @@ import {
   EXAM_WEEK_RATIOS,
   EXAM_PREP_MASTERY_FLOOR,
   UNDERFILL_REASONS,
+  EXAM_BACKSTOP_DAYS,
+  NATURAL_INTERVAL_FLOOR_DAYS,
+  MASTERY_THRESHOLD,
 } from "./config";
 
 type QueryCtx = GenericQueryCtx<DataModel>;
+type MutationCtx = GenericMutationCtx<DataModel>;
+// All read-only helpers in this file accept either context. Convex's mutation
+// ctx exposes the same `db.query` / `db.get` surface as the query ctx, so the
+// union is structurally callable. Mutations use this so they can plan + write
+// in a single transaction without `runQuery`'s separate-transaction overhead.
+type ReadCtx = QueryCtx | MutationCtx;
 
 const MS_PER_DAY = 86_400_000;
 
@@ -192,7 +202,7 @@ type RawPool = {
 // ──────────────────────────────────────────────────────────────────────────
 
 async function buildCandidatePool(
-  ctx: QueryCtx,
+  ctx: ReadCtx,
   args: {
     studentId: Id<"students">;
     dateStr: string;
@@ -401,6 +411,49 @@ function overdueDays(
   return daysSinceLastReview - stability;
 }
 
+// D.5 — exam-date backstop. Returns { fired, reason } telling the scorer
+// whether to force urgency to 1.0 because the concept's natural review
+// would slip past the exam-prep deadline.
+//
+// Algorithm (algorithm_plan.md D.5):
+//   daysUntilNaturalReview = daysSinceLastReview + naturalIntervalFromStability(stability)
+//   if daysUntilNaturalReview > daysToExam − EXAM_BACKSTOP_DAYS:
+//     force urgency = 1.0
+//
+// Cold concepts (no memory state) and concepts with no upcoming exam at the
+// concept's term are never backstopped — those are handled by the cold-
+// concept urgency baseline (1 − R = 1.0) and proximity-zero respectively.
+function examBackstopUrgency(args: {
+  stability: number | null;
+  lastReviewAt: number | null;
+  daysToExam: number | null;
+  asOfMs: number;
+}): { fired: boolean; reason: string | null } {
+  if (
+    args.stability === null ||
+    args.lastReviewAt === null ||
+    args.daysToExam === null
+  ) {
+    return { fired: false, reason: null };
+  }
+  const daysSinceLastReview = (args.asOfMs - args.lastReviewAt) / MS_PER_DAY;
+  const naturalInterval = Math.max(
+    NATURAL_INTERVAL_FLOOR_DAYS,
+    args.stability,
+  );
+  const daysUntilNaturalReview = daysSinceLastReview + naturalInterval;
+  const cutoff = args.daysToExam - EXAM_BACKSTOP_DAYS;
+  if (daysUntilNaturalReview > cutoff) {
+    return {
+      fired: true,
+      reason: `natural-review at +${Math.round(
+        daysUntilNaturalReview,
+      )}d would slip past exam-${EXAM_BACKSTOP_DAYS}d cutoff (+${cutoff}d)`,
+    };
+  }
+  return { fired: false, reason: null };
+}
+
 export type ScoreFactors = {
   importance: number;
   urgency: number;
@@ -415,6 +468,12 @@ export type ScoreBreakdown = ScoreFactors & {
   daysToExam: number | null;
   studentSkillOnConcept: number;
   qDifficulty: number;
+  // D.5: when the exam-date backstop fires for this concept, urgency is
+  // forced to this value (typically 1.0) and `urgencyOverrideReason`
+  // explains why. The standard `1 - R + overdueBoost` formula is bypassed
+  // entirely so the factor breakdown UI can label the row honestly.
+  urgencyOverride: number | null;
+  urgencyOverrideReason: string | null;
 };
 
 // Pure scoring function. Inputs are already-resolved memory state + exam
@@ -429,14 +488,26 @@ export function scoreCandidate(args: {
   qDifficulty: number | null;  // null → DEFAULT_QUESTION_DIFFICULTY
   daysToExam: number | null;   // null → proximity 0
   asOfMs: number;
+  // D.5: when set, urgency is forced to this value (clamped to [0,1]) and
+  // the standard `1 - R + overdueBoost` formula is bypassed. Reason string
+  // surfaces in the ScoreBreakdown for the audit trail / UI labelling.
+  urgencyOverride?: number | null;
+  urgencyOverrideReason?: string | null;
 }): ScoreBreakdown {
   const importance = clamp01(args.importance);
 
-  // Urgency: stale memory + overdue boost.
+  // Urgency: stale memory + overdue boost — UNLESS the caller supplies a
+  // hard override (D.5 exam-date backstop). Override replaces, not stacks,
+  // so the factor breakdown stays honest.
   const overdue = overdueDays(args.stability, args.lastReviewAt, args.asOfMs);
-  const urgencyRaw =
-    1 - clamp01(args.R) + (overdue > 0 ? URGENCY_OVERDUE_BOOST : 0);
-  const urgency = clamp01(urgencyRaw);
+  const hasOverride =
+    args.urgencyOverride !== undefined && args.urgencyOverride !== null;
+  const urgency = hasOverride
+    ? clamp01(args.urgencyOverride as number)
+    : clamp01(
+        1 - clamp01(args.R) +
+          (overdue > 0 ? URGENCY_OVERDUE_BOOST : 0),
+      );
 
   // Difficulty fit (Gaussian peak).
   const studentSkillOnConcept = 1 + 4 * clamp01(args.mastery); // 1..5
@@ -475,6 +546,10 @@ export function scoreCandidate(args: {
     daysToExam: args.daysToExam,
     studentSkillOnConcept,
     qDifficulty,
+    urgencyOverride: hasOverride ? clamp01(args.urgencyOverride as number) : null,
+    urgencyOverrideReason: hasOverride
+      ? args.urgencyOverrideReason ?? null
+      : null,
   };
 }
 
@@ -542,6 +617,13 @@ export const scoredCandidatePool = query({
     };
 
     const scored: ScoredCandidate[] = pool.candidates.map((c) => {
+      const daysToExam = daysToExamForTerm(c.concept.term);
+      const backstop = examBackstopUrgency({
+        stability: c.concept.stability,
+        lastReviewAt: c.concept.lastReviewAt,
+        daysToExam,
+        asOfMs: pool.asOfMs,
+      });
       const factors = scoreCandidate({
         importance: c.concept.importance,
         R: c.concept.R,
@@ -549,8 +631,10 @@ export const scoredCandidatePool = query({
         stability: c.concept.stability,
         lastReviewAt: c.concept.lastReviewAt,
         qDifficulty: c.question.difficulty,
-        daysToExam: daysToExamForTerm(c.concept.term),
+        daysToExam,
         asOfMs: pool.asOfMs,
+        urgencyOverride: backstop.fired ? 1.0 : null,
+        urgencyOverrideReason: backstop.reason,
       });
       return {
         question: c.question,
@@ -733,7 +817,7 @@ function tierToCount(tier: Tier): number {
 // questionId in the sheet AND occurredAt within the same calendar day.
 // Returns the average completion rate + number of sheets sampled.
 async function recentCompletionStats(
-  ctx: QueryCtx,
+  ctx: ReadCtx,
   studentId: Id<"students">,
   dateStr: string,
 ): Promise<{ avgCompletion: number | null; sampleCount: number }> {
@@ -807,7 +891,7 @@ async function recentCompletionStats(
 }
 
 async function computeBudget(
-  ctx: QueryCtx,
+  ctx: ReadCtx,
   student: StudentDoc,
   dateStr: string,
 ): Promise<Budget> {
@@ -910,7 +994,7 @@ type PhaseInfo = {
 // on M1 still SITS the G10 paper, so phase reweighting tracks the G10
 // calendar. (Same reasoning as proximity scoring in D.2.)
 async function determinePhase(
-  ctx: QueryCtx,
+  ctx: ReadCtx,
   studentSchoolGrade: number,
   dateStr: string,
 ): Promise<PhaseInfo> {
@@ -1065,7 +1149,7 @@ type EnrichedCandidate = Omit<ScoredCandidate, "question"> & {
 };
 
 async function enrichWithTime(
-  ctx: QueryCtx,
+  ctx: ReadCtx,
   scored: ScoredCandidate[],
 ): Promise<EnrichedCandidate[]> {
   const ids = new Set<string>();
@@ -1093,32 +1177,163 @@ async function enrichWithTime(
   }));
 }
 
-// ── planSheet query ──────────────────────────────────────────────────────
+// ── D.4 — Prereq DAG preflight alerts ────────────────────────────────────
+// Soft alerts surfaced on a sheet whenever a chosen question touches a
+// concept whose prerequisite has mastery < MASTERY_THRESHOLD. Does NOT
+// block the sheet — D.1 already filtered out concepts with prereqGap ===
+// true, so primary-concept gaps shouldn't fire. But a question is often
+// tagged to MULTIPLE concepts (questionConcepts join). If concept A puts
+// the Q into the pool and concept B (also tagged to the same Q) has a
+// prereq gap, "loud mode" surfaces the gap so the Lead sees the full
+// picture before printing.
+//
+// Loud-mode contract (per user decision 2026-05-14):
+//   • Look at EVERY concept tag of the picked Q, not just the in-pool one.
+//   • Walk the prereq DAG to depth PREREQ_BFS_DEPTH, surfacing every
+//     unmastered prereq along the way (not just the first blocker —
+//     profile.ts's `hasUnmasteredPrereq` short-circuits at first; this
+//     helper walks the full frontier).
+//   • Dedup by (questionId, conceptId, prereqId).
 
-export const planSheet = query({
+type PrereqAlert = {
+  type: "prereqUnmet";
+  questionId: Id<"questionBank">;
+  conceptId: Id<"exercises">;
+  conceptName: string;
+  prereqId: Id<"exercises">;
+  prereqName: string;
+  prereqMastery: number;
+};
+
+const PREREQ_ALERT_BFS_DEPTH = 10;
+
+async function computePrereqAlerts(
+  ctx: ReadCtx,
   args: {
-    studentId: v.id("students"),
-    dateStr: v.string(),                                   // YYYY-MM-DD
-    unitIds: v.array(v.string()),
-    gradeByModule: v.record(v.string(), v.array(v.number())),
-    // Optional debug knob: caller-supplied budget overrides for what-if
-    // analysis from the verification UI. Both clamped to the same floors
-    // as the persisted student knobs. When provided, completely bypasses
-    // both the manual student override AND the auto-tuner.
-    debugSessionMinutes: v.optional(v.number()),
-    debugSheetLength: v.optional(v.number()),
+    studentId: Id<"students">;
+    pickedQuestionIds: Id<"questionBank">[];
+    asOfMs: number;
   },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+): Promise<PrereqAlert[]> {
+  if (args.pickedQuestionIds.length === 0) return [];
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dateStr)) {
-      throw new Error(`planSheet: invalid dateStr "${args.dateStr}"`);
+  // 1. Mastery lookup: load all memoryState rows for this student once.
+  const states = await ctx.db
+    .query("memoryState")
+    .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
+    .collect();
+  const masteryByConcept = new Map<string, number>();
+  for (const s of states) {
+    masteryByConcept.set(
+      s.conceptExerciseId as unknown as string,
+      masteryFromState(s, args.asOfMs).mastery,
+    );
+  }
+  const getMastery = (id: Id<"exercises">): number =>
+    masteryByConcept.get(id as unknown as string) ?? 0;
+
+  // 2. Exercise doc cache (need name + prerequisiteExerciseIds).
+  const exerciseCache = new Map<string, Doc<"exercises"> | null>();
+  async function getExercise(
+    id: Id<"exercises">,
+  ): Promise<Doc<"exercises"> | null> {
+    const key = id as unknown as string;
+    const cached = exerciseCache.get(key);
+    if (cached !== undefined) return cached;
+    const doc = await ctx.db.get(id);
+    exerciseCache.set(key, doc);
+    return doc;
+  }
+
+  const alerts: PrereqAlert[] = [];
+  const seenTriple = new Set<string>();
+
+  for (const qId of args.pickedQuestionIds) {
+    // All concepts this question is tagged to (loud mode — not just the
+    // in-pool concept that put it on the sheet).
+    const tags = await ctx.db
+      .query("questionConcepts")
+      .withIndex("by_question", (q) => q.eq("questionId", qId))
+      .collect();
+
+    for (const t of tags) {
+      const conceptDoc = await getExercise(t.conceptExerciseId);
+      if (!conceptDoc || conceptDoc.type !== "concept") continue;
+      const conceptName = conceptDoc.name;
+
+      // BFS the prereq DAG. Visited scoped per-concept-walk so distinct
+      // tags from the same Q each get a fair walk.
+      const visited = new Set<string>([
+        t.conceptExerciseId as unknown as string,
+      ]);
+      let frontier: Id<"exercises">[] =
+        conceptDoc.prerequisiteExerciseIds ?? [];
+      for (
+        let depth = 0;
+        depth < PREREQ_ALERT_BFS_DEPTH && frontier.length > 0;
+        depth++
+      ) {
+        const next: Id<"exercises">[] = [];
+        for (const p of frontier) {
+          const k = p as unknown as string;
+          if (visited.has(k)) continue;
+          visited.add(k);
+          const pMastery = getMastery(p);
+          const pDoc = await getExercise(p);
+          // Push alert if unmastered. Continue walking transitively so a
+          // chain A→B→C surfaces both A and B if both are weak.
+          if (pMastery < MASTERY_THRESHOLD) {
+            const tripleKey = `${qId}|${t.conceptExerciseId}|${k}`;
+            if (!seenTriple.has(tripleKey)) {
+              seenTriple.add(tripleKey);
+              alerts.push({
+                type: "prereqUnmet",
+                questionId: qId,
+                conceptId: t.conceptExerciseId,
+                conceptName,
+                prereqId: p,
+                prereqName: pDoc?.name ?? "(unknown concept)",
+                prereqMastery: pMastery,
+              });
+            }
+          }
+          if (pDoc && pDoc.type === "concept") {
+            for (const pp of pDoc.prerequisiteExerciseIds ?? []) {
+              if (!visited.has(pp as unknown as string)) next.push(pp);
+            }
+          }
+        }
+        frontier = next;
+      }
     }
+  }
 
-    // ── 1. Resolve student ──────────────────────────────────────────────
-    const student = await ctx.db.get(args.studentId);
-    if (!student) return null;
+  return alerts;
+}
+
+// ── planSheet query + shared planSheetCore ──────────────────────────────
+// planSheetCore is the read-only planning brain. The query exposes it for
+// the verification UI; D.6 mutations call it directly inside their
+// transaction (so the same row read by buildCandidatePool's novelty
+// cooldown is the row that gets written, with no inter-transaction race).
+
+type PlanSheetArgs = {
+  studentId: Id<"students">;
+  dateStr: string;
+  unitIds: string[];
+  gradeByModule: Record<string, number[]>;
+  debugSessionMinutes?: number;
+  debugSheetLength?: number;
+};
+
+export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dateStr)) {
+    throw new Error(`planSheet: invalid dateStr "${args.dateStr}"`);
+  }
+
+  // ── 1. Resolve student ──────────────────────────────────────────────
+  const student = await ctx.db.get(args.studentId);
+  if (!student) return null;
 
     const todayModule = moduleForDateStr(args.dateStr);
     const offDay = isOffDay(student, args.dateStr);
@@ -1141,6 +1356,7 @@ export const planSheet = query({
         budget: null,
         examWeek: null,
         underFillReasons: [] as string[],
+        alerts: [] as PrereqAlert[],
         plannerGaps: [] as PlannerGap[],
         meta: null,
         generatedAt: parseYmdToMs(args.dateStr),
@@ -1182,7 +1398,18 @@ export const planSheet = query({
     };
 
     // ── 5. Score every candidate (reuses D.2's pure helper) ─────────────
+    // D.5 — exam-date backstop: per-concept check that forces urgency to
+    // 1.0 when the natural review interval would slip past the exam-prep
+    // deadline. Replaces (does not stack on top of) the standard urgency
+    // formula so the factor breakdown remains honest.
     const scored: ScoredCandidate[] = pool.candidates.map((c) => {
+      const daysToExam = daysToExamForTerm(c.concept.term);
+      const backstop = examBackstopUrgency({
+        stability: c.concept.stability,
+        lastReviewAt: c.concept.lastReviewAt,
+        daysToExam,
+        asOfMs: pool.asOfMs,
+      });
       const factors = scoreCandidate({
         importance: c.concept.importance,
         R: c.concept.R,
@@ -1190,8 +1417,10 @@ export const planSheet = query({
         stability: c.concept.stability,
         lastReviewAt: c.concept.lastReviewAt,
         qDifficulty: c.question.difficulty,
-        daysToExam: daysToExamForTerm(c.concept.term),
+        daysToExam,
         asOfMs: pool.asOfMs,
+        urgencyOverride: backstop.fired ? 1.0 : null,
+        urgencyOverrideReason: backstop.reason,
       });
       return {
         question: c.question,
@@ -1415,6 +1644,18 @@ export const planSheet = query({
       underFillReasons.push(UNDERFILL_REASONS.POOL_EXHAUSTED);
     }
 
+    // ── 10.5 D.4 prereq alerts (loud mode) ──────────────────────────────
+    const allPickedQIds = [
+      ...warmupPicked.map((c) => c.question._id),
+      ...mainPicked.map((c) => c.question._id),
+      ...examPrepPicked.map((c) => c.question._id),
+    ];
+    const alerts = await computePrereqAlerts(ctx, {
+      studentId: args.studentId,
+      pickedQuestionIds: allPickedQIds,
+      asOfMs: pool.asOfMs,
+    });
+
     // ── 11. Final return ────────────────────────────────────────────────
     return {
       status: "ok" as const,
@@ -1442,6 +1683,7 @@ export const planSheet = query({
           }
         : null,
       underFillReasons,
+      alerts,
       plannerGaps: pool.plannerGaps,
       meta: {
         ...pool.meta,
@@ -1464,6 +1706,410 @@ export const planSheet = query({
       },
       generatedAt: pool.generatedAt,
     };
+}
+
+// ── planSheet: thin query wrapper around planSheetCore ───────────────────
+export const planSheet = query({
+  args: {
+    studentId: v.id("students"),
+    dateStr: v.string(),                                   // YYYY-MM-DD
+    unitIds: v.array(v.string()),
+    gradeByModule: v.record(v.string(), v.array(v.number())),
+    debugSessionMinutes: v.optional(v.number()),
+    debugSheetLength: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return planSheetCore(ctx, args);
+  },
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PHASE D.6 — Sheet persistence + override journal
+//
+// saveSheetForStudent  — plans + writes one generatedSheets row (status="draft")
+//                        Replaces an existing draft for the same (student, date);
+//                        throws if a non-draft row already exists (printed/
+//                        completed sheets are frozen — Lead must explicitly
+//                        delete to regenerate).
+//                        Off-day result returns { status: "off-day", written:
+//                        false } and writes nothing.
+// overrideSheet        — Lead manual swap/remove/add. Logs sheetOverrides row
+//                        + mutates the generatedSheets row in the same txn.
+// markPrinted          — status: "draft" → "printed", sets printedAt
+// markCompleted        — status: "printed" → "completed", sets completedAt
+//
+// Bulk slot generation is handled CLIENT-side (see sheet-planner-tab) by
+// looping students and calling saveSheetForStudent per row — keeps unitIds /
+// gradeByModule resolution in src/lib/curriculum-data.ts where it lives.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Resolve the calling teacher's id from auth. Returns null if no teacher row
+// exists for the clerkUserId yet (legacy users — sheet still writes, audit
+// field stays undefined).
+async function resolveTeacherId(
+  ctx: MutationCtx,
+): Promise<Id<"teachers"> | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
+  const t = await ctx.db
+    .query("teachers")
+    .withIndex("by_clerk_user", (q) =>
+      q.eq("clerkUserId", identity.subject),
+    )
+    .unique();
+  return t?._id ?? null;
+}
+
+// Build the per-question scoring snapshot for the audit row. Only picked
+// Qs (8–12 rows), not the full scored pool (could be hundreds).
+type ScoringSnapshotEntry = {
+  questionId: Id<"questionBank">;
+  conceptId: Id<"exercises">;
+  slot: "warmup" | "main" | "examPrep";
+  baseScore: number;
+  factors: {
+    importance: number;
+    urgency: number;
+    fit: number;
+    novelty: number;
+    proximity: number;
+    urgencyOverride: number | null;
+    urgencyOverrideReason: string | null;
+  };
+};
+
+function buildScoringSnapshot(
+  warmup: EnrichedCandidate[],
+  main: EnrichedCandidate[],
+  examPrep: EnrichedCandidate[],
+): ScoringSnapshotEntry[] {
+  const out: ScoringSnapshotEntry[] = [];
+  const push = (
+    list: EnrichedCandidate[],
+    slot: "warmup" | "main" | "examPrep",
+  ) => {
+    for (const c of list) {
+      out.push({
+        questionId: c.question._id,
+        conceptId: c.concept.conceptId,
+        slot,
+        baseScore: c.factors.baseScore,
+        factors: {
+          importance: c.factors.importance,
+          urgency: c.factors.urgency,
+          fit: c.factors.fit,
+          novelty: c.factors.novelty,
+          proximity: c.factors.proximity,
+          urgencyOverride: c.factors.urgencyOverride,
+          urgencyOverrideReason: c.factors.urgencyOverrideReason,
+        },
+      });
+    }
+  };
+  push(warmup, "warmup");
+  push(main, "main");
+  push(examPrep, "examPrep");
+  return out;
+}
+
+export const saveSheetForStudent = mutation({
+  args: {
+    studentId: v.id("students"),
+    dateStr: v.string(),
+    unitIds: v.array(v.string()),
+    gradeByModule: v.record(v.string(), v.array(v.number())),
+    slotId: v.optional(v.id("scheduleSlots")),
+    debugSessionMinutes: v.optional(v.number()),
+    debugSheetLength: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const teacherId = await resolveTeacherId(ctx);
+
+    // Plan the sheet inside the same transaction so the cooldown read sees
+    // any row we're about to write/replace consistently.
+    const result = await planSheetCore(ctx, {
+      studentId: args.studentId,
+      dateStr: args.dateStr,
+      unitIds: args.unitIds,
+      gradeByModule: args.gradeByModule,
+      debugSessionMinutes: args.debugSessionMinutes,
+      debugSheetLength: args.debugSheetLength,
+    });
+    if (!result) {
+      return { status: "no-student", written: false } as const;
+    }
+
+    const existing = await ctx.db
+      .query("generatedSheets")
+      .withIndex("by_student_date", (q) =>
+        q.eq("studentId", args.studentId).eq("date", args.dateStr),
+      )
+      .unique();
+
+    if (result.status === "off-day") {
+      // If a stale draft exists from before off-days were configured for
+      // this weekday, mark it skipped so the audit trail keeps the row but
+      // the UI / planner stop treating it as live. Printed / completed
+      // sheets are left untouched (the student already has the paper in
+      // hand — flipping the status would mislead).
+      let skippedExistingId: Id<"generatedSheets"> | null = null;
+      if (
+        existing &&
+        existing.status !== "printed" &&
+        existing.status !== "completed"
+      ) {
+        await ctx.db.patch(existing._id, { status: "skipped" });
+        skippedExistingId = existing._id;
+      }
+      return {
+        status: "off-day",
+        written: false,
+        offDayReason: result.offDayReason,
+        skippedExistingId,
+      } as const;
+    }
+
+    // Regen guard: replace if existing status is "draft" or undefined
+    // (legacy D.1 row). Block on "printed"/"completed".
+
+    const status = existing?.status;
+    if (status === "printed" || status === "completed") {
+      throw new Error(
+        `Sheet for ${args.dateStr} is ${status} — delete it explicitly before regenerating.`,
+      );
+    }
+
+    const warmupQuestionIds = result.warmup.map((c) => c.question._id);
+    const mainQuestionIds = result.main.map((c) => c.question._id);
+    const examPrepQuestionIds = result.examPrep.map((c) => c.question._id);
+    const scoringSnapshot = buildScoringSnapshot(
+      result.warmup,
+      result.main,
+      result.examPrep,
+    );
+
+    const row = {
+      studentId: args.studentId,
+      date: args.dateStr,
+      generatedAt: Date.now(),
+      warmupQuestionIds,
+      mainQuestionIds,
+      examPrepQuestionIds,
+      status: "draft",
+      slotId: args.slotId,
+      generatedByTeacherId: teacherId ?? undefined,
+      alerts: result.alerts,
+      scoringSnapshot,
+    };
+
+    let sheetId: Id<"generatedSheets">;
+    if (existing) {
+      await ctx.db.patch(existing._id, row);
+      sheetId = existing._id;
+    } else {
+      sheetId = await ctx.db.insert("generatedSheets", row);
+    }
+
+    return {
+      status: "ok",
+      written: true,
+      sheetId,
+      replaced: existing !== null,
+      questionCount:
+        warmupQuestionIds.length +
+        mainQuestionIds.length +
+        examPrepQuestionIds.length,
+      alertCount: result.alerts.length,
+      underFillReasons: result.underFillReasons,
+    } as const;
+  },
+});
+
+// ── overrideSheet — Lead manual swap / remove / add ─────────────────────
+// Writes a sheetOverrides audit row + mutates the matching question id
+// array on the sheet in the same transaction.
+//   action="swap":   replace questionIdBefore → questionIdAfter in `slotName`
+//   action="remove": drop questionIdBefore from `slotName`
+//   action="add":    append questionIdAfter to `slotName`
+// Slot name is the field stem ("warmup" → warmupQuestionIds, etc).
+export const overrideSheet = mutation({
+  args: {
+    sheetId: v.id("generatedSheets"),
+    action: v.string(), // "swap" | "remove" | "add"
+    slotName: v.string(), // "warmup" | "main" | "examPrep"
+    questionIdBefore: v.optional(v.id("questionBank")),
+    questionIdAfter: v.optional(v.id("questionBank")),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const teacherId = await resolveTeacherId(ctx);
+    if (!teacherId) {
+      throw new Error("Override requires a registered teacher row");
+    }
+
+    const sheet = await ctx.db.get(args.sheetId);
+    if (!sheet) throw new Error("Sheet not found");
+    if (sheet.status === "completed") {
+      throw new Error("Cannot override a completed sheet");
+    }
+
+    if (
+      args.slotName !== "warmup" &&
+      args.slotName !== "main" &&
+      args.slotName !== "examPrep"
+    ) {
+      throw new Error(`Invalid slotName "${args.slotName}"`);
+    }
+    const fieldName =
+      args.slotName === "warmup"
+        ? "warmupQuestionIds"
+        : args.slotName === "main"
+          ? "mainQuestionIds"
+          : "examPrepQuestionIds";
+
+    const list = [...(sheet[fieldName] as Id<"questionBank">[])];
+
+    if (args.action === "swap") {
+      if (!args.questionIdBefore || !args.questionIdAfter) {
+        throw new Error("swap requires questionIdBefore + questionIdAfter");
+      }
+      const idx = list.findIndex((x) => x === args.questionIdBefore);
+      if (idx < 0) {
+        throw new Error("questionIdBefore not in slot");
+      }
+      list[idx] = args.questionIdAfter;
+    } else if (args.action === "remove") {
+      if (!args.questionIdBefore) {
+        throw new Error("remove requires questionIdBefore");
+      }
+      const idx = list.findIndex((x) => x === args.questionIdBefore);
+      if (idx < 0) {
+        throw new Error("questionIdBefore not in slot");
+      }
+      list.splice(idx, 1);
+    } else if (args.action === "add") {
+      if (!args.questionIdAfter) {
+        throw new Error("add requires questionIdAfter");
+      }
+      // Prevent cross-slot duplicates: check the OTHER two arrays too.
+      const otherFields: Array<typeof fieldName> = (
+        ["warmupQuestionIds", "mainQuestionIds", "examPrepQuestionIds"] as const
+      ).filter((f) => f !== fieldName) as Array<typeof fieldName>;
+      for (const f of otherFields) {
+        const otherList = sheet[f] as Id<"questionBank">[];
+        if (otherList.includes(args.questionIdAfter)) {
+          throw new Error(
+            `Question already on this sheet in ${f.replace("QuestionIds", "")}`,
+          );
+        }
+      }
+      if (list.includes(args.questionIdAfter)) {
+        throw new Error("Question already in this slot");
+      }
+      list.push(args.questionIdAfter);
+    } else {
+      throw new Error(`Invalid action "${args.action}"`);
+    }
+
+    await ctx.db.patch(args.sheetId, {
+      [fieldName]: list,
+      // Touch generatedAt so downstream cache-busts invalidate. Not
+      // strictly necessary but cheap and avoids stale renders.
+      generatedAt: Date.now(),
+    } as Partial<Doc<"generatedSheets">>);
+
+    const overrideId = await ctx.db.insert("sheetOverrides", {
+      sheetId: args.sheetId,
+      action: args.action,
+      slotName: args.slotName,
+      questionIdBefore: args.questionIdBefore,
+      questionIdAfter: args.questionIdAfter,
+      byTeacherId: teacherId,
+      reason: args.reason,
+      at: Date.now(),
+    });
+
+    return { overrideId, sheetId: args.sheetId };
+  },
+});
+
+export const markPrinted = mutation({
+  args: { sheetId: v.id("generatedSheets") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const sheet = await ctx.db.get(args.sheetId);
+    if (!sheet) throw new Error("Sheet not found");
+    if (sheet.status === "completed") {
+      throw new Error("Cannot re-print a completed sheet");
+    }
+    await ctx.db.patch(args.sheetId, {
+      status: "printed",
+      printedAt: Date.now(),
+    });
+    return { sheetId: args.sheetId };
+  },
+});
+
+export const markCompleted = mutation({
+  args: { sheetId: v.id("generatedSheets") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const sheet = await ctx.db.get(args.sheetId);
+    if (!sheet) throw new Error("Sheet not found");
+    await ctx.db.patch(args.sheetId, {
+      status: "completed",
+      completedAt: Date.now(),
+    });
+    return { sheetId: args.sheetId };
+  },
+});
+
+// ── Read helpers for the verification UI ─────────────────────────────────
+// Surfaces the saved sheet (if any) alongside the live planner preview, so
+// the Lead can compare draft vs preview before re-saving.
+export const getSavedSheet = query({
+  args: {
+    studentId: v.id("students"),
+    dateStr: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return ctx.db
+      .query("generatedSheets")
+      .withIndex("by_student_date", (q) =>
+        q.eq("studentId", args.studentId).eq("date", args.dateStr),
+      )
+      .unique();
+  },
+});
+
+// List students enrolled in a slot — used by the bulk "Generate for whole
+// class" action in the verification UI. Returns enriched rows so the UI can
+// show name + scope-derivation knobs without a follow-up batch read.
+export const listSlotStudents = query({
+  args: { slotId: v.id("scheduleSlots") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const links = await ctx.db
+      .query("slotStudents")
+      .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
+      .collect();
+    const students = await Promise.all(
+      links.map((l) => ctx.db.get(l.studentId)),
+    );
+    return students.filter((s): s is Doc<"students"> => s !== null);
   },
 });
 

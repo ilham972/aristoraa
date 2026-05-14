@@ -1,17 +1,18 @@
 'use client';
 
 // Phase D.3 verification surface — sheet planner inspector.
+// Phase D.4 — prereq alerts panel.
+// Phase D.5 — exam-backstop urgency-override badge.
+// Phase D.6 — save draft / mark printed / mark completed + bulk class
+//             generate by slot.
 //
 // Lead picks a student + date → sees the planSheet result split into the
 // three slots (warm-up / main / exam-prep). The view exposes the inputs the
 // planner used (phase-of-term, ratios, budget tier, exam-week mode, days to
-// exam) AND the per-question scoring breakdown so we can sanity-check the
-// slot allocator and budget logic before D.6 starts persisting sheets.
-//
-// Read-only: no mutations. The planner.planSheet query already auth-gates.
+// exam) AND the per-question scoring breakdown.
 
 import { useMemo, useState } from 'react';
-import { useQuery } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import {
   Calendar as CalendarIcon,
   User as UserIcon,
@@ -26,6 +27,13 @@ import {
   ChevronRight,
   FileText,
   BookOpen,
+  Save,
+  Printer,
+  CheckCircle2,
+  Users,
+  Loader2,
+  ShieldAlert,
+  Zap,
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { CURRICULUM_MODULES, findUnit } from '@/lib/curriculum-data';
@@ -141,6 +149,11 @@ export function SheetPlannerTab() {
       : 'skip',
   );
 
+  const savedSheet = useQuery(
+    api.learningEngine.planner.getSavedSheet,
+    studentId ? { studentId, dateStr } : 'skip',
+  );
+
   const filteredStudents = useMemo(() => {
     if (!allStudents) return [];
     const q = search.trim().toLowerCase();
@@ -250,9 +263,22 @@ export function SheetPlannerTab() {
             slot={plan.examPrep}
             color="#B9770E"
           />
+          {plan.alerts && plan.alerts.length > 0 && (
+            <PrereqAlertsPanel alerts={plan.alerts as PrereqAlert[]} />
+          )}
+          {studentId && (
+            <SaveSheetCard
+              studentId={studentId}
+              dateStr={dateStr}
+              unitIds={unitIds}
+              gradeByModule={gradeByModule}
+              savedSheet={savedSheet ?? null}
+            />
+          )}
           {plan.plannerGaps.length > 0 && (
             <PlannerGapsPanel gaps={plan.plannerGaps} />
           )}
+          <BulkSlotCard dateStr={dateStr} />
           <MetaPanel meta={plan.meta} ratios={plan.phase?.ratios ?? null} />
         </>
       )}
@@ -636,7 +662,20 @@ type PickedCandidate = {
     fit: number;
     novelty: number;
     proximity: number;
+    urgencyOverride: number | null;
+    urgencyOverrideReason: string | null;
   };
+};
+
+// D.4 prereq alert shape matches planner.computePrereqAlerts return type.
+type PrereqAlert = {
+  type: 'prereqUnmet';
+  questionId: Id<'questionBank'>;
+  conceptId: Id<'exercises'>;
+  conceptName: string;
+  prereqId: Id<'exercises'>;
+  prereqName: string;
+  prereqMastery: number;
 };
 
 function SlotSection({
@@ -747,14 +786,37 @@ function QuestionCard({
             <ConceptStat label="Score" value={c.score} />
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
               Factor breakdown
+              {c.factors.urgencyOverride !== null && (
+                <span
+                  title={c.factors.urgencyOverrideReason ?? ''}
+                  className="px-1.5 py-0.5 rounded-full bg-red-500/10 border border-red-500/30 text-[9px] font-bold text-red-600 dark:text-red-400 flex items-center gap-0.5"
+                >
+                  <Zap className="w-2.5 h-2.5" />
+                  EXAM BACKSTOP
+                </span>
+              )}
             </div>
             <FactorBar label="Importance" value={c.factors.importance} weight={0.3} />
-            <FactorBar label="Urgency" value={c.factors.urgency} weight={0.25} />
+            <FactorBar
+              label="Urgency"
+              value={c.factors.urgency}
+              weight={0.25}
+              suffix={
+                c.factors.urgencyOverride !== null
+                  ? '(forced)'
+                  : undefined
+              }
+            />
             <FactorBar label="Fit" value={c.factors.fit} weight={0.2} />
             <FactorBar label="Novelty" value={c.factors.novelty} weight={0.15} />
             <FactorBar label="Proximity" value={c.factors.proximity} weight={0.1} />
+            {c.factors.urgencyOverrideReason && (
+              <p className="mt-1.5 text-[9.5px] text-red-600 dark:text-red-400 italic">
+                {c.factors.urgencyOverrideReason}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -797,18 +859,25 @@ function FactorBar({
   label,
   value,
   weight,
+  suffix,
 }: {
   label: string;
   value: number;
   weight: number;
+  suffix?: string;
 }) {
   const contrib = value * weight;
   return (
     <div className="flex items-center gap-2 mb-1 last:mb-0">
-      <div className="w-20 text-[10px] text-muted-foreground shrink-0">{label}</div>
+      <div className="w-20 text-[10px] text-muted-foreground shrink-0 flex items-center gap-1">
+        {label}
+        {suffix && (
+          <span className="text-[9px] text-red-500 font-semibold">{suffix}</span>
+        )}
+      </div>
       <div className="flex-1 h-1.5 rounded-full bg-card overflow-hidden border border-border">
         <div
-          className="h-full bg-primary rounded-full"
+          className={`h-full rounded-full ${suffix ? 'bg-red-500' : 'bg-primary'}`}
           style={{ width: `${value * 100}%` }}
         />
       </div>
@@ -958,5 +1027,477 @@ function MetaRow({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <span className="text-foreground font-mono text-right">{value}</span>
     </div>
+  );
+}
+
+// ── D.4 prereq alerts panel ──────────────────────────────────────────────
+// Loud-mode list — every (question, concept, prereq) triple where the
+// prereq's mastery is below MASTERY_THRESHOLD. Soft warning, never blocks
+// printing — Lead can override and print regardless.
+
+function PrereqAlertsPanel({ alerts }: { alerts: PrereqAlert[] }) {
+  const [open, setOpen] = useState(true);
+  // Group by concept so the "10 alerts" feel less overwhelming when one
+  // weak prereq spans many questions.
+  const groups = useMemo(() => {
+    const map = new Map<
+      string,
+      { conceptName: string; prereqs: Map<string, PrereqAlert[]> }
+    >();
+    for (const a of alerts) {
+      const cKey = a.conceptId as unknown as string;
+      let g = map.get(cKey);
+      if (!g) {
+        g = { conceptName: a.conceptName, prereqs: new Map() };
+        map.set(cKey, g);
+      }
+      const pKey = a.prereqId as unknown as string;
+      const list = g.prereqs.get(pKey) ?? [];
+      list.push(a);
+      g.prereqs.set(pKey, list);
+    }
+    return Array.from(map.entries()).map(([cKey, g]) => ({
+      conceptId: cKey,
+      conceptName: g.conceptName,
+      prereqs: Array.from(g.prereqs.values()),
+    }));
+  }, [alerts]);
+  return (
+    <section className="rounded-xl border border-orange-500/30 bg-orange-500/5 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-3 py-2 flex items-center gap-2 hover:bg-orange-500/10 transition-colors"
+      >
+        <ShieldAlert className="w-3.5 h-3.5 text-orange-500" />
+        <span className="text-[11px] font-bold text-foreground">
+          Prereq alerts ({alerts.length})
+        </span>
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          {groups.length} concept{groups.length === 1 ? '' : 's'}
+        </span>
+        {open ? (
+          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-orange-500/30 max-h-64 overflow-y-auto divide-y divide-orange-500/20">
+          {groups.map((g) => (
+            <div key={g.conceptId} className="px-3 py-2">
+              <div className="text-xs font-semibold text-foreground mb-1">
+                {g.conceptName}
+              </div>
+              <div className="space-y-1 pl-2">
+                {g.prereqs.map((alertList) => {
+                  const first = alertList[0];
+                  return (
+                    <div
+                      key={first.prereqId as unknown as string}
+                      className="flex items-center justify-between gap-2 text-[10.5px]"
+                    >
+                      <span className="text-muted-foreground">
+                        needs{' '}
+                        <span className="text-foreground font-medium">
+                          {first.prereqName}
+                        </span>{' '}
+                        ({alertList.length} Q{alertList.length === 1 ? '' : 's'})
+                      </span>
+                      <span
+                        className={`tabular-nums font-mono shrink-0 ${
+                          first.prereqMastery < 0.3
+                            ? 'text-red-500 font-bold'
+                            : 'text-amber-500 font-semibold'
+                        }`}
+                      >
+                        {(first.prereqMastery * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── D.6 save / mark-printed / mark-completed ─────────────────────────────
+
+type SavedSheet = {
+  _id: Id<'generatedSheets'>;
+  status?: string;
+  generatedAt: number;
+  printedAt?: number;
+  completedAt?: number;
+  warmupQuestionIds: Id<'questionBank'>[];
+  mainQuestionIds: Id<'questionBank'>[];
+  examPrepQuestionIds: Id<'questionBank'>[];
+};
+
+type SaveResult =
+  | { ok: true; replaced: boolean; questionCount: number; alertCount: number }
+  | { ok: false; message: string };
+
+function SaveSheetCard({
+  studentId,
+  dateStr,
+  unitIds,
+  gradeByModule,
+  savedSheet,
+}: {
+  studentId: Id<'students'>;
+  dateStr: string;
+  unitIds: string[];
+  gradeByModule: Record<string, number[]>;
+  savedSheet: SavedSheet | null;
+}) {
+  const saveMutation = useMutation(api.learningEngine.planner.saveSheetForStudent);
+  const markPrintedMutation = useMutation(api.learningEngine.planner.markPrinted);
+  const markCompletedMutation = useMutation(api.learningEngine.planner.markCompleted);
+  const [busy, setBusy] = useState<'save' | 'print' | 'complete' | null>(null);
+  const [result, setResult] = useState<SaveResult | null>(null);
+
+  const status = savedSheet?.status ?? null;
+  const isFrozen = status === 'printed' || status === 'completed';
+  const savedQCount = savedSheet
+    ? savedSheet.warmupQuestionIds.length +
+      savedSheet.mainQuestionIds.length +
+      savedSheet.examPrepQuestionIds.length
+    : 0;
+
+  async function handleSave() {
+    setBusy('save');
+    setResult(null);
+    try {
+      const r = await saveMutation({
+        studentId,
+        dateStr,
+        unitIds,
+        gradeByModule,
+      });
+      if (r.status === 'ok') {
+        setResult({
+          ok: true,
+          replaced: r.replaced,
+          questionCount: r.questionCount,
+          alertCount: r.alertCount,
+        });
+      } else {
+        setResult({ ok: false, message: `Skipped: ${r.status}` });
+      }
+    } catch (e) {
+      setResult({ ok: false, message: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handlePrint() {
+    if (!savedSheet) return;
+    setBusy('print');
+    try {
+      await markPrintedMutation({ sheetId: savedSheet._id });
+    } catch (e) {
+      setResult({ ok: false, message: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleComplete() {
+    if (!savedSheet) return;
+    setBusy('complete');
+    try {
+      await markCompletedMutation({ sheetId: savedSheet._id });
+    } catch (e) {
+      setResult({ ok: false, message: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const statusBadge = (() => {
+    if (!status) return null;
+    const styles: Record<string, string> = {
+      draft: 'bg-muted text-muted-foreground border-border',
+      printed:
+        'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
+      completed:
+        'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    };
+    return (
+      <span
+        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
+          styles[status] ?? styles.draft
+        }`}
+      >
+        {status}
+      </span>
+    );
+  })();
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Save className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+          Save / print
+        </span>
+        {statusBadge}
+        {savedSheet && (
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            {savedQCount} Q saved · {new Date(savedSheet.generatedAt).toLocaleString()}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={handleSave}
+          disabled={busy !== null || isFrozen}
+          className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 hover:bg-primary/90 transition-colors"
+        >
+          {busy === 'save' ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Save className="w-3.5 h-3.5" />
+          )}
+          {savedSheet && !isFrozen ? 'Replace draft' : 'Save as draft'}
+        </button>
+        <button
+          onClick={handlePrint}
+          disabled={!savedSheet || busy !== null || status === 'completed'}
+          className="px-3 py-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 hover:bg-blue-500/20 transition-colors"
+        >
+          {busy === 'print' ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Printer className="w-3.5 h-3.5" />
+          )}
+          Mark printed
+        </button>
+        <button
+          onClick={handleComplete}
+          disabled={!savedSheet || busy !== null || status === 'completed'}
+          className="px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 hover:bg-emerald-500/20 transition-colors"
+        >
+          {busy === 'complete' ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <CheckCircle2 className="w-3.5 h-3.5" />
+          )}
+          Mark completed
+        </button>
+      </div>
+      {isFrozen && (
+        <p className="mt-2 text-[10.5px] text-muted-foreground italic">
+          Sheet is {status} — delete from the dashboard before regenerating.
+        </p>
+      )}
+      {result && (
+        <div
+          className={`mt-2 text-[11px] rounded-lg p-2 border ${
+            result.ok
+              ? 'bg-emerald-500/5 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+              : 'bg-red-500/5 border-red-500/30 text-red-700 dark:text-red-400'
+          }`}
+        >
+          {result.ok
+            ? `${result.replaced ? 'Replaced draft' : 'Saved draft'} · ${result.questionCount} questions · ${result.alertCount} alerts`
+            : result.message}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── D.6 bulk class generation ────────────────────────────────────────────
+// Lead picks a slot → we list its students client-side, compute scope per
+// student, call saveSheetForStudent in a loop. No server-side mutation
+// needed because scope derivation lives in src/lib/curriculum-data.ts.
+
+type BulkProgress = {
+  total: number;
+  done: number;
+  saved: number;
+  offDay: number;
+  errors: Array<{ name: string; message: string }>;
+};
+
+function BulkSlotCard({ dateStr }: { dateStr: string }) {
+  const [open, setOpen] = useState(false);
+  const allSlots = useQuery(api.scheduleSlots.list);
+  const allStudents = useQuery(api.students.list);
+  const [slotId, setSlotId] = useState<Id<'scheduleSlots'> | null>(null);
+  const slotStudents = useQuery(
+    api.learningEngine.planner.listSlotStudents,
+    slotId ? { slotId } : 'skip',
+  );
+  const saveMutation = useMutation(api.learningEngine.planner.saveSheetForStudent);
+  const [progress, setProgress] = useState<BulkProgress | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const dayOfWeek = new Date(`${dateStr}T00:00:00.000Z`).getUTCDay();
+  const slotsForDay = useMemo(
+    () => (allSlots ?? []).filter((s) => s.dayOfWeek === dayOfWeek),
+    [allSlots, dayOfWeek],
+  );
+
+  async function handleBulkGenerate() {
+    if (!slotStudents || slotStudents.length === 0) return;
+    setBusy(true);
+    const prog: BulkProgress = {
+      total: slotStudents.length,
+      done: 0,
+      saved: 0,
+      offDay: 0,
+      errors: [],
+    };
+    setProgress({ ...prog });
+    for (const s of slotStudents) {
+      const studentForScope = allStudents?.find((x) => x._id === s._id) ?? s;
+      const gbm = resolveGradeByModule(studentForScope);
+      const uIds = unitIdsForScope(gbm);
+      try {
+        const r = await saveMutation({
+          studentId: s._id,
+          dateStr,
+          unitIds: uIds,
+          gradeByModule: gbm,
+          slotId: slotId ?? undefined,
+        });
+        if (r.status === 'ok') prog.saved += 1;
+        else if (r.status === 'off-day') prog.offDay += 1;
+        else
+          prog.errors.push({ name: s.name, message: `status: ${r.status}` });
+      } catch (e) {
+        prog.errors.push({ name: s.name, message: (e as Error).message });
+      }
+      prog.done += 1;
+      setProgress({ ...prog });
+    }
+    setBusy(false);
+  }
+
+  return (
+    <section className="rounded-xl border border-border bg-card overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/40"
+      >
+        <Users className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-[11px] font-semibold text-foreground">
+          Bulk generate for whole class
+        </span>
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          {slotsForDay.length} slot{slotsForDay.length === 1 ? '' : 's'} on this date
+        </span>
+        {open ? (
+          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-border p-3 space-y-2">
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
+              Slot
+            </label>
+            <select
+              value={(slotId as unknown as string) ?? ''}
+              onChange={(e) =>
+                setSlotId((e.target.value || null) as Id<'scheduleSlots'> | null)
+              }
+              className="w-full px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border outline-none focus:border-primary"
+            >
+              <option value="">Pick a slot…</option>
+              {slotsForDay.map((s) => (
+                <option key={s._id as unknown as string} value={s._id as unknown as string}>
+                  {s.startTime}–{s.endTime}
+                </option>
+              ))}
+            </select>
+          </div>
+          {slotId && (
+            <>
+              <div className="text-[11px] text-muted-foreground">
+                {slotStudents === undefined
+                  ? 'Loading students…'
+                  : `${slotStudents?.length ?? 0} student${(slotStudents?.length ?? 0) === 1 ? '' : 's'} in this slot`}
+              </div>
+              <button
+                onClick={handleBulkGenerate}
+                disabled={busy || !slotStudents || slotStudents.length === 0}
+                className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 hover:bg-primary/90 transition-colors"
+              >
+                {busy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                Generate {slotStudents?.length ?? 0} sheet
+                {(slotStudents?.length ?? 0) === 1 ? '' : 's'}
+              </button>
+            </>
+          )}
+          {progress && (
+            <div className="rounded-lg border border-border bg-muted/30 p-2 text-[11px] space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Progress</span>
+                <span className="font-mono text-foreground">
+                  {progress.done} / {progress.total}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-card overflow-hidden border border-border">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{
+                    width: `${(progress.done / progress.total) * 100}%`,
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                <span>
+                  Saved:{' '}
+                  <span className="text-emerald-500 font-semibold">
+                    {progress.saved}
+                  </span>
+                </span>
+                <span>
+                  Off-day:{' '}
+                  <span className="text-amber-500 font-semibold">
+                    {progress.offDay}
+                  </span>
+                </span>
+                <span>
+                  Errors:{' '}
+                  <span
+                    className={
+                      progress.errors.length > 0
+                        ? 'text-red-500 font-semibold'
+                        : 'text-foreground'
+                    }
+                  >
+                    {progress.errors.length}
+                  </span>
+                </span>
+              </div>
+              {progress.errors.length > 0 && (
+                <div className="mt-1 max-h-32 overflow-y-auto space-y-0.5">
+                  {progress.errors.map((e, i) => (
+                    <div key={i} className="text-[10px] text-red-500">
+                      <span className="font-semibold">{e.name}:</span> {e.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
