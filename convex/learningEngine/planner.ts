@@ -1844,12 +1844,23 @@ export const saveSheetForStudent = mutation({
       return { status: "no-student", written: false } as const;
     }
 
-    const existing = await ctx.db
+    // Defensive: use collect() not unique(). If a prior D.1 backfill or
+    // failed-retry attempt left two rows for the same (student, date),
+    // `.unique()` would throw before we ever get to the regen guard. With
+    // collect() we pick the most-recently-generated row as the "existing"
+    // and let the patch path overwrite it.
+    const existingRows = await ctx.db
       .query("generatedSheets")
       .withIndex("by_student_date", (q) =>
         q.eq("studentId", args.studentId).eq("date", args.dateStr),
       )
-      .unique();
+      .collect();
+    const existing =
+      existingRows.length === 0
+        ? null
+        : existingRows.reduce((a, b) =>
+            a.generatedAt >= b.generatedAt ? a : b,
+          );
 
     if (result.status === "off-day") {
       // If a stale draft exists from before off-days were configured for
@@ -1893,7 +1904,10 @@ export const saveSheetForStudent = mutation({
       result.examPrep,
     );
 
-    const row = {
+    // Build row WITHOUT explicit undefined values — Convex's db.insert
+    // rejects optional Id fields set to undefined. Only spread the optional
+    // fields when we actually have a value for them.
+    const row: Record<string, unknown> = {
       studentId: args.studentId,
       date: args.dateStr,
       generatedAt: Date.now(),
@@ -1901,18 +1915,24 @@ export const saveSheetForStudent = mutation({
       mainQuestionIds,
       examPrepQuestionIds,
       status: "draft",
-      slotId: args.slotId,
-      generatedByTeacherId: teacherId ?? undefined,
       alerts: result.alerts,
       scoringSnapshot,
     };
+    if (args.slotId) row.slotId = args.slotId;
+    if (teacherId) row.generatedByTeacherId = teacherId;
 
     let sheetId: Id<"generatedSheets">;
     if (existing) {
-      await ctx.db.patch(existing._id, row);
+      await ctx.db.patch(
+        existing._id,
+        row as Partial<Doc<"generatedSheets">>,
+      );
       sheetId = existing._id;
     } else {
-      sheetId = await ctx.db.insert("generatedSheets", row);
+      sheetId = await ctx.db.insert(
+        "generatedSheets",
+        row as Omit<Doc<"generatedSheets">, "_id" | "_creationTime">,
+      );
     }
 
     return {
