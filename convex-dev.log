@@ -1,0 +1,353 @@
+- Preparing Convex functions...
+
+[36mA minor update is available for Convex[39m [2m(1.33.0 → 1.39.1)[22m
+[2mChangelog:[22m [4mhttps://github.com/get-convex/convex-js/blob/main/CHANGELOG.md#changelog[24m
+✔ 22:39:53 Convex functions ready! (10.84s)
+Retrying request (attempt 3/6)...
+Retrying request (attempt 4/6)...
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✘ [ERROR] Unexpected ","
+
+    convex/learningEngine/planner.ts:1977:3:
+      1977 │   },
+           ╵    ^
+
+- Preparing Convex functions...
+
+✘ [ERROR] Unexpected ","
+
+    convex/learningEngine/planner.ts:1977:3:
+      1977 │   },
+           ╵    ^
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✘ [ERROR] Unexpected ","
+
+    convex/teachers.ts:228:3:
+      228 │   },
+          ╵    ^
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+Attempting reconnect in 94ms
+WebSocket reconnected at t=6896s after disconnect due to InactiveServer
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+Attempting reconnect in 119ms
+WebSocket reconnected at t=7430s after disconnect due to InactiveServer
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+Attempting reconnect in 69ms
+WebSocket reconnected at t=8463.3s after disconnect due to InactiveServer
+- Preparing Convex functions...
+
+✖ Error: Unable to start push to https://qualified-alpaca-97.convex.cloud
+✖ Error fetching POST  https://qualified-alpaca-97.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Hit an error while pushing:
+Loading the pushed modules encountered the following
+    error:
+Uncaught Failed to analyze learningEngine/pdf.js: Could not load the "sharp" module using the linux-arm64 runtime
+Possible solutions:
+- Ensure optional dependencies can be installed:
+    npm install --include=optional sharp
+- Ensure your package manager supports multi-platform installation:
+    See https://sharp.pixelplumbing.com/install#cross-platform
+- Add platform-specific dependencies:
+    npm install --os=linux --cpu=arm64 sharp
+- Consult the installation documentation:
+    See https://sharp.pixelplumbing.com/install
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+
+- Preparing Convex functions...
+
+✖ TypeScript typecheck via `tsc` failed.
+To ignore failing typecheck, use `--typecheck=disable`.
+- Collecting TypeScript errors
+

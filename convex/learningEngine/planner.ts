@@ -49,7 +49,7 @@
 // dashboard can react — but we DO NOT block the rest of the pool.
 
 import { mutation, query } from "../_generated/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
@@ -1748,18 +1748,32 @@ export const planSheet = query({
 // Resolve the calling teacher's id from auth. Returns null if no teacher row
 // exists for the clerkUserId yet (legacy users — sheet still writes, audit
 // field stays undefined).
+//
+// Defensive: use collect() not unique(). Historical bootstrap allowed the
+// same clerkUserId to land twice in `teachers` (the `add` mutation didn't
+// guard duplicates until the same patch that introduced this helper).
+// `.unique()` throws on >1 hit, which crashed every saveSheetForStudent
+// call for affected users. We pick the oldest row deterministically so
+// audit-field FKs stay stable across calls — and `teachers.dedupeByClerkUser`
+// is available for the Lead to clean the data.
 async function resolveTeacherId(
   ctx: MutationCtx,
 ): Promise<Id<"teachers"> | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
-  const t = await ctx.db
+  const rows = await ctx.db
     .query("teachers")
     .withIndex("by_clerk_user", (q) =>
       q.eq("clerkUserId", identity.subject),
     )
-    .unique();
-  return t?._id ?? null;
+    .collect();
+  if (rows.length === 0) return null;
+  // Pick the oldest by _creationTime so the chosen teacherId is stable
+  // across calls even before dedupe runs.
+  const oldest = rows.reduce((a, b) =>
+    a._creationTime <= b._creationTime ? a : b,
+  );
+  return oldest._id;
 }
 
 // Build the per-question scoring snapshot for the audit row. Only picked
@@ -1825,8 +1839,35 @@ export const saveSheetForStudent = mutation({
     debugSheetLength: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    try {
+      return await saveSheetForStudentImpl(ctx, args);
+    } catch (e) {
+      // Surface the real error to the client. Plain `throw new Error()` is
+      // hidden as "Server Error" by Convex; ConvexError makes the message
+      // reachable via err.data on the client.
+      const msg =
+        e instanceof Error
+          ? `${e.message}${e.stack ? "\n" + e.stack.split("\n").slice(0, 4).join("\n") : ""}`
+          : String(e);
+      throw new ConvexError(`saveSheetForStudent failed: ${msg}`);
+    }
+  },
+});
+
+async function saveSheetForStudentImpl(
+  ctx: MutationCtx,
+  args: {
+    studentId: Id<"students">;
+    dateStr: string;
+    unitIds: string[];
+    gradeByModule: Record<string, number[]>;
+    slotId?: Id<"scheduleSlots">;
+    debugSessionMinutes?: number;
+    debugSheetLength?: number;
+  },
+) {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError("Unauthenticated");
 
     const teacherId = await resolveTeacherId(ctx);
 
@@ -1890,7 +1931,7 @@ export const saveSheetForStudent = mutation({
 
     const status = existing?.status;
     if (status === "printed" || status === "completed") {
-      throw new Error(
+      throw new ConvexError(
         `Sheet for ${args.dateStr} is ${status} — delete it explicitly before regenerating.`,
       );
     }
@@ -1947,8 +1988,7 @@ export const saveSheetForStudent = mutation({
       alertCount: result.alerts.length,
       underFillReasons: result.underFillReasons,
     } as const;
-  },
-});
+}
 
 // ── overrideSheet — Lead manual swap / remove / add ─────────────────────
 // Writes a sheetOverrides audit row + mutates the matching question id

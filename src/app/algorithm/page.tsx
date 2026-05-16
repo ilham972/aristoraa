@@ -1,12 +1,14 @@
 'use client';
 
 import { useMemo, useState, useCallback, Suspense } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import {
   Layers, BarChart3, CalendarDays, FileSpreadsheet,
   RefreshCw, AlertTriangle, FileText,
   ChevronDown, ChevronRight, Pencil, Plus, Trash2,
+  ArrowUpRight,
 } from 'lucide-react';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
@@ -1071,6 +1073,13 @@ function AlgorithmPageInner() {
       <div className="flex items-center gap-2 mb-4">
         <TabIcon className="w-5 h-5 text-primary" />
         <h1 className="text-lg font-bold text-foreground">{currentTab.fullLabel}</h1>
+        <Link
+          href="/algorithm/sheets"
+          className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 border border-primary/30 text-primary text-[10px] font-semibold hover:bg-primary/20 transition-colors"
+        >
+          Sheets dashboard
+          <ArrowUpRight className="w-3 h-3" />
+        </Link>
       </div>
 
       {/* Tab switcher */}

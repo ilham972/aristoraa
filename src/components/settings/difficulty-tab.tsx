@@ -806,6 +806,17 @@ function ConceptPickerSheet({
 // page image. Implementation: use the source URL as a CSS background, sized
 // so the cropBox fills the thumbnail box, positioned so the cropBox aligns
 // to the box's top-left.
+//
+// The thumbnail is intentionally aspect-preserving — it sizes its WIDTH from
+// the cropBox's actual aspect ratio (using the natural image dims read on
+// load) so wide crops look wide and tall crops look tall. Square-on-square
+// thumbnails were misleading: a tall narrow crop got squashed into 84×84
+// and looked broken; a wide short crop got stretched the same way.
+//
+// Tapping the thumbnail opens a full-fidelity dialog that displays exactly
+// the pixels the database stores. This is the load-bearing diagnostic for
+// "is the cropBox stored correctly or not?" — what the dialog shows is
+// what's saved, full stop.
 function CroppedPreview({
   imageUrl,
   cropBox,
@@ -813,36 +824,204 @@ function CroppedPreview({
   imageUrl: string | null;
   cropBox: { x: number; y: number; w: number; h: number } | null;
 }) {
-  const SIZE = 84; // px
+  const MAX_SIDE = 96; // px — biggest of width / height in the row thumbnail
+  const MIN_SIDE = 40; // px — keep skinny crops still tappable
+  // Track the URL that each loaded set of natural dims belongs to. When
+  // imageUrl changes, the stored dims are simply ignored (treated as if
+  // unloaded) — we avoid a synchronous setState reset to keep
+  // react-hooks/set-state-in-effect happy.
+  const [loaded, setLoaded] = useState<
+    { url: string; w: number; h: number } | null
+  >(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Preload the image once per URL to learn its natural pixel dims. This is
+  // the only way to compute the crop's TRUE aspect ratio (cropBox is
+  // normalized to the image; we need imgW/imgH to convert to pixels). The
+  // setState happens inside the load callback — an external-system event —
+  // not synchronously in the effect body.
+  useEffect(() => {
+    if (!imageUrl) return;
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      setLoaded({ url: imageUrl, w: img.naturalWidth, h: img.naturalHeight });
+    };
+    img.src = imageUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl]);
+
+  const naturalDims =
+    loaded && loaded.url === imageUrl
+      ? { w: loaded.w, h: loaded.h }
+      : null;
+
   if (!imageUrl || !cropBox) {
     return (
       <div
         className="rounded-md bg-muted border border-border/40 shrink-0"
-        style={{ width: SIZE, height: SIZE }}
+        style={{ width: MAX_SIDE, height: MAX_SIDE }}
       />
     );
   }
-  // To show cropBox (normalized 0..1) as if it filled SIZE × SIZE, the
-  // background image must be scaled so cropBox.w * imgW = SIZE → imgW = SIZE/cropBox.w
-  // Then position the image so cropBox.x * imgW = 0 → bg-x = -cropBox.x * imgW.
+
   const safeW = Math.max(cropBox.w, 0.001);
   const safeH = Math.max(cropBox.h, 0.001);
-  const imgW = SIZE / safeW;
-  const imgH = SIZE / safeH;
+  // Crop's pixel aspect (W/H). Without natural dims we have to guess —
+  // assume the image itself is portrait A4-ish (≈ 0.71) since textbook
+  // pages and past-paper scans are always portrait in this project.
+  const fallbackImgAspect = 0.71;
+  const imgAspect = naturalDims ? naturalDims.w / naturalDims.h : fallbackImgAspect;
+  const cropAspect = (imgAspect * safeW) / safeH;
+  // Fit the cropAspect into a MAX_SIDE × MAX_SIDE bounding box, keeping at
+  // least MIN_SIDE on the smaller dimension so skinny crops stay legible.
+  let boxW: number;
+  let boxH: number;
+  if (cropAspect >= 1) {
+    boxW = MAX_SIDE;
+    boxH = Math.max(MIN_SIDE, MAX_SIDE / cropAspect);
+  } else {
+    boxH = MAX_SIDE;
+    boxW = Math.max(MIN_SIDE, MAX_SIDE * cropAspect);
+  }
+  const imgW = boxW / safeW;
+  const imgH = boxH / safeH;
   const bgX = -cropBox.x * imgW;
   const bgY = -cropBox.y * imgH;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setPreviewOpen(true);
+        }}
+        // Center the thumbnail within a fixed-width column so rows stay
+        // aligned regardless of each crop's aspect ratio.
+        className="shrink-0 flex items-center justify-center cursor-zoom-in"
+        style={{ width: MAX_SIDE, height: MAX_SIDE }}
+        aria-label="Show full saved crop"
+      >
+        <div
+          className="rounded-md bg-muted border border-border/40 overflow-hidden hover:ring-2 hover:ring-primary/40 transition-shadow"
+          style={{
+            width: boxW,
+            height: boxH,
+            backgroundImage: `url(${imageUrl})`,
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: `${imgW}px ${imgH}px`,
+            backgroundPosition: `${bgX}px ${bgY}px`,
+          }}
+        />
+      </button>
+      {previewOpen && (
+        <FullCropPreviewDialog
+          imageUrl={imageUrl}
+          cropBox={cropBox}
+          naturalDims={naturalDims}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// Full-fidelity dialog. Renders the cropBox region as large as fits in the
+// viewport, with the cropBox's true aspect ratio, plus a metadata strip so
+// the Lead can see EXACTLY what's stored in questionBank.cropBox. This is
+// the diagnostic surface: if the rendered region here doesn't look like
+// what was drawn during cropping, the cropping UI is the bug; if it
+// matches, the cropping UI was honest and the crop was simply drawn that
+// way.
+function FullCropPreviewDialog({
+  imageUrl,
+  cropBox,
+  naturalDims,
+  onClose,
+}: {
+  imageUrl: string;
+  cropBox: { x: number; y: number; w: number; h: number };
+  naturalDims: { w: number; h: number } | null;
+  onClose: () => void;
+}) {
+  const safeW = Math.max(cropBox.w, 0.001);
+  const safeH = Math.max(cropBox.h, 0.001);
+  const cropPxW = naturalDims ? Math.round(naturalDims.w * safeW) : null;
+  const cropPxH = naturalDims ? Math.round(naturalDims.h * safeH) : null;
+  const cropAspect = naturalDims
+    ? (naturalDims.w * safeW) / (naturalDims.h * safeH)
+    : safeW / safeH;
+  // Cap display to viewport. Use 70vw × 60vh as the bounding box.
+  const MAX_VW = 70;
+  const MAX_VH = 60;
+  let dispW: string;
+  let dispH: string;
+  if (cropAspect >= MAX_VW / MAX_VH) {
+    dispW = `${MAX_VW}vw`;
+    dispH = `${MAX_VW / cropAspect}vw`;
+  } else {
+    dispH = `${MAX_VH}vh`;
+    dispW = `${MAX_VH * cropAspect}vh`;
+  }
+  // Background sizing so the cropBox region fills the display box exactly.
+  const imgWcss = `calc(${dispW} / ${safeW})`;
+  const imgHcss = `calc(${dispH} / ${safeH})`;
+  const bgXcss = `calc(-${cropBox.x} * ${imgWcss})`;
+  const bgYcss = `calc(-${cropBox.y} * ${imgHcss})`;
+
   return (
     <div
-      className="rounded-md bg-muted border border-border/40 shrink-0 overflow-hidden"
-      style={{
-        width: SIZE,
-        height: SIZE,
-        backgroundImage: `url(${imageUrl})`,
-        backgroundRepeat: 'no-repeat',
-        backgroundSize: `${imgW}px ${imgH}px`,
-        backgroundPosition: `${bgX}px ${bgY}px`,
-      }}
-    />
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="rounded-2xl bg-card border border-border p-3 shadow-xl max-w-[90vw] max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-bold text-foreground">Saved crop preview</div>
+          <button
+            onClick={onClose}
+            className="text-[11px] px-2 py-1 rounded-md hover:bg-muted text-muted-foreground"
+          >
+            Close
+          </button>
+        </div>
+        <div
+          className="rounded-md bg-muted border border-border overflow-hidden mx-auto"
+          style={{
+            width: dispW,
+            height: dispH,
+            backgroundImage: `url(${imageUrl})`,
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: `${imgWcss} ${imgHcss}`,
+            backgroundPosition: `${bgXcss} ${bgYcss}`,
+          }}
+        />
+        <div className="mt-2 text-[10px] text-muted-foreground font-mono space-y-0.5">
+          <div>
+            cropBox: x={cropBox.x.toFixed(4)} y={cropBox.y.toFixed(4)} w=
+            {cropBox.w.toFixed(4)} h={cropBox.h.toFixed(4)}
+          </div>
+          {naturalDims && cropPxW !== null && cropPxH !== null && (
+            <div>
+              source image: {naturalDims.w} × {naturalDims.h} px · crop region:{' '}
+              {cropPxW} × {cropPxH} px
+            </div>
+          )}
+          {!naturalDims && <div>source image: loading…</div>}
+        </div>
+        <div className="mt-2 text-[10px] text-muted-foreground leading-snug">
+          What you see above is exactly the pixels stored in the database. If
+          it doesn&apos;t match what you intended to crop, re-open the cropping
+          page and adjust this question&apos;s box.
+        </div>
+      </div>
+    </div>
   );
 }
 

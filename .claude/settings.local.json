@@ -43,7 +43,20 @@
       "Bash(git commit -m 'feat\\(algo-A.3\\): mastery derivation queries \\(masteryFor / masteryAll\\) *)",
       "Bash(git commit -m 'feat\\(algo-A.4\\): backfillStudent mutation + backfillStatus query *)",
       "Bash(git commit -m 'feat\\(algo-A.5\\): per-student mastery dashboard at /algorithm/mastery *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(tee convex-dev.log)",
+      "Bash(node scripts/install-linux-sharp.mjs)",
+      "Bash(curl -s -I -L \"https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstamil/NotoSansTamil%5Bwdth%2Cwght%5D.ttf\")",
+      "Bash(curl -s -L -o /tmp/sharp-arm64.tgz \"https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.34.5.tgz\")",
+      "Bash(tar -tzf /tmp/sharp-arm64.tgz)",
+      "Bash(npx convex *)",
+      "Read(//tmp/**)",
+      "Bash(curl -sLo /tmp/smoke.pdf \"https://rapid-loris-309.convex.cloud/api/storage/eada777c-17eb-48fe-b482-bc9f04ffe6a2\")",
+      "Bash(xxd)",
+      "PowerShell(Start-Process \"smoke-test.pdf\")",
+      "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/1bcb4a1f-02f7-44ab-9225-90e9798a7b12\" -o q3q4-source.jpg)",
+      "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/ef1556d1-f9e0-4646-b7c2-be7665bfcc90\" -o q2-source.jpg)",
+      "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/b54fc1b8-b068-46cc-a21a-8c3957f88953\" -o q1-source.jpg)"
     ]
   }
 }

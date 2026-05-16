@@ -13,6 +13,22 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
+import { ConvexError } from 'convex/values';
+
+// Extract a useful message from a Convex mutation rejection. ConvexError
+// carries the server-thrown message in `err.data`; plain Errors only get the
+// generic "Server Error" string — fall back to that.
+function describeMutationError(e: unknown): string {
+  if (e instanceof ConvexError) {
+    const data: unknown = (e as ConvexError<string>).data;
+    if (typeof data === 'string') return data;
+    if (data && typeof data === 'object' && 'message' in data) {
+      return String((data as { message: unknown }).message);
+    }
+    return JSON.stringify(data);
+  }
+  return e instanceof Error ? e.message : String(e);
+}
 import {
   Calendar as CalendarIcon,
   User as UserIcon,
@@ -1189,7 +1205,7 @@ function SaveSheetCard({
         setResult({ ok: false, message: `Skipped: ${r.status}` });
       }
     } catch (e) {
-      setResult({ ok: false, message: (e as Error).message });
+      setResult({ ok: false, message: describeMutationError(e) });
     } finally {
       setBusy(null);
     }
@@ -1201,7 +1217,7 @@ function SaveSheetCard({
     try {
       await markPrintedMutation({ sheetId: savedSheet._id });
     } catch (e) {
-      setResult({ ok: false, message: (e as Error).message });
+      setResult({ ok: false, message: describeMutationError(e) });
     } finally {
       setBusy(null);
     }
@@ -1213,7 +1229,7 @@ function SaveSheetCard({
     try {
       await markCompletedMutation({ sheetId: savedSheet._id });
     } catch (e) {
-      setResult({ ok: false, message: (e as Error).message });
+      setResult({ ok: false, message: describeMutationError(e) });
     } finally {
       setBusy(null);
     }
@@ -1373,7 +1389,7 @@ function BulkSlotCard({ dateStr }: { dateStr: string }) {
         else
           prog.errors.push({ name: s.name, message: `status: ${r.status}` });
       } catch (e) {
-        prog.errors.push({ name: s.name, message: (e as Error).message });
+        prog.errors.push({ name: s.name, message: describeMutationError(e) });
       }
       prog.done += 1;
       setProgress({ ...prog });
