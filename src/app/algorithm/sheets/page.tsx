@@ -36,9 +36,11 @@ import {
   Archive,
   Loader2,
   ExternalLink,
+  Pencil,
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
+import { SheetPreviewDrawer } from '@/components/algorithm/sheet-preview';
 
 const MODULE_IDS = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6'];
 
@@ -360,6 +362,10 @@ function SlotDashboard({
   // Per-row spinner state. Decoupled from bulk state so a single-row click
   // doesn't disable everything.
   const [rowBusy, setRowBusy] = useState<Record<string, string | null>>({});
+  // Sheet currently open in the override drawer (E.4). Null = closed.
+  const [openSheetId, setOpenSheetId] = useState<Id<'generatedSheets'> | null>(
+    null,
+  );
   const setRow = useCallback(
     (id: string, label: string | null) =>
       setRowBusy((m) => ({ ...m, [id]: label })),
@@ -608,9 +614,19 @@ function SlotDashboard({
             onRender={() => onRender(r, false)}
             onForceRender={() => onRender(r, true)}
             onMarkPrinted={() => onMarkPrinted(r)}
+            onEdit={
+              r.sheet ? () => setOpenSheetId(r.sheet!._id) : undefined
+            }
           />
         ))}
       </section>
+
+      {openSheetId && (
+        <SheetPreviewDrawer
+          sheetId={openSheetId}
+          onClose={() => setOpenSheetId(null)}
+        />
+      )}
     </>
   );
 }
@@ -877,6 +893,7 @@ function SheetRow({
   onRender,
   onForceRender,
   onMarkPrinted,
+  onEdit,
 }: {
   row: Row;
   busyLabel: string | null;
@@ -884,6 +901,7 @@ function SheetRow({
   onRender: () => void;
   onForceRender: () => void;
   onMarkPrinted: () => void;
+  onEdit: (() => void) | undefined;
 }) {
   const status = rowStatus(row);
 
@@ -932,6 +950,7 @@ function SheetRow({
           onRender={onRender}
           onForceRender={onForceRender}
           onMarkPrinted={onMarkPrinted}
+          onEdit={onEdit}
         />}
       </div>
     </div>
@@ -945,6 +964,7 @@ function RowActions({
   onRender,
   onForceRender,
   onMarkPrinted,
+  onEdit,
 }: {
   status: RowStatus;
   row: Row;
@@ -952,7 +972,18 @@ function RowActions({
   onRender: () => void;
   onForceRender: () => void;
   onMarkPrinted: () => void;
+  onEdit: (() => void) | undefined;
 }) {
+  const editBtn =
+    onEdit && (status === 'draft-no-pdf' || status === 'draft-with-pdf' || status === 'printed') ? (
+      <ActionBtn
+        icon={<Pencil className="w-3 h-3" />}
+        label="Edit"
+        onClick={onEdit}
+        tone="ghost"
+      />
+    ) : null;
+
   if (status === 'off-day') {
     return (
       <span className="text-[10px] text-muted-foreground">No action — off day.</span>
@@ -966,6 +997,7 @@ function RowActions({
       <>
         <ActionBtn icon={<RefreshCw className="w-3 h-3" />} label="Render" onClick={onRender} tone="primary" />
         <ActionBtn icon={<Zap className="w-3 h-3" />} label="Force render" onClick={onForceRender} tone="amber" />
+        {editBtn}
         <ActionBtn icon={<Save className="w-3 h-3" />} label="Re-generate" onClick={onGenerate} tone="ghost" />
       </>
     );
@@ -984,6 +1016,7 @@ function RowActions({
             Open PDF
           </a>
         )}
+        {editBtn}
         <ActionBtn icon={<RefreshCw className="w-3 h-3" />} label="Re-render" onClick={onRender} tone="ghost" />
         <ActionBtn icon={<Zap className="w-3 h-3" />} label="Force re-render" onClick={onForceRender} tone="ghost" />
         <ActionBtn icon={<Printer className="w-3 h-3" />} label="Mark printed" onClick={onMarkPrinted} tone="primary" />
@@ -1004,6 +1037,7 @@ function RowActions({
             Open PDF
           </a>
         )}
+        {editBtn}
         <span className="text-[10px] text-muted-foreground">
           Locked — printed. Delete the row to regenerate.
         </span>
