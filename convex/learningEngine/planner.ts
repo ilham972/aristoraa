@@ -55,6 +55,10 @@ import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
 import { masteryFromState } from "./mastery";
 import {
+  conceptsForQuestion,
+  questionsTaggedToConcept,
+} from "./derivedConcepts";
+import {
   NOVELTY_COOLDOWN_DAYS,
   W_IMPORTANCE,
   W_URGENCY,
@@ -267,14 +271,17 @@ async function buildCandidatePool(
     }
     consideredConcepts += 1;
 
-    const tags = await ctx.db
-      .query("questionConcepts")
-      .withIndex("by_concept_exercise", (q) =>
-        q.eq("conceptExerciseId", concept.conceptId),
-      )
-      .collect();
+    // Read both tag paths via the unified helper so textbook crops (which
+    // carry the concept link via linkedExerciseId + unit ordering rather
+    // than a direct questionConcepts row) are visible to the planner.
+    // Coverage uses the same helper — keeps "what counts as tagged" in
+    // one place across the engine.
+    const taggedQuestionIds = await questionsTaggedToConcept(
+      ctx,
+      concept.conceptId,
+    );
 
-    if (tags.length === 0) {
+    if (taggedQuestionIds.length === 0) {
       plannerGaps.push({
         conceptId: concept.conceptId,
         conceptName: concept.name,
@@ -284,8 +291,8 @@ async function buildCandidatePool(
     }
 
     let availableForConcept = 0;
-    for (const t of tags) {
-      const qKey = t.questionId as unknown as string;
+    for (const qId of taggedQuestionIds) {
+      const qKey = qId as unknown as string;
       if (recentlyUsedQuestionIds.has(qKey)) continue;
       availableForConcept += 1;
       uniqueQuestionIds.add(qKey);
@@ -1250,22 +1257,19 @@ async function computePrereqAlerts(
 
   for (const qId of args.pickedQuestionIds) {
     // All concepts this question is tagged to (loud mode — not just the
-    // in-pool concept that put it on the sheet).
-    const tags = await ctx.db
-      .query("questionConcepts")
-      .withIndex("by_question", (q) => q.eq("questionId", qId))
-      .collect();
+    // in-pool concept that put it on the sheet). Uses the unified helper
+    // so textbook crops surface their inherited concepts alongside any
+    // direct questionConcepts join rows.
+    const conceptIds = await conceptsForQuestion(ctx, qId);
 
-    for (const t of tags) {
-      const conceptDoc = await getExercise(t.conceptExerciseId);
+    for (const conceptId of conceptIds) {
+      const conceptDoc = await getExercise(conceptId);
       if (!conceptDoc || conceptDoc.type !== "concept") continue;
       const conceptName = conceptDoc.name;
 
       // BFS the prereq DAG. Visited scoped per-concept-walk so distinct
       // tags from the same Q each get a fair walk.
-      const visited = new Set<string>([
-        t.conceptExerciseId as unknown as string,
-      ]);
+      const visited = new Set<string>([conceptId as unknown as string]);
       let frontier: Id<"exercises">[] =
         conceptDoc.prerequisiteExerciseIds ?? [];
       for (
@@ -1283,13 +1287,13 @@ async function computePrereqAlerts(
           // Push alert if unmastered. Continue walking transitively so a
           // chain A→B→C surfaces both A and B if both are weak.
           if (pMastery < MASTERY_THRESHOLD) {
-            const tripleKey = `${qId}|${t.conceptExerciseId}|${k}`;
+            const tripleKey = `${qId}|${conceptId}|${k}`;
             if (!seenTriple.has(tripleKey)) {
               seenTriple.add(tripleKey);
               alerts.push({
                 type: "prereqUnmet",
                 questionId: qId,
-                conceptId: t.conceptExerciseId,
+                conceptId,
                 conceptName,
                 prereqId: p,
                 prereqName: pDoc?.name ?? "(unknown concept)",

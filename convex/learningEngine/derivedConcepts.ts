@@ -132,6 +132,48 @@ export async function questionsTaggedToConcept(
   return all;
 }
 
+// Inverse of questionsTaggedToConcept: given a questionBank crop, return every
+// concept-type exercise it is tagged to. Same dual-path union:
+//   - Direct: questionConcepts join rows (past-paper crops + manual tags).
+//   - Inherited: a textbook crop's linkedExerciseId carries the concepts that
+//                precede that exercise in the unit's order sequence.
+// Deduped by conceptExerciseId. Returns [] when the crop has no path to any
+// concept (e.g. an orphan textbook crop whose parent exercise has no concept
+// row before it in the unit).
+export async function conceptsForQuestion(
+  ctx: QueryCtx,
+  questionId: Id<"questionBank">,
+): Promise<Id<"exercises">[]> {
+  // Path 1: direct join.
+  const direct = await ctx.db
+    .query("questionConcepts")
+    .withIndex("by_question", (q) => q.eq("questionId", questionId))
+    .collect();
+  const directIds = direct.map((d) => d.conceptExerciseId);
+
+  // Path 2: inheritance via the parent exercise of a textbook crop.
+  const q = await ctx.db.get(questionId);
+  let inheritedIds: Id<"exercises">[] = [];
+  if (q && q.source === "textbook" && q.linkedExerciseId) {
+    const parent = await ctx.db.get(q.linkedExerciseId);
+    if (parent) {
+      const mapping = await deriveConceptsForUnit(ctx, parent.unitId);
+      inheritedIds = mapping.exerciseToConcepts.get(q.linkedExerciseId) ?? [];
+    }
+  }
+
+  const seen = new Set<string>();
+  const all: Id<"exercises">[] = [];
+  for (const id of [...directIds, ...inheritedIds]) {
+    const key = id as unknown as string;
+    if (!seen.has(key)) {
+      seen.add(key);
+      all.push(id);
+    }
+  }
+  return all;
+}
+
 // Exposed query for the Concepts subtab drawer (0.6a UI) and the coverage
 // page (0.6c). Returns plain arrays — Convex queries cannot return Maps.
 export const getUnitMapping = query({
