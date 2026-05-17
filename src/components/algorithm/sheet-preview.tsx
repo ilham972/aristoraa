@@ -243,6 +243,7 @@ export function SheetPreviewDrawer({
                 This sheet is completed and locked. Overrides will be rejected.
               </div>
             )}
+            <IntegrityBanner integrity={data.integrity} />
             <div className="px-3 pb-4 space-y-4">
               <Section
                 title={SECTION_TITLES.warmup}
@@ -339,6 +340,60 @@ export function SheetPreviewDrawer({
 }
 
 // ── Header ──────────────────────────────────────────────────────────────
+
+// ── Integrity banner ────────────────────────────────────────────────────
+// Renders one row per blocking crop issue (stem-with-no-subparts, sub-
+// question-with-no-stem, etc — see convex/learningEngine/cropIntegrity.ts).
+// Non-blocking issues are not shown (they don't prevent rendering and would
+// add noise). The drawer's `data.integrity` is computed live on every
+// query response, so after the Lead crops the missing piece the banner
+// disappears on next refetch without any manual trigger.
+
+// Mirrors the shape exported from convex/learningEngine/cropIntegrity.ts.
+// Keeping it inline avoids a cross-package import (the convex/ folder is
+// not in src/lib's import scope at runtime, only at type-check).
+type IntegrityRow = {
+  questionId: Id<'questionBank'>;
+  slot: 'warmup' | 'main' | 'examPrep';
+  integrity: {
+    kind: string;
+    message: string;
+    blocking: boolean;
+  };
+};
+
+function IntegrityBanner({
+  integrity,
+}: {
+  integrity: {
+    blockingCount: number;
+    perQuestion: IntegrityRow[];
+  };
+}) {
+  if (integrity.blockingCount === 0) return null;
+  const blocking = integrity.perQuestion.filter((r) => r.integrity.blocking);
+  return (
+    <div className="mx-3 mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-[11px] text-red-700 dark:text-red-400 space-y-1.5">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="w-3.5 h-3.5" />
+        Cropping incomplete — {integrity.blockingCount}{' '}
+        question{integrity.blockingCount === 1 ? '' : 's'} blocking PDF render
+      </div>
+      <ul className="space-y-1 pl-5 list-disc text-red-600 dark:text-red-300/90">
+        {blocking.map((b) => (
+          <li key={b.questionId as unknown as string}>
+            <span className="font-mono uppercase mr-1">{b.slot}</span>
+            {b.integrity.message}
+          </li>
+        ))}
+      </ul>
+      <div className="text-[10px] text-red-500/80">
+        Open the cropping page to add the missing piece(s), or use Swap below to
+        pick a different question. The alert clears automatically once fixed.
+      </div>
+    </div>
+  );
+}
 
 function DrawerHeader({
   data,

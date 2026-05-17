@@ -31,6 +31,10 @@ import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { zipSync } from "fflate";
+import {
+  analyzeManyCropIntegrity,
+  type CropIntegrityWithMessage,
+} from "./cropIntegrity";
 
 // Local copy of the planner's module-of-day mapping. Defaults are Sunday off
 // only; per-student `offDays` overrides this. Names match what students.offDays
@@ -219,6 +223,17 @@ export type SheetPreviewData = {
   warmup: SheetPreviewQuestion[];
   main: SheetPreviewQuestion[];
   examPrep: SheetPreviewQuestion[];
+  // Per-question crop-integrity status. The Edit drawer renders a banner
+  // listing every blocking issue + a soft warning for non-blocking ones.
+  // Stays in sync with what the PDF renderer enforces (see cropIntegrity.ts).
+  integrity: {
+    blockingCount: number;
+    perQuestion: Array<{
+      questionId: Id<"questionBank">;
+      integrity: CropIntegrityWithMessage;
+      slot: "warmup" | "main" | "examPrep";
+    }>;
+  };
 };
 
 type ScoringSnapshotRow = {
@@ -336,6 +351,40 @@ export const getSheetWithCrops = query({
       examPrep.push(await enrichOneQuestion(ctx, qid, snap));
     }
 
+    // Crop-integrity pass over every picked Q. Same analyzer pdf.ts uses;
+    // the drawer renders banners off this so the Lead can fix data BEFORE
+    // hitting Render.
+    const allIds: Array<{
+      id: Id<"questionBank">;
+      slot: "warmup" | "main" | "examPrep";
+    }> = [
+      ...sheet.warmupQuestionIds.map((id) => ({ id, slot: "warmup" as const })),
+      ...sheet.mainQuestionIds.map((id) => ({ id, slot: "main" as const })),
+      ...sheet.examPrepQuestionIds.map((id) => ({
+        id,
+        slot: "examPrep" as const,
+      })),
+    ];
+    const integrityResult = await analyzeManyCropIntegrity(
+      ctx,
+      allIds.map((r) => r.id),
+    );
+    const integrityByQ = new Map<string, CropIntegrityWithMessage>();
+    for (const row of integrityResult.byQuestion) {
+      integrityByQ.set(
+        row.questionId as unknown as string,
+        row.integrity,
+      );
+    }
+    const perQuestion: SheetPreviewData["integrity"]["perQuestion"] = [];
+    for (const r of allIds) {
+      const integrity =
+        integrityByQ.get(r.id as unknown as string) ??
+        ({ kind: "ok-pass-through", message: "", blocking: false } as
+          CropIntegrityWithMessage);
+      perQuestion.push({ questionId: r.id, integrity, slot: r.slot });
+    }
+
     return {
       sheet: {
         _id: sheet._id,
@@ -359,6 +408,10 @@ export const getSheetWithCrops = query({
       warmup,
       main,
       examPrep,
+      integrity: {
+        blockingCount: integrityResult.blockingCount,
+        perQuestion,
+      },
     };
   },
 });

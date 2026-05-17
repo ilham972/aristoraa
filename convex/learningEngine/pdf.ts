@@ -82,6 +82,11 @@ const RULED_LINE_COUNT = 4;
 const RULED_LINE_GAP = 7 * MM;
 const RULED_LINES_TOTAL = RULED_LINE_COUNT * RULED_LINE_GAP;
 const FOOTNOTE_HEIGHT = 4 * MM;
+// Stems are usually a short instruction line ("Solve the expression:") —
+// keep the slot smaller than the main question image so the actual problem
+// gets visual priority. Aspect ratio is preserved by fitStemSlot below.
+const STEM_IMAGE_MAX_HEIGHT = 25 * MM;
+const STEM_GAP = 1.5 * MM;
 
 const COLOR_TEXT = rgb(0.11, 0.13, 0.16); // near-black
 const COLOR_MUTED = rgb(0.45, 0.49, 0.55);
@@ -210,6 +215,26 @@ function fitCropSlot(
   return { width: w, height: h };
 }
 
+// Stem slot uses the FULL content width (instruction lines tend to be long
+// and benefit from horizontal room) and a tighter max height. Aspect ratio
+// preserved.
+function fitStemSlot(
+  img: PDFImage | null,
+  cropBox: { w: number; h: number },
+): { width: number; height: number } {
+  if (!img) return { width: CONTENT_WIDTH, height: STEM_IMAGE_MAX_HEIGHT };
+  const cropPxW = Math.max(1, img.width * clampUnit(cropBox.w));
+  const cropPxH = Math.max(1, img.height * clampUnit(cropBox.h));
+  const aspect = cropPxW / cropPxH;
+  let w = CONTENT_WIDTH;
+  let h = w / aspect;
+  if (h > STEM_IMAGE_MAX_HEIGHT) {
+    h = STEM_IMAGE_MAX_HEIGHT;
+    w = h * aspect;
+  }
+  return { width: w, height: h };
+}
+
 type PagedRenderer = {
   pdfDoc: PDFDocument;
   helv: PDFFont;
@@ -268,20 +293,86 @@ function drawSectionBanner(r: PagedRenderer, label: string): void {
   r.yCursor = top - SECTION_BANNER_HEIGHT - QUESTION_GAP;
 }
 
+// Draw one image cropped into a slot at (x, slotY) with the given dimensions,
+// clipped to the slot rect. Shared by main-Q and stem rendering — both use
+// the same source-image-scaled-then-clipped trick.
+function drawClippedImage(
+  r: PagedRenderer,
+  args: {
+    img: PDFImage;
+    cropBox: { x: number; y: number; w: number; h: number };
+    slotX: number;
+    slotY: number;
+    slotW: number;
+    slotH: number;
+    border: boolean;
+  },
+): void {
+  const draw = computeClippedDrawRect(
+    { x: args.slotX, y: args.slotY, w: args.slotW, h: args.slotH },
+    args.cropBox,
+  );
+  r.current.pushOperators(
+    pushGraphicsState(),
+    moveTo(args.slotX, args.slotY),
+    lineTo(args.slotX + args.slotW, args.slotY),
+    lineTo(args.slotX + args.slotW, args.slotY + args.slotH),
+    lineTo(args.slotX, args.slotY + args.slotH),
+    closePath(),
+    clip(),
+    endPath(),
+  );
+  r.current.drawImage(args.img, {
+    x: draw.x,
+    y: draw.y,
+    width: draw.w,
+    height: draw.h,
+  });
+  r.current.pushOperators(popGraphicsState());
+  if (args.border) {
+    r.current.drawRectangle({
+      x: args.slotX,
+      y: args.slotY,
+      width: args.slotW,
+      height: args.slotH,
+      borderColor: COLOR_HAIRLINE,
+      borderWidth: 0.3,
+    });
+  }
+}
+
+// One resolved stem image ready to draw (paired source image + cropBox).
+type ResolvedStem = {
+  img: PDFImage;
+  cropBox: { x: number; y: number; w: number; h: number };
+};
+
 function drawQuestion(
   r: PagedRenderer,
   q: QuestionForRender,
   questionNumber: number,
   embeddedImage: PDFImage,
+  stems: ResolvedStem[],
 ): void {
-  // Caller guarantees the embedded image is present — missing-image cases are
-  // handled before rendering (see buildPDF + the onMissingImage policy in
-  // renderSheetPDF). cropBox is also guaranteed at this point.
+  // Caller guarantees the main embedded image is present — missing-image
+  // cases are handled before rendering (see buildPDF + the onMissingImage
+  // policy in renderSheetPDF). cropBox is also guaranteed at this point.
   if (!q.cropBox) throw new Error("drawQuestion called without cropBox");
   const slot = fitCropSlot(embeddedImage, q.cropBox);
   const numberLabelHeight = 5 * MM;
+
+  // Pre-compute every stem slot so the block-height budget can account for
+  // them before we ensureSpace + page-break. Each stem adds STEM_GAP +
+  // stem.height.
+  const stemSlots = stems.map((s) => fitStemSlot(s.img, s.cropBox));
+  const stemsTotalHeight = stemSlots.reduce(
+    (sum, s) => sum + s.height + STEM_GAP,
+    0,
+  );
+
   const blockHeight =
     numberLabelHeight +
+    stemsTotalHeight +
     slot.height +
     RULED_LINES_TOTAL +
     FOOTNOTE_HEIGHT +
@@ -306,45 +397,37 @@ function drawQuestion(
     color: COLOR_TEXT,
   });
 
+  // Stem strip(s): rendered above the main question image, full content
+  // width, no border. The visual hierarchy ("instruction" then "problem")
+  // is conveyed by stem-narrower-than-main + no border + sitting flush
+  // above the question slot.
+  let stemCursor = top - numberLabelHeight;
+  for (let i = 0; i < stems.length; i++) {
+    const s = stems[i];
+    const stemSlot = stemSlots[i];
+    const stemY = stemCursor - stemSlot.height;
+    drawClippedImage(r, {
+      img: s.img,
+      cropBox: s.cropBox,
+      slotX: MARGIN,
+      slotY: stemY,
+      slotW: stemSlot.width,
+      slotH: stemSlot.height,
+      border: false,
+    });
+    stemCursor = stemY - STEM_GAP;
+  }
+
   const slotX = MARGIN;
-  const slotY = top - numberLabelHeight - slot.height;
-
-  // PDF-native clip: draw the full source image scaled & translated such
-  // that its cropBox region falls exactly inside the slot rectangle, then
-  // restrict painting to the slot via a clip path. Outside the clip the
-  // scaled image is invisible. This is the no-sharp equivalent of a real
-  // pixel crop.
-  const draw = computeClippedDrawRect(
-    { x: slotX, y: slotY, w: slot.width, h: slot.height },
-    q.cropBox,
-  );
-  r.current.pushOperators(
-    pushGraphicsState(),
-    moveTo(slotX, slotY),
-    lineTo(slotX + slot.width, slotY),
-    lineTo(slotX + slot.width, slotY + slot.height),
-    lineTo(slotX, slotY + slot.height),
-    closePath(),
-    clip(),
-    endPath(),
-  );
-  r.current.drawImage(embeddedImage, {
-    x: draw.x,
-    y: draw.y,
-    width: draw.w,
-    height: draw.h,
-  });
-  r.current.pushOperators(popGraphicsState());
-
-  // Thin border around the slot so the cropped region has a visual edge
-  // separating the image from the working lines below.
-  r.current.drawRectangle({
-    x: slotX,
-    y: slotY,
-    width: slot.width,
-    height: slot.height,
-    borderColor: COLOR_HAIRLINE,
-    borderWidth: 0.3,
+  const slotY = stemCursor - slot.height;
+  drawClippedImage(r, {
+    img: embeddedImage,
+    cropBox: q.cropBox,
+    slotX,
+    slotY,
+    slotW: slot.width,
+    slotH: slot.height,
+    border: true,
   });
 
   // Ruled working lines
@@ -485,6 +568,30 @@ async function buildPDF(
   missing: MissingImageItem[];
   rendered: { warmup: number; main: number; examPrep: number };
 }> {
+  // Crop-integrity gate: refuse to render when any picked Q has a blocking
+  // issue (stem-only with no sub-parts cropped, sub-question with no stem,
+  // etc — see cropIntegrity.ts). "Force render" doesn't bypass this — the
+  // skip policy is for IMAGE-fetch failures only, not for structural
+  // cropping incompleteness. Lead must open Edit, fix the crop set (or
+  // swap the offending Q), then retry render.
+  if (data.integrity.blockingCount > 0) {
+    const blocking = data.integrity.perQuestion
+      .filter((p) => p.integrity.blocking)
+      .map((p) => ({
+        questionId: p.questionId,
+        slot: p.slot,
+        kind: p.integrity.kind,
+        message: p.integrity.message,
+      }));
+    throw new ConvexError({
+      kind: "IncompleteCropping",
+      message:
+        `Render aborted — ${blocking.length} question(s) have incomplete cropping. ` +
+        `Open Edit on the sheet to see which ones, then crop the missing pieces or swap the questions.`,
+      blocking,
+    });
+  }
+
   const pdfDoc = await PDFDocument.create();
   // fontkit must be registered before embedding any non-standard font.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -509,11 +616,50 @@ async function buildPDF(
   const missing: MissingImageItem[] = [];
 
   type SectionName = "warmup" | "main" | "examPrep";
+  // Resolve stem attachments for a question: embed each stem's source page
+  // (cached) and pair it with the stem's cropBox. Stems missing a cropBox
+  // or page link are silently dropped — the integrity gate above already
+  // refuses to render structurally-blocked sheets, so the only way a stem
+  // is unresolvable here is a transient storage failure or a deleted page
+  // row, which falls under the same "skip"/"fail" missing-image policy.
+  const resolveStems = async (
+    q: QuestionForRender,
+    section: SectionName,
+  ): Promise<ResolvedStem[]> => {
+    if (q.stemAttachments.length === 0) return [];
+    const out: ResolvedStem[] = [];
+    for (const s of q.stemAttachments) {
+      if (!s.cropBox || !s.pageImageUrl) {
+        missing.push({
+          questionId: s.questionId,
+          section,
+          reason: !s.cropBox ? "no-crop-box" : "no-page-link",
+        });
+        continue;
+      }
+      const img = await embedPageImage(
+        pdfDoc,
+        pageImageCache,
+        s.pageImageUrl,
+      );
+      if (!img) {
+        missing.push({
+          questionId: s.questionId,
+          section,
+          reason: "fetch-failed",
+        });
+        continue;
+      }
+      out.push({ img, cropBox: s.cropBox });
+    }
+    return out;
+  };
+
   const resolveSection = async (
     section: SectionName,
     qs: QuestionForRender[],
-  ): Promise<{ q: QuestionForRender; img: PDFImage }[]> => {
-    const out: { q: QuestionForRender; img: PDFImage }[] = [];
+  ): Promise<{ q: QuestionForRender; img: PDFImage; stems: ResolvedStem[] }[]> => {
+    const out: { q: QuestionForRender; img: PDFImage; stems: ResolvedStem[] }[] = [];
     for (const q of qs) {
       if (q.source === "missing") {
         missing.push({
@@ -548,7 +694,8 @@ async function buildPDF(
         });
         continue;
       }
-      out.push({ q, img });
+      const stems = await resolveStems(q, section);
+      out.push({ q, img, stems });
     }
     return out;
   };
@@ -589,9 +736,9 @@ async function buildPDF(
   let n = 0;
   if (warm.length > 0) {
     drawSectionBanner(renderer, "WARM-UP  ·  Cross-module review");
-    for (const { q, img } of warm) {
+    for (const { q, img, stems } of warm) {
       n += 1;
-      drawQuestion(renderer, q, n, img);
+      drawQuestion(renderer, q, n, img, stems);
     }
   }
   if (main.length > 0) {
@@ -599,16 +746,16 @@ async function buildPDF(
       renderer,
       `MAIN BLOCK  ·  ${data.moduleOfDay ?? "Today's module"}`,
     );
-    for (const { q, img } of main) {
+    for (const { q, img, stems } of main) {
       n += 1;
-      drawQuestion(renderer, q, n, img);
+      drawQuestion(renderer, q, n, img, stems);
     }
   }
   if (exam.length > 0) {
     drawSectionBanner(renderer, "EXAM-PREP  ·  Past-paper mixed");
-    for (const { q, img } of exam) {
+    for (const { q, img, stems } of exam) {
       n += 1;
-      drawQuestion(renderer, q, n, img);
+      drawQuestion(renderer, q, n, img, stems);
     }
   }
 
