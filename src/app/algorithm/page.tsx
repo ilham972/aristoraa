@@ -1,14 +1,12 @@
 'use client';
 
-import { useMemo, useState, useCallback, Suspense } from 'react';
-import Link from 'next/link';
+import { useMemo, useState, useCallback, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import {
-  Layers, BarChart3, CalendarDays, FileSpreadsheet,
+  Layers, BarChart3, CalendarDays,
   RefreshCw, AlertTriangle, FileText,
   ChevronDown, ChevronRight, Pencil, Plus, Trash2,
-  ArrowUpRight,
 } from 'lucide-react';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
@@ -18,7 +16,6 @@ import { CoverageBanner } from '@/components/coverage/coverage-banner';
 import { UnitCoverageCard, type CoverageRow } from '@/components/coverage/unit-coverage-card';
 import { ConceptDetailPanel } from '@/components/coverage/concept-detail-panel';
 import { OrphanList } from '@/components/coverage/orphan-list';
-import { SheetPlannerTab } from '@/components/algorithm/sheet-planner-tab';
 import { toast } from 'sonner';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -26,13 +23,12 @@ import { toast } from 'sonner';
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
 
-type TabId = 'coverage' | 'blueprint' | 'exams' | 'sheet';
+type TabId = 'coverage' | 'blueprint' | 'exams';
 
 const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Layers }[] = [
-  { id: 'coverage',  label: 'Coverage',  fullLabel: 'Coverage',      icon: Layers },
+  { id: 'coverage',  label: 'Coverage',  fullLabel: 'Coverage',       icon: Layers },
   { id: 'blueprint', label: 'Blueprint', fullLabel: 'Exam Blueprint', icon: BarChart3 },
   { id: 'exams',     label: 'Exams',     fullLabel: 'Exam Calendar',  icon: CalendarDays },
-  { id: 'sheet',     label: 'Sheet',     fullLabel: 'Sheet Planner',  icon: FileSpreadsheet },
 ];
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -1027,8 +1023,25 @@ function AlgorithmPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Phase E.5 — the old Sheet subtab has moved to the top-level /sheets
+  // nav. Redirect anyone landing here via a bookmark so they don't see a
+  // broken tab id.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'sheet') {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('tab');
+      // Drop the algorithm-only g/t selectors too — they were grade/term
+      // pickers for the inspector, which the new /sheets page resolves
+      // per-student.
+      params.delete('g');
+      params.delete('t');
+      const qs = params.toString();
+      router.replace(qs ? `/sheets?${qs}` : '/sheets');
+    }
+  }, [router, searchParams]);
+
   const rawTab = searchParams.get('tab') ?? 'coverage';
-  const tab: TabId = (['coverage', 'blueprint', 'exams', 'sheet'] as TabId[]).includes(rawTab as TabId)
+  const tab: TabId = (['coverage', 'blueprint', 'exams'] as TabId[]).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'coverage';
 
@@ -1073,13 +1086,6 @@ function AlgorithmPageInner() {
       <div className="flex items-center gap-2 mb-4">
         <TabIcon className="w-5 h-5 text-primary" />
         <h1 className="text-lg font-bold text-foreground">{currentTab.fullLabel}</h1>
-        <Link
-          href="/algorithm/sheets"
-          className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 border border-primary/30 text-primary text-[10px] font-semibold hover:bg-primary/20 transition-colors"
-        >
-          Sheets dashboard
-          <ArrowUpRight className="w-3 h-3" />
-        </Link>
       </div>
 
       {/* Tab switcher */}
@@ -1107,7 +1113,6 @@ function AlgorithmPageInner() {
         <BlueprintTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
       )}
       {tab === 'exams' && <ExamCalendarTab />}
-      {tab === 'sheet' && <SheetPlannerTab />}
     </div>
   );
 }

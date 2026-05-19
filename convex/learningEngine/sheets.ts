@@ -159,6 +159,69 @@ export const _listSheetsForSlotDateInternal = internalQuery({
   },
 });
 
+// Off-slot fetch — used by the merged /sheets page when the Lead searches
+// or filters for students who aren't in the currently picked slot. Same
+// row shape as listSheetsForSlotDate so the UI can render one unified row
+// component. Caller supplies the studentIds (already filtered client-side
+// by name/grade) so this stays O(N) on the provided list.
+export const listSavedSheetHeadersForStudentIds = query({
+  args: {
+    studentIds: v.array(v.id("students")),
+    dateStr: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<SheetRowForDashboard[] | null> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    if (args.studentIds.length === 0) return [];
+
+    const rows: SheetRowForDashboard[] = [];
+    for (const studentId of args.studentIds) {
+      const s = await ctx.db.get(studentId);
+      if (!s) continue;
+      const sheet = await ctx.db
+        .query("generatedSheets")
+        .withIndex("by_student_date", (q) =>
+          q.eq("studentId", s._id).eq("date", args.dateStr),
+        )
+        .first();
+
+      const qCount =
+        (sheet?.warmupQuestionIds.length ?? 0) +
+        (sheet?.mainQuestionIds.length ?? 0) +
+        (sheet?.examPrepQuestionIds.length ?? 0);
+      const alertCount = Array.isArray(sheet?.alerts)
+        ? sheet!.alerts.length
+        : 0;
+
+      rows.push({
+        studentId: s._id,
+        studentName: s.name,
+        schoolGrade: s.schoolGrade,
+        isOffDay: isOffDayFor(s, args.dateStr),
+        sheet: sheet
+          ? {
+              _id: sheet._id,
+              status: sheet.status,
+              pdfStorageId: sheet.pdfStorageId,
+              pdfUrl: sheet.pdfStorageId
+                ? await ctx.storage.getUrl(sheet.pdfStorageId)
+                : null,
+              alertCount,
+              questionCount: qCount,
+              generatedAt: sheet.generatedAt,
+            }
+          : null,
+      });
+    }
+
+    rows.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    return rows;
+  },
+});
+
 // ──────────────────────────────────────────────────────────────────────
 // E.4 — Lead override surface backend.
 //
