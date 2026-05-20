@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardPen, Trophy, Users, Settings, Radio, BarChart3, FileSpreadsheet } from 'lucide-react';
+import { ClipboardPen, Trophy, Users, Settings, Radio, BarChart3, FileSpreadsheet, CalendarRange } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
@@ -12,6 +12,7 @@ type NavItem = { href: string; label: string; icon: typeof ClipboardPen; leadOnl
 const NAV_ITEMS: NavItem[] = [
   { href: '/score-entry', label: 'Scores', icon: ClipboardPen },
   { href: '/lead', label: 'Lead', icon: Radio, leadOnly: true },
+  { href: '/groups', label: 'Groups', icon: CalendarRange, leadOnly: true },
   { href: '/algorithm', label: 'Insights', icon: BarChart3, leadOnly: true },
   { href: '/sheets', label: 'Sheets', icon: FileSpreadsheet, leadOnly: true },
   { href: '/leaderboard', label: 'Board', icon: Trophy },

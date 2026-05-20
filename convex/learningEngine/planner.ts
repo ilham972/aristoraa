@@ -54,6 +54,7 @@ import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
 import { masteryFromState } from "./mastery";
+import { baseStudentIdsForSlot } from "../lib/roster";
 import {
   conceptsForQuestion,
   questionsTaggedToConcept,
@@ -2166,13 +2167,10 @@ export const listSlotStudents = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    const links = await ctx.db
-      .query("slotStudents")
-      .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
-      .collect();
-    const students = await Promise.all(
-      links.map((l) => ctx.db.get(l.studentId)),
-    );
+    const slot = await ctx.db.get(args.slotId);
+    if (!slot) return null;
+    const ids = await baseStudentIdsForSlot(ctx, slot);
+    const students = await Promise.all(ids.map((id) => ctx.db.get(id)));
     return students.filter((s): s is Doc<"students"> => s !== null);
   },
 });

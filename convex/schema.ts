@@ -31,6 +31,10 @@ export default defineSchema({
     // packs questions by summing expectedTimeMin until budget fills, then
     // caps at sheetLengthOverride if also set. Range clamped to [10, 180].
     sessionMinutesOverride: v.optional(v.number()),
+    // ─── Phase F: per-student hourly fee in LKR ───────────────────────────
+    // Used by /groups revenue helper. Falls back to RATE_DEFAULT_LKR (250)
+    // when unset so existing rows need no backfill.
+    hourlyRate: v.optional(v.number()),
   }).index("by_center", ["centerId"]),
 
   exercises: defineTable({
@@ -90,10 +94,62 @@ export default defineSchema({
     startTime: v.string(),
     endTime: v.string(),
     roomId: v.id("rooms"),
+    // ─── Phase F: owning group ────────────────────────────────────────────
+    // A slot hosts exactly one group at a time (a room can only hold one
+    // class). When set, the slot's roster is derived from groupMembers, not
+    // from slotStudents. Optional during migration; required for new slots
+    // created via /groups after cutover.
+    groupId: v.optional(v.id("groups")),
   })
     .index("by_room", ["roomId"])
-    .index("by_day", ["dayOfWeek"]),
+    .index("by_day", ["dayOfWeek"])
+    .index("by_group", ["groupId"]),
 
+  // ─── Phase F: Groups ─────────────────────────────────────────────────────
+  // A group is a stable roster of students that meets repeatedly in one or
+  // more weekly sessions (each session = one scheduleSlots row, linked back
+  // via scheduleSlots.groupId). Replaces the slot-centric edit model of the
+  // old Schedule tab. Naming auto-derives from member first names unless the
+  // user edits it (autoName=false then). Color is deterministic from _id.
+  //
+  // Cross-centre / cross-grade members raise *warnings* (not blocks); the
+  // group's centerId/grade represent the dominant intent.
+  groups: defineTable({
+    name: v.string(),
+    autoName: v.boolean(),                       // true → regenerate on member change
+    centerId: v.optional(v.id("centers")),
+    grade: v.optional(v.number()),
+    mentorId: v.optional(v.id("teachers")),
+    defaultRoomId: v.optional(v.id("rooms")),    // used when toggling a new cell in the weekly grid
+    type: v.optional(v.string()),                // "small" | "medium" | "large" | "private"
+    maxSize: v.optional(v.number()),
+    targetMarksMin: v.optional(v.number()),
+    targetMarksMax: v.optional(v.number()),
+    archived: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_center", ["centerId"])
+    .index("by_archived", ["archived"])
+    .index("by_mentor", ["mentorId"]),
+
+  // Many-to-many between groups and students. A student typically belongs to
+  // one group at a time, but the schema allows multiple (e.g. a student who
+  // joins a second small-group for catch-up). joinedAt drives "since when".
+  groupMembers: defineTable({
+    groupId: v.id("groups"),
+    studentId: v.id("students"),
+    joinedAt: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_student", ["studentId"])
+    .index("by_group_student", ["groupId", "studentId"]),
+
+  // ── Legacy slot-roster tables (frozen post Phase F migration) ────────────
+  // Kept for historical reads only. /groups is the write surface going
+  // forward. Reader migration: convex helpers resolve scheduleSlots.groupId
+  // → groupMembers; old slotStudents rows remain as archive but are no
+  // longer source-of-truth.
   slotStudents: defineTable({
     slotId: v.id("scheduleSlots"),
     studentId: v.id("students"),

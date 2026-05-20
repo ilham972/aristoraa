@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { effectiveStudentIdsForSlot } from "./lib/roster";
 
 export const list = query({
   handler: async (ctx) => {
@@ -104,37 +105,18 @@ export const getEffectiveStudents = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
 
-    // Base students assigned to this slot
-    const slotStudents = await ctx.db
-      .query("slotStudents")
-      .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
-      .collect();
+    const slot = await ctx.db.get(args.slotId);
+    if (!slot) return [];
 
-    const baseStudentIds = new Set(slotStudents.map((ss) => ss.studentId));
+    // Roster resolves via group (if migrated) or legacy slotStudents, with
+    // slotOverrides applied for the date. See convex/lib/roster.ts.
+    const ids = await effectiveStudentIdsForSlot(ctx, slot, args.date);
 
-    // Apply overrides for this date
-    const overrides = await ctx.db
-      .query("slotOverrides")
-      .withIndex("by_slot_date", (q) =>
-        q.eq("slotId", args.slotId).eq("date", args.date)
-      )
-      .collect();
-
-    for (const override of overrides) {
-      if (override.action === "add") {
-        baseStudentIds.add(override.studentId);
-      } else if (override.action === "remove") {
-        baseStudentIds.delete(override.studentId);
-      }
-    }
-
-    // Fetch full student records
     const students = [];
-    for (const studentId of Array.from(baseStudentIds)) {
+    for (const studentId of ids) {
       const student = await ctx.db.get(studentId);
       if (student) students.push(student);
     }
-
     return students;
   },
 });

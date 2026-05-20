@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation } from 'convex/react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Users, UserCheck } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Users, UserCheck, ArrowRight } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +49,7 @@ export function ScheduleTab() {
   });
 
   const allSlots = useQuery(api.scheduleSlots.list);
+  const groups = useQuery(api.groups.list, {});
   const centers = useQuery(api.centers.list);
   const rooms = useQuery(api.rooms.list);
   const students = useQuery(api.students.list);
@@ -131,6 +133,18 @@ export function ScheduleTab() {
         ))}
       </div>
 
+      {(groups?.length ?? 0) > 0 && (
+        <Link
+          href="/groups"
+          className="flex items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 mb-3 text-xs"
+        >
+          <span className="text-muted-foreground">
+            Scheduling moved to <span className="font-semibold text-foreground">Groups</span>. Slots managed there won&apos;t sync if edited here.
+          </span>
+          <ArrowRight className="w-4 h-4 text-primary shrink-0" />
+        </Link>
+      )}
+
       <p className="text-xs text-muted-foreground mb-3">{DAY_FULL[selectedDay]} — {daySlots.length} slot{daySlots.length !== 1 ? 's' : ''}</p>
 
       {daySlots.length === 0 ? (
@@ -145,6 +159,10 @@ export function ScheduleTab() {
             const room = getRoom(slot.roomId);
             const center = room ? getCenter(room.centerId) : null;
             const isExpanded = expandedSlot === slot._id;
+            // Slots owned by a group are managed in /groups. Editing here would
+            // write legacy tables the readers now ignore (drift), so we make
+            // them read-only and point to the new page.
+            const inGroup = !!(slot as { groupId?: string }).groupId;
 
             return (
               <Card key={slot._id} className="border-border/50">
@@ -169,16 +187,27 @@ export function ScheduleTab() {
                           const mod = modId ? getModuleById(modId) : null;
                           return mod ? <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor: mod.color + '20', color: mod.color }}>{mod.id}</span> : null;
                         })()}
+                        {inGroup && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-primary/10 text-primary">Groups</span>}
                       </p>
                     </div>
-                    <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon-xs" onClick={() => handleDeleteSlot(slot._id)} className="text-destructive hover:text-destructive">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                    {!inGroup && (
+                      <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                        <Button variant="ghost" size="icon-xs" onClick={() => handleDeleteSlot(slot._id)} className="text-destructive hover:text-destructive">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
-                  {isExpanded && (
+                  {isExpanded && inGroup && (
+                    <div className="px-3.5 pb-3.5 border-t border-border/50 pt-3">
+                      <Link href="/groups" className="flex items-center gap-1.5 text-xs text-primary hover:underline">
+                        Managed in Groups — edit there <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
+                    </div>
+                  )}
+
+                  {isExpanded && !inGroup && (
                     <ExpandedSlotContent
                       slotId={slot._id}
                       overrideDate={overrideDate}

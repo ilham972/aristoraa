@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { slotIdsForTeacher } from "./lib/roster";
 
 export const listBySlot = query({
   args: { slotId: v.id("scheduleSlots") },
@@ -18,10 +19,10 @@ export const listByTeacher = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    return await ctx.db
-      .query("slotTeachers")
-      .withIndex("by_teacher", (q) => q.eq("teacherId", args.teacherId))
-      .collect();
+    // Union of group-mentor slots (new model) and legacy slotTeachers
+    // assignments. Consumers only read `.slotId`, so we return that shape.
+    const slotIds = await slotIdsForTeacher(ctx, args.teacherId);
+    return slotIds.map((slotId) => ({ slotId, teacherId: args.teacherId }));
   },
 });
 

@@ -1,6 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id, Doc } from "./_generated/dataModel";
+import { baseStudentIdsForSlot } from "./lib/roster";
 
 // Lead's live roster query — single round-trip for the dashboard.
 // Returns everything needed to render the student grid + doubt queue.
@@ -28,11 +29,8 @@ export const liveRoster = query({
     // Resolve student roster
     let studentIds: Id<"students">[] = [];
     if (args.slotId) {
-      const slotStudents = await ctx.db
-        .query("slotStudents")
-        .withIndex("by_slot", (q) => q.eq("slotId", args.slotId!))
-        .collect();
-      studentIds = slotStudents.map((s) => s.studentId);
+      const slot = await ctx.db.get(args.slotId);
+      studentIds = slot ? await baseStudentIdsForSlot(ctx, slot) : [];
     } else if (args.centerId) {
       const centerStudents = await ctx.db
         .query("students")

@@ -122,12 +122,18 @@ export const remove = mutation({
       await ctx.db.delete(entry._id);
     }
 
-    // Delete slot assignments
+    // Delete slot assignments (legacy) + group memberships (Phase F)
     const slotStudents = await ctx.db
       .query("slotStudents")
       .withIndex("by_student", (q) => q.eq("studentId", args.id))
       .collect();
     for (const ss of slotStudents) await ctx.db.delete(ss._id);
+
+    const groupMembers = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_student", (q) => q.eq("studentId", args.id))
+      .collect();
+    for (const gm of groupMembers) await ctx.db.delete(gm._id);
 
     // Delete attendance records
     const attendance = await ctx.db
