@@ -24,8 +24,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDrawer } from '@/components/groups/edit-group-drawer';
-import { MigrationPanel } from '@/components/groups/migration-panel';
-import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 
 function todayYmd(): string {
   const d = new Date();
@@ -41,8 +39,6 @@ export default function GroupsPage() {
   const today = todayYmd();
   const week = useQuery(api.groups.weekGrid);
   const rooms = useQuery(api.rooms.list);
-  const dayRevenue = useQuery(api.groups.dayRevenue, { date: today });
-  const weekRevenue = useQuery(api.groups.weekRevenue);
   const dayData = useQuery(
     api.groups.dayView,
     view === 'day'
@@ -59,8 +55,6 @@ export default function GroupsPage() {
 
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
-  const { role, teacher } = useCurrentTeacher();
-  const isAdmin = role === 'admin' || role === 'lead' || !teacher;
 
   const openEditor = (groupId: Id<'groups'>) => {
     setEditingGroup(groupId);
@@ -88,7 +82,16 @@ export default function GroupsPage() {
     if (!onlyRoom) toast('Pick a default room, then add sessions');
   };
 
+  // Revenue is derived from the grid cells already loaded — no extra queries,
+  // so the page paints in one pass. Today/week are forecasts (standard
+  // roster); date-specific absences show in the exceptions strip below.
+  const loading = week === undefined;
   const hasGroups = (week?.groups.length ?? 0) > 0;
+  const todayNum = todayDayNum();
+  const weekForecast = (week?.cells ?? []).reduce((s, c) => s + c.revenue, 0);
+  const todayForecast = (week?.cells ?? [])
+    .filter((c) => c.dayOfWeek === todayNum)
+    .reduce((s, c) => s + c.revenue, 0);
 
   return (
     <div className="px-4 pt-5 pb-24 max-w-3xl mx-auto">
@@ -104,19 +107,16 @@ export default function GroupsPage() {
         <div className="flex-1 rounded-xl bg-card border border-border/60 px-3 py-2">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Today</p>
           <p className="text-base font-bold text-foreground">
-            {dayRevenue != null ? fmtLKR(dayRevenue) : '—'}
+            {loading ? '—' : fmtLKR(todayForecast)}
           </p>
         </div>
         <div className="flex-1 rounded-xl bg-card border border-border/60 px-3 py-2">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Week forecast</p>
           <p className="text-base font-bold text-foreground">
-            {weekRevenue != null ? fmtLKR(weekRevenue) : '—'}
+            {loading ? '—' : fmtLKR(weekForecast)}
           </p>
         </div>
       </div>
-
-      {/* Schedule import (admin) */}
-      {isAdmin && <MigrationPanel hasGroups={hasGroups} />}
 
       {/* Today's exceptions */}
       {exceptions && exceptions.length > 0 && (
@@ -164,7 +164,20 @@ export default function GroupsPage() {
         </button>
       </div>
 
-      {!hasGroups && (
+      {/* While the grid loads, hold the layout with a skeleton so we never
+          flash the "No groups" empty state before data arrives. */}
+      {loading && (
+        <div className="animate-pulse space-y-1">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
+              <div className="h-12 rounded-md bg-muted/40" />
+              {[...Array(7)].map((_, j) => <div key={j} className="h-12 rounded-md bg-muted/30" />)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading && !hasGroups && (
         <div className="rounded-xl border border-dashed border-border/60 py-10 text-center">
           <p className="text-sm text-muted-foreground mb-3">No groups yet.</p>
           <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={() => handleCreate()}>
@@ -173,7 +186,7 @@ export default function GroupsPage() {
         </div>
       )}
 
-      {hasGroups && view === 'week' && week && (
+      {!loading && hasGroups && view === 'week' && week && (
         <WeekGrid
           cells={week.cells}
           onOpenGroup={openEditor}
@@ -181,7 +194,7 @@ export default function GroupsPage() {
         />
       )}
 
-      {hasGroups && view === 'day' && (
+      {!loading && hasGroups && view === 'day' && (
         <DayList
           day={selectedDay}
           setDay={setSelectedDay}
