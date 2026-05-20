@@ -56,7 +56,11 @@
       "PowerShell(Start-Process \"smoke-test.pdf\")",
       "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/1bcb4a1f-02f7-44ab-9225-90e9798a7b12\" -o q3q4-source.jpg)",
       "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/ef1556d1-f9e0-4646-b7c2-be7665bfcc90\" -o q2-source.jpg)",
-      "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/b54fc1b8-b068-46cc-a21a-8c3957f88953\" -o q1-source.jpg)"
+      "Bash(curl -sL \"https://rapid-loris-309.convex.cloud/api/storage/b54fc1b8-b068-46cc-a21a-8c3957f88953\" -o q1-source.jpg)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(middleware\")",
+      "Bash(git rm *)"
     ]
   }
 }

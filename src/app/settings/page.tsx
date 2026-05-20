@@ -3,17 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { GeneralTab } from '@/components/settings/general-tab';
-import { CentersTab } from '@/components/settings/centers-tab';
-import { TeachersTab } from '@/components/settings/teachers-tab';
 import { CurriculumTab } from '@/components/settings/curriculum-tab';
 import { ContentTab } from '@/components/settings/content-tab';
 import { DataEntryTab } from '@/components/settings/data-entry-tab';
 import { TagsTab } from '@/components/settings/tags-tab';
-import { ExamStructureTab } from '@/components/settings/exam-structure-tab';
 
-type Tab = 'general' | 'centers' | 'teachers' | 'content' | 'curriculum' | 'tags' | 'exam-structure' | 'data-entry';
+type Tab = 'general' | 'content' | 'curriculum' | 'tags' | 'data-entry';
 
-const TAB_KEYS: Tab[] = ['general', 'centers', 'teachers', 'content', 'curriculum', 'tags', 'exam-structure', 'data-entry'];
+const TAB_KEYS: Tab[] = ['general', 'content', 'curriculum', 'tags', 'data-entry'];
 const SS_KEY = 'settings.activeTab';
 
 function readPersistedTab(): Tab {
@@ -24,12 +21,9 @@ function readPersistedTab(): Tab {
 
 const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'general', label: 'General', adminOnly: false },
-  { key: 'centers', label: 'Centers', adminOnly: true },
-  { key: 'teachers', label: 'Teachers', adminOnly: true },
   { key: 'content', label: 'Content', adminOnly: true },
   { key: 'curriculum', label: 'Curriculum', adminOnly: true },
   { key: 'tags', label: 'Tags', adminOnly: true },
-  { key: 'exam-structure', label: 'Exam', adminOnly: true },
   { key: 'data-entry', label: 'Data Entry', adminOnly: true },
 ];
 
@@ -82,13 +76,10 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {activeTab === 'general' && <GeneralTab />}
-      {activeTab === 'centers' && <CentersTab />}
-      {activeTab === 'teachers' && <TeachersTab />}
+      {activeTab === 'general' && <GeneralTab isAdmin={isAdmin || !teacher} />}
       {activeTab === 'content' && <ContentTab />}
       {activeTab === 'curriculum' && <CurriculumTab />}
       {activeTab === 'tags' && <TagsTab />}
-      {activeTab === 'exam-structure' && <ExamStructureTab />}
       {activeTab === 'data-entry' && <DataEntryTab />}
     </div>
   );

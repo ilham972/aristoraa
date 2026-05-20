@@ -3,15 +3,21 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from 'convex/react';
 import { useTheme } from 'next-themes';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, ChevronDown, ChevronRight } from 'lucide-react';
 import { UserButton } from '@clerk/nextjs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { api } from '@/lib/convex';
 import { toast } from 'sonner';
+import { CentersTab } from './centers-tab';
+import { TeachersTab } from './teachers-tab';
+import { ExamStructureTab } from './exam-structure-tab';
 
-export function GeneralTab() {
+type Section = 'centers' | 'teachers' | 'exam';
+
+export function GeneralTab({ isAdmin = false }: { isAdmin?: boolean }) {
   const [allowManualSlot, setAllowManualSlot] = useState(false);
+  const [openSection, setOpenSection] = useState<Section | null>(null);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -94,6 +100,36 @@ export function GeneralTab() {
           </div>
         </CardContent>
       </Card>
+
+      {isAdmin && (
+        <>
+          {(['centers', 'teachers', 'exam'] as Section[]).map(key => {
+            const label = key === 'exam' ? 'Exam Structure' : key.charAt(0).toUpperCase() + key.slice(1);
+            const isOpen = openSection === key;
+            return (
+              <Card key={key} className="border-border/50">
+                <button
+                  onClick={() => setOpenSection(isOpen ? null : key)}
+                  className="w-full flex items-center justify-between p-4 text-left"
+                >
+                  <Label className="text-sm font-medium text-foreground cursor-pointer">{label}</Label>
+                  {isOpen
+                    ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    : <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  }
+                </button>
+                {isOpen && (
+                  <CardContent className="px-4 pb-4 pt-0">
+                    {key === 'centers' && <CentersTab />}
+                    {key === 'teachers' && <TeachersTab />}
+                    {key === 'exam' && <ExamStructureTab />}
+                  </CardContent>
+                )}
+              </Card>
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }
