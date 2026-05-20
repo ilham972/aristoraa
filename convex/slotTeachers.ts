@@ -1,81 +1,18 @@
-import { query, mutation } from "./_generated/server";
+import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { slotIdsForTeacher } from "./lib/roster";
 
-export const listBySlot = query({
-  args: { slotId: v.id("scheduleSlots") },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-    return await ctx.db
-      .query("slotTeachers")
-      .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
-      .collect();
-  },
-});
-
+// Slots a teacher runs. Phase F: resolves group-mentor slots ∪ any legacy
+// slotTeachers rows (see convex/lib/roster.ts). Consumers (lead, score-entry)
+// read only `.slotId`. The legacy assign/unassign mutations were removed with
+// the old Settings → Schedule tab; group mentor assignment now lives on the
+// group (groups.update { mentorId }).
 export const listByTeacher = query({
   args: { teacherId: v.id("teachers") },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    // Union of group-mentor slots (new model) and legacy slotTeachers
-    // assignments. Consumers only read `.slotId`, so we return that shape.
     const slotIds = await slotIdsForTeacher(ctx, args.teacherId);
     return slotIds.map((slotId) => ({ slotId, teacherId: args.teacherId }));
-  },
-});
-
-export const assign = mutation({
-  args: {
-    slotId: v.id("scheduleSlots"),
-    teacherId: v.id("teachers"),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    // Check if already assigned
-    const existing = await ctx.db
-      .query("slotTeachers")
-      .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
-      .collect();
-    if (existing.some((st) => st.teacherId === args.teacherId)) return;
-
-    // Check for overlapping slots on the same day
-    const teacherAssignments = await ctx.db
-      .query("slotTeachers")
-      .withIndex("by_teacher", (q) => q.eq("teacherId", args.teacherId))
-      .collect();
-
-    const newSlot = await ctx.db.get(args.slotId);
-    if (!newSlot) throw new Error("Slot not found");
-
-    for (const ta of teacherAssignments) {
-      const existingSlot = await ctx.db.get(ta.slotId);
-      if (existingSlot && existingSlot.dayOfWeek === newSlot.dayOfWeek) {
-        if (existingSlot.startTime < newSlot.endTime && existingSlot.endTime > newSlot.startTime) {
-          throw new Error("Teacher has an overlapping slot on this day");
-        }
-      }
-    }
-
-    return await ctx.db.insert("slotTeachers", args);
-  },
-});
-
-export const unassign = mutation({
-  args: {
-    slotId: v.id("scheduleSlots"),
-    teacherId: v.id("teachers"),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const existing = await ctx.db
-      .query("slotTeachers")
-      .withIndex("by_slot", (q) => q.eq("slotId", args.slotId))
-      .collect();
-    const match = existing.find((st) => st.teacherId === args.teacherId);
-    if (match) await ctx.db.delete(match._id);
   },
 });
