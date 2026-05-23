@@ -196,12 +196,16 @@ export function EditGroupDrawer({
             )}
           </div>
 
-          {/* Group settings */}
+          {/* Group settings.
+              Each Select wrapper stops pointerdown propagation so vaul's
+              Drawer doesn't call setPointerCapture on the SelectTrigger.
+              Without this, Base UI Select's internal pointer-event handling
+              breaks: the popup flashes shut on desktop, and tapping an item
+              on mobile closes the popup without registering selection. */}
           <div className="grid grid-cols-2 gap-2 mb-4">
-            <div>
+            <div onPointerDown={(e) => e.stopPropagation()}>
               <Label className="text-[11px] text-muted-foreground">Mentor</Label>
               <Select
-                modal={false}
                 value={group.mentorId ?? ''}
                 onValueChange={(v) => update({ id: group._id, mentorId: (v || undefined) as Id<'teachers'> | undefined })}
               >
@@ -211,10 +215,9 @@ export function EditGroupDrawer({
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div onPointerDown={(e) => e.stopPropagation()}>
               <Label className="text-[11px] text-muted-foreground">Grade</Label>
               <Select
-                modal={false}
                 value={group.grade != null ? String(group.grade) : ''}
                 onValueChange={(v) => update({ id: group._id, grade: v ? Number(v) : undefined })}
               >
@@ -224,10 +227,9 @@ export function EditGroupDrawer({
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div onPointerDown={(e) => e.stopPropagation()}>
               <Label className="text-[11px] text-muted-foreground">Centre</Label>
               <Select
-                modal={false}
                 value={group.centerId ?? ''}
                 onValueChange={(v) => update({ id: group._id, centerId: (v || undefined) as Id<'centers'> | undefined })}
               >
@@ -237,10 +239,9 @@ export function EditGroupDrawer({
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div onPointerDown={(e) => e.stopPropagation()}>
               <Label className="text-[11px] text-muted-foreground">Default room</Label>
               <Select
-                modal={false}
                 value={group.defaultRoomId ?? ''}
                 onValueChange={(v) => update({ id: group._id, defaultRoomId: (v || undefined) as Id<'rooms'> | undefined })}
               >
