@@ -201,6 +201,7 @@ export function EditGroupDrawer({
             <div>
               <Label className="text-[11px] text-muted-foreground">Mentor</Label>
               <Select
+                modal={false}
                 value={group.mentorId ?? ''}
                 onValueChange={(v) => update({ id: group._id, mentorId: (v || undefined) as Id<'teachers'> | undefined })}
               >
@@ -213,6 +214,7 @@ export function EditGroupDrawer({
             <div>
               <Label className="text-[11px] text-muted-foreground">Grade</Label>
               <Select
+                modal={false}
                 value={group.grade != null ? String(group.grade) : ''}
                 onValueChange={(v) => update({ id: group._id, grade: v ? Number(v) : undefined })}
               >
@@ -225,6 +227,7 @@ export function EditGroupDrawer({
             <div>
               <Label className="text-[11px] text-muted-foreground">Centre</Label>
               <Select
+                modal={false}
                 value={group.centerId ?? ''}
                 onValueChange={(v) => update({ id: group._id, centerId: (v || undefined) as Id<'centers'> | undefined })}
               >
@@ -237,6 +240,7 @@ export function EditGroupDrawer({
             <div>
               <Label className="text-[11px] text-muted-foreground">Default room</Label>
               <Select
+                modal={false}
                 value={group.defaultRoomId ?? ''}
                 onValueChange={(v) => update({ id: group._id, defaultRoomId: (v || undefined) as Id<'rooms'> | undefined })}
               >
