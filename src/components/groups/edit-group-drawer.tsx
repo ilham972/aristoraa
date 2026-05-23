@@ -76,7 +76,7 @@ export function EditGroupDrawer({
 
   if (!group || !members || !allStudents || !teachers || !rooms || !centers) {
     return (
-      <Drawer open={open} onOpenChange={(o) => !o && onClose()}>
+      <Drawer open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
         <DrawerContent className="max-w-lg mx-auto">
           <div className="p-6 animate-pulse space-y-3">
             <div className="h-6 bg-muted rounded w-1/2" />
@@ -161,7 +161,7 @@ export function EditGroupDrawer({
   const sessionCount = sessions?.length ?? 0;
 
   return (
-    <Drawer open={open} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
       <DrawerContent className="max-w-lg mx-auto max-h-[88vh]">
         <div className="overflow-y-auto px-4 pb-6 pt-2">
           {/* Header: color dot + name + revenue */}
