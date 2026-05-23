@@ -13,12 +13,20 @@ import { Drawer, DrawerContent } from '@/components/ui/drawer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, type Id } from '@/lib/convex';
 import { groupColor } from '@/lib/groups/color';
 import { generateAutoName } from '@/lib/groups/naming';
 import { fmtLKR, type DayNum, type HourBand } from '@/lib/groups/time-grid';
 import { WeeklySessionGrid, type SessionCell } from './weekly-session-grid';
+
+const nativeSelectClass =
+  'mt-0.5 h-8 w-full text-xs bg-transparent border border-input rounded-lg px-2 ' +
+  'focus:outline-none focus:ring-2 focus:ring-ring/50 disabled:opacity-50 ' +
+  'dark:bg-input/30 appearance-none cursor-pointer ' +
+  // Inline chevron via background image so the trigger looks consistent
+  // with the other Select triggers in the app.
+  "bg-[url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>\")] " +
+  'bg-no-repeat bg-[right_8px_center] pr-7';
 
 export function EditGroupDrawer({
   groupId,
@@ -76,7 +84,7 @@ export function EditGroupDrawer({
 
   if (!group || !members || !allStudents || !teachers || !rooms || !centers) {
     return (
-      <Drawer open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
+      <Drawer open={open} onOpenChange={(o) => !o && onClose()}>
         <DrawerContent className="max-w-lg mx-auto">
           <div className="p-6 animate-pulse space-y-3">
             <div className="h-6 bg-muted rounded w-1/2" />
@@ -161,7 +169,7 @@ export function EditGroupDrawer({
   const sessionCount = sessions?.length ?? 0;
 
   return (
-    <Drawer open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
+    <Drawer open={open} onOpenChange={(o) => !o && onClose()}>
       <DrawerContent className="max-w-lg mx-auto max-h-[88vh]">
         <div className="overflow-y-auto px-4 pb-6 pt-2">
           {/* Header: color dot + name + revenue */}
@@ -197,59 +205,55 @@ export function EditGroupDrawer({
           </div>
 
           {/* Group settings.
-              Each Select wrapper stops pointerdown propagation so vaul's
-              Drawer doesn't call setPointerCapture on the SelectTrigger.
-              Without this, Base UI Select's internal pointer-event handling
-              breaks: the popup flashes shut on desktop, and tapping an item
-              on mobile closes the popup without registering selection. */}
+              Native <select> instead of Base UI Select: vaul's Drawer
+              setPointerCapture (in its onPointerDown handler) and Base UI
+              Select's portaled popup interact badly — popup flashes shut on
+              desktop and item taps don't register on mobile. Native selects
+              are handled entirely by the browser and bypass the issue. */}
           <div className="grid grid-cols-2 gap-2 mb-4">
-            <div onPointerDown={(e) => e.stopPropagation()}>
+            <div>
               <Label className="text-[11px] text-muted-foreground">Mentor</Label>
-              <Select
+              <select
+                className={nativeSelectClass}
                 value={group.mentorId ?? ''}
-                onValueChange={(v) => update({ id: group._id, mentorId: (v || undefined) as Id<'teachers'> | undefined })}
+                onChange={(e) => update({ id: group._id, mentorId: (e.target.value || undefined) as Id<'teachers'> | undefined })}
               >
-                <SelectTrigger className="mt-0.5 h-8 text-xs"><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent>
-                  {teachers.map((t) => <SelectItem key={t._id} value={t._id}>{t.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+                <option value="">None</option>
+                {teachers.map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
+              </select>
             </div>
-            <div onPointerDown={(e) => e.stopPropagation()}>
+            <div>
               <Label className="text-[11px] text-muted-foreground">Grade</Label>
-              <Select
+              <select
+                className={nativeSelectClass}
                 value={group.grade != null ? String(group.grade) : ''}
-                onValueChange={(v) => update({ id: group._id, grade: v ? Number(v) : undefined })}
+                onChange={(e) => update({ id: group._id, grade: e.target.value ? Number(e.target.value) : undefined })}
               >
-                <SelectTrigger className="mt-0.5 h-8 text-xs"><SelectValue placeholder="Any" /></SelectTrigger>
-                <SelectContent>
-                  {[6, 7, 8, 9, 10, 11].map((g) => <SelectItem key={g} value={String(g)}>Grade {g}</SelectItem>)}
-                </SelectContent>
-              </Select>
+                <option value="">Any</option>
+                {[6, 7, 8, 9, 10, 11].map((g) => <option key={g} value={String(g)}>Grade {g}</option>)}
+              </select>
             </div>
-            <div onPointerDown={(e) => e.stopPropagation()}>
+            <div>
               <Label className="text-[11px] text-muted-foreground">Centre</Label>
-              <Select
+              <select
+                className={nativeSelectClass}
                 value={group.centerId ?? ''}
-                onValueChange={(v) => update({ id: group._id, centerId: (v || undefined) as Id<'centers'> | undefined })}
+                onChange={(e) => update({ id: group._id, centerId: (e.target.value || undefined) as Id<'centers'> | undefined })}
               >
-                <SelectTrigger className="mt-0.5 h-8 text-xs"><SelectValue placeholder="Any" /></SelectTrigger>
-                <SelectContent>
-                  {centers.map((c) => <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+                <option value="">Any</option>
+                {centers.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+              </select>
             </div>
-            <div onPointerDown={(e) => e.stopPropagation()}>
+            <div>
               <Label className="text-[11px] text-muted-foreground">Default room</Label>
-              <Select
+              <select
+                className={nativeSelectClass}
                 value={group.defaultRoomId ?? ''}
-                onValueChange={(v) => update({ id: group._id, defaultRoomId: (v || undefined) as Id<'rooms'> | undefined })}
+                onChange={(e) => update({ id: group._id, defaultRoomId: (e.target.value || undefined) as Id<'rooms'> | undefined })}
               >
-                <SelectTrigger className="mt-0.5 h-8 text-xs"><SelectValue placeholder="Pick room" /></SelectTrigger>
-                <SelectContent>
-                  {teacherRooms.map((r) => <SelectItem key={r._id} value={r._id}>{r.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+                <option value="">Pick room</option>
+                {teacherRooms.map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}
+              </select>
             </div>
           </div>
 
