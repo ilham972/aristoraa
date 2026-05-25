@@ -23,7 +23,7 @@ import {
 } from '@/lib/groups/time-grid';
 import { Button } from '@/components/ui/button';
 import { WeekGrid } from '@/components/groups/week-grid';
-import { EditGroupDrawer } from '@/components/groups/edit-group-drawer';
+import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 
 function todayYmd(): string {
   const d = new Date();
@@ -203,7 +203,7 @@ export default function GroupsPage() {
         />
       )}
 
-      <EditGroupDrawer
+      <EditGroupDialog
         groupId={editingGroup}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
