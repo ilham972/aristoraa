@@ -54,16 +54,24 @@ export function WeeklySessionGrid({
   const isOn = (day: number, b: HourBand): boolean =>
     (selectedByDay.get(day) ?? []).some((s) => s.startTime < b.end && s.endTime > b.start);
 
+  // Row label = band.label minus the AM/PM suffix; the dialog's tight grid
+  // doesn't have room for it and the column already implies the day.
+  const shortLabel = (label: string) => label.replace(/[AP]$/, '');
+
   return (
-    <div className="overflow-x-auto -mx-1 px-1">
-      <table className="border-separate border-spacing-[3px]">
+    <div className="w-full">
+      <table className="w-full border-separate border-spacing-[2px] table-fixed">
+        <colgroup>
+          <col className="w-7" />
+          {DAYS.map((d) => <col key={d.num} />)}
+        </colgroup>
         <thead>
           <tr>
-            <th className="w-9" />
+            <th />
             {DAYS.map((d) => (
               <th
                 key={d.num}
-                className="text-[10px] font-semibold text-muted-foreground pb-1 w-10"
+                className="text-[10px] font-semibold text-muted-foreground pb-1"
               >
                 {d.short}
               </th>
@@ -75,9 +83,9 @@ export function WeeklySessionGrid({
             const prev = rows[ri - 1];
             const isAfterGap = prev && prev.end === '12:00' && band.start === '15:00';
             return (
-              <tr key={band.start} className={cn(isAfterGap && '[&>td]:pt-2 [&>th]:pt-2')}>
+              <tr key={band.start} className={cn(isAfterGap && '[&>td]:pt-1.5 [&>th]:pt-1.5')}>
                 <th className="text-[9px] font-medium text-muted-foreground/70 text-right pr-1 whitespace-nowrap">
-                  {band.label}
+                  {shortLabel(band.label)}
                 </th>
                 {DAYS.map((d) => {
                   const isWeekend = d.weekend;
@@ -94,7 +102,7 @@ export function WeeklySessionGrid({
                         disabled={disabled}
                         onClick={() => onToggle(d.num, band)}
                         className={cn(
-                          'w-10 h-7 rounded-md text-[9px] font-medium transition-all flex items-center justify-center',
+                          'w-full h-6 rounded text-[9px] font-medium flex items-center justify-center',
                           disabled && 'opacity-20 cursor-not-allowed bg-muted',
                           !disabled && !on && 'bg-muted/50 hover:bg-muted text-muted-foreground',
                           !disabled && (mentorHit || studentHit) && !on &&
@@ -111,7 +119,7 @@ export function WeeklySessionGrid({
                               : undefined
                         }
                       >
-                        {on ? '●' : disabled ? '' : ''}
+                        {on ? '●' : ''}
                       </button>
                     </td>
                   );
@@ -121,17 +129,6 @@ export function WeeklySessionGrid({
           })}
         </tbody>
       </table>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[10px] text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: color.solid }} /> selected
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-sm ring-1 ring-inset ring-destructive/60" /> mentor busy
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-sm ring-1 ring-inset ring-amber-500/60" /> member booked
-        </span>
-      </div>
     </div>
   );
 }

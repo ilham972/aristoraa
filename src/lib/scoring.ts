@@ -44,7 +44,11 @@ export function getDailyScore(
   };
 }
 
-// Get weekly scores (Mon-Sat of the given week)
+// Get weekly dates (Mon..Sun of the given week). 7 entries — slots use
+// dayOfWeek 1=Mon..7=Sun (Phase F added Sun), and callers index as
+// weekDates[dayOfWeek - 1], so this MUST return 7 entries or Sunday slots
+// produce `date: undefined` and crash server queries (e.g.
+// scheduleSlots.getEffectiveStudents).
 export function getWeekDates(referenceDate: string): string[] {
   const d = new Date(referenceDate + 'T00:00:00');
   const day = d.getDay(); // 0=Sun, 1=Mon, ...
@@ -54,7 +58,7 @@ export function getWeekDates(referenceDate: string): string[] {
   monday.setDate(d.getDate() + mondayOffset);
 
   const dates: string[] = [];
-  for (let i = 0; i < 6; i++) { // Mon to Sat
+  for (let i = 0; i < 7; i++) {
     const date = new Date(monday);
     date.setDate(monday.getDate() + i);
     dates.push(formatDate(date));

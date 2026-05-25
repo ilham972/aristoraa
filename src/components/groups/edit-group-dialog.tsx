@@ -107,7 +107,7 @@ function EditGroupBody({
 
   if (!group || !members || !allStudents || !teachers || !rooms || !centers) {
     return (
-      <div className="h-full overflow-y-auto px-4 pb-6 pt-4 max-w-lg mx-auto">
+      <div className="h-full px-4 pt-4 max-w-lg mx-auto">
         <div className="animate-pulse space-y-3">
           <div className="h-6 bg-muted rounded w-1/2" />
           <div className="h-20 bg-muted rounded" />

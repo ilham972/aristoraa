@@ -22,7 +22,7 @@ import type { Id } from '@/lib/convex';
 import { generateQuestionKeys, groupByMainQuestion, getGroupStatus, getTotalScoreable, type SubQuestionsMap } from '@/lib/sub-questions';
 
 // ─── Helpers ───
-const DAY_SHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_SHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -345,7 +345,7 @@ export default function ScoreEntryPage() {
   const weekSlotsByDay = useMemo(() => {
     if (!allSlots) return {} as Record<number, NonNullable<typeof allSlots>>;
     const m: Record<number, NonNullable<typeof allSlots>> = {};
-    for (let d = 1; d <= 6; d++)
+    for (let d = 1; d <= 7; d++)
       m[d] = allSlots.filter((s: { dayOfWeek: number }) => s.dayOfWeek === d).sort((a: { startTime: string }, b: { startTime: string }) => a.startTime.localeCompare(b.startTime));
     return m;
   }, [allSlots]);
@@ -1987,7 +1987,7 @@ export default function ScoreEntryPage() {
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              {(calPage === 0 ? [1, 2, 3] : [4, 5, 6]).map(dow => {
+              {(calPage === 0 ? [1, 2, 3, 4] : [5, 6, 7]).map(dow => {
                 const daySlots = weekSlotsByDay[dow] || [];
                 const isToday = dow === todayDow;
                 return (
