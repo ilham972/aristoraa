@@ -1,35 +1,51 @@
 'use client';
 
-// Edit-Group full-screen dialog (Phase F.5). One surface to: rename, set mentor /
-// grade / centre / default room, manage members, and paint the group's
-// weekly sessions. Auto-name regenerates from members unless the user has
-// typed a custom name. Conflicts surface as grid overlays + inline warnings.
+// Edit-Group full-screen dialog (Phase F.5+).
 //
-// Performance: the dialog renders its chrome (header / selects / empty grid /
-// footer) on the first paint using a `seed` from the parent's weekGrid list,
-// then progressively fills in as each Convex query resolves. The cross-group
-// conflict scan is non-blocking — the grid paints without rings first.
+// Surfaces in one screen: name, mentor / grade (multi) / centre / room,
+// members, weekly sessions.
+//
+// Decisions baked into this surface:
+//   - Mentor defaults to the current authenticated teacher on create (server
+//     side, in groups.create) — no manual pick needed every time.
+//   - Grade is a *set*: one primary + up to 2 extras. Member adds are
+//     server-enforced to belong to that set (no more soft warning).
+//   - Add-member picker uses groups.candidateStudents — server-filtered by
+//     accepted grades, with same-other-group students hidden by default and
+//     a "show all" toggle to reveal them.
+//   - Mentor / Centre / Room use shadcn Select; Grade uses a Base UI Popover
+//     because its multi-axis (primary radio + extras checkboxes) doesn't fit
+//     a single Select. Native <select> was retired now that we're in a Base
+//     UI Dialog (vaul→Dialog removed the pointer-capture portal conflict).
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
+import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import { toast } from 'sonner';
-import { Plus, Search, Trash2, X, Archive, ArchiveRestore, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Trash2, X, Archive, ArchiveRestore, AlertTriangle, Eye, EyeOff, ChevronDown, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { api, type Id } from '@/lib/convex';
+import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
 import { generateAutoName } from '@/lib/groups/naming';
 import { fmtLKR, type DayNum, type HourBand } from '@/lib/groups/time-grid';
 import { WeeklySessionGrid, type SessionCell } from './weekly-session-grid';
 
-const nativeSelectClass =
-  'mt-0.5 h-8 w-full text-xs bg-transparent border border-input rounded-lg px-2 ' +
-  'focus:outline-none focus:ring-2 focus:ring-ring/50 disabled:opacity-50 ' +
-  'dark:bg-input/30 appearance-none cursor-pointer ' +
-  "bg-[url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>\")] " +
-  'bg-no-repeat bg-[right_8px_center] pr-7';
+// Sentinel used as the Select value for "no selection" — Base UI Select
+// doesn't reliably accept "" as a real option value, so we map None ↔ "__".
+const NONE = '__';
+
+const GRADE_OPTIONS = [6, 7, 8, 9, 10, 11] as const;
 
 export type EditGroupSeed = {
   _id: Id<'groups'>;
@@ -79,14 +95,21 @@ function EditGroupBody({
   const group = useQuery(api.groups.get, { id: groupId });
   const members = useQuery(api.groups.members, { groupId });
   const sessions = useQuery(api.groups.sessions, { groupId });
-  // Conflicts run cross-group and are the slowest query in this set.
-  // Treat as decoration: grid paints without rings, then they fill in.
   const conflicts = useQuery(api.groups.sessionConflicts, { groupId });
-  const allStudents = useQuery(api.students.list);
   const teachers = useQuery(api.teachers.list);
   const rooms = useQuery(api.rooms.list);
   const centers = useQuery(api.centers.list);
   const groupRevenue = useQuery(api.groups.revenue, { groupId });
+
+  const [studentSearch, setStudentSearch] = useState('');
+  const [addingStudent, setAddingStudent] = useState(false);
+  const [includeInOtherGroups, setIncludeInOtherGroups] = useState(false);
+
+  // Candidate list runs server-side, only when the picker is open.
+  const candidates = useQuery(
+    api.groups.candidateStudents,
+    addingStudent ? { groupId, includeInOtherGroups } : 'skip',
+  );
 
   const update = useMutation(api.groups.update);
   const archive = useMutation(api.groups.archive);
@@ -97,12 +120,7 @@ function EditGroupBody({
 
   const [nameInput, setNameInput] = useState(seed?.name ?? '');
   const [nameSeededFor, setNameSeededFor] = useState<Id<'groups'> | null>(null);
-  const [studentSearch, setStudentSearch] = useState('');
-  const [addingStudent, setAddingStudent] = useState(false);
 
-  // Seed the editable name field once per group (render-time reset pattern).
-  // We prefer the authoritative group.name once it loads; before that, the
-  // seed.name from the parent's weekGrid is already in nameInput.
   if (group && nameSeededFor !== group._id) {
     setNameInput(group.name);
     setNameSeededFor(group._id);
@@ -123,25 +141,8 @@ function EditGroupBody({
     [sessions],
   );
 
-  // Memoize candidate-filtering so typing in the search box doesn't re-walk
-  // the full student list on every keystroke (cheap now, scales later).
-  const memberIds = useMemo(
-    () => new Set((members ?? []).map((m) => m._id)),
-    [members],
-  );
-  const candidates = useMemo(() => {
-    if (!allStudents) return [];
-    const q = studentSearch.toLowerCase();
-    return allStudents
-      .filter((s) => !memberIds.has(s._id))
-      .filter((s) => s.name.toLowerCase().includes(q));
-  }, [allStudents, memberIds, studentSearch]);
-
   const offCentreMembers = group?.centerId
     ? (members ?? []).filter((m) => m.centerId && m.centerId !== group.centerId)
-    : [];
-  const offGradeMembers = group?.grade != null
-    ? (members ?? []).filter((m) => m.schoolGrade !== group.grade)
     : [];
 
   const commitName = async () => {
@@ -160,17 +161,21 @@ function EditGroupBody({
     toast.success('Name reset to auto');
   };
 
-  const handleAddMember = async (studentId: Id<'students'>) => {
-    if (!group || !members || !allStudents) return;
-    await addMember({ groupId: group._id, studentId });
-    if (group.autoName) {
-      const names = [...members.map((m) => m.name), allStudents.find((s) => s._id === studentId)?.name ?? ''];
-      const auto = generateAutoName(names);
-      await update({ id: group._id, name: auto });
-      setNameInput(auto);
+  const handleAddMember = async (studentId: Id<'students'>, studentName: string) => {
+    if (!group || !members) return;
+    try {
+      await addMember({ groupId: group._id, studentId });
+      if (group.autoName) {
+        const names = [...members.map((m) => m.name), studentName];
+        const auto = generateAutoName(names);
+        await update({ id: group._id, name: auto });
+        setNameInput(auto);
+      }
+      setStudentSearch('');
+      setAddingStudent(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add student');
     }
-    setStudentSearch('');
-    setAddingStudent(false);
   };
 
   const handleRemoveMember = async (studentId: Id<'students'>) => {
@@ -204,17 +209,31 @@ function EditGroupBody({
     }
   };
 
-  // Effective values: prefer authoritative `group` once loaded, else seed.
+  // Effective values.
   const displayName = group?.name ?? seed?.name ?? '';
   const memberCount = members?.length ?? seed?.memberCount ?? 0;
   const sessionCount = sessions?.length ?? seed?.sessionCount ?? 0;
   const groupReady = !!group;
-  const refsReady = !!(teachers && rooms && centers && allStudents);
+  const refsReady = !!(teachers && rooms && centers);
+
+  const acceptedGrades: number[] = group
+    ? [
+        ...(group.grade != null ? [group.grade] : []),
+        ...(group.additionalGrades ?? []),
+      ]
+    : [];
+
+  // Local filter applied to the server-filtered list (cheap; the heavy work
+  // — grade match + cross-group exclusion — already happened server-side).
+  const filteredCandidates = useMemo(() => {
+    if (!candidates) return [];
+    const q = studentSearch.toLowerCase();
+    return q ? candidates.filter((s) => s.name.toLowerCase().includes(q)) : candidates;
+  }, [candidates, studentSearch]);
+
+  const triggerClass = 'w-full h-8 px-2 text-xs';
 
   return (
-    // h-dvh ties the layout to the dynamic viewport so mobile chrome (URL
-    // bar) doesn't push parts off-screen. Inner column never scrolls — the
-    // only overflow region is the members chip strip in the middle.
     <div className="h-dvh max-w-lg mx-auto px-3 flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-2 pt-3 pb-2 shrink-0">
@@ -250,56 +269,99 @@ function EditGroupBody({
         )}
       </div>
 
-      {/* 4 selects in one row. Disabled until refs + group are ready so we
-          don't flash a spurious "None / Any / Any / Pick" state. */}
+      {/* 4 controls in one row */}
       <div className="grid grid-cols-4 gap-1.5 mb-2 shrink-0">
-        <div>
+        {/* Mentor */}
+        <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Mentor</Label>
-          <select
-            className={nativeSelectClass}
+          <Select
+            value={group?.mentorId ?? NONE}
+            onValueChange={(v) =>
+              group && update({
+                id: group._id,
+                mentorId: (v && v !== NONE ? (v as Id<'teachers'>) : undefined),
+              })
+            }
             disabled={!groupReady || !refsReady}
-            value={group?.mentorId ?? ''}
-            onChange={(e) => group && update({ id: group._id, mentorId: (e.target.value || undefined) as Id<'teachers'> | undefined })}
           >
-            <option value="">None</option>
-            {(teachers ?? []).map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
-          </select>
+            <SelectTrigger className={triggerClass} size="sm">
+              <SelectValue placeholder="None" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>None</SelectItem>
+              {(teachers ?? []).map((t) => (
+                <SelectItem key={t._id} value={t._id}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        <div>
+
+        {/* Grade — popover with primary radio + extras checkboxes */}
+        <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Grade</Label>
-          <select
-            className={nativeSelectClass}
+          <GradePopover
             disabled={!groupReady}
-            value={group?.grade != null ? String(group.grade) : ''}
-            onChange={(e) => group && update({ id: group._id, grade: e.target.value ? Number(e.target.value) : undefined })}
-          >
-            <option value="">Any</option>
-            {[6, 7, 8, 9, 10, 11].map((g) => <option key={g} value={String(g)}>G{g}</option>)}
-          </select>
+            primary={group?.grade}
+            extras={group?.additionalGrades ?? []}
+            onChange={(primary, extras) => {
+              if (!group) return;
+              update({
+                id: group._id,
+                grade: primary,
+                additionalGrades: extras.length > 0 ? extras : undefined,
+              });
+            }}
+          />
         </div>
-        <div>
+
+        {/* Centre */}
+        <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Centre</Label>
-          <select
-            className={nativeSelectClass}
+          <Select
+            value={group?.centerId ?? NONE}
+            onValueChange={(v) =>
+              group && update({
+                id: group._id,
+                centerId: (v && v !== NONE ? (v as Id<'centers'>) : undefined),
+              })
+            }
             disabled={!groupReady || !refsReady}
-            value={group?.centerId ?? ''}
-            onChange={(e) => group && update({ id: group._id, centerId: (e.target.value || undefined) as Id<'centers'> | undefined })}
           >
-            <option value="">Any</option>
-            {(centers ?? []).map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-          </select>
+            <SelectTrigger className={triggerClass} size="sm">
+              <SelectValue placeholder="Any" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>Any</SelectItem>
+              {(centers ?? []).map((c) => (
+                <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        <div>
+
+        {/* Room */}
+        <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Room</Label>
-          <select
-            className={nativeSelectClass}
+          <Select
+            value={group?.defaultRoomId ?? NONE}
+            onValueChange={(v) =>
+              group && update({
+                id: group._id,
+                defaultRoomId: (v && v !== NONE ? (v as Id<'rooms'>) : undefined),
+              })
+            }
             disabled={!groupReady || !refsReady}
-            value={group?.defaultRoomId ?? ''}
-            onChange={(e) => group && update({ id: group._id, defaultRoomId: (e.target.value || undefined) as Id<'rooms'> | undefined })}
           >
-            <option value="">Pick</option>
-            {(rooms ?? []).map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}
-          </select>
+            <SelectTrigger className={triggerClass} size="sm">
+              <SelectValue placeholder="Pick" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>Pick</SelectItem>
+              {(rooms ?? []).map((r) => (
+                <SelectItem key={r._id} value={r._id}>{r.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -309,11 +371,15 @@ function EditGroupBody({
         </p>
       )}
 
-      {/* Members — the one region allowed to overflow, so the rest of the
-          layout stays fixed regardless of roster size. */}
+      {/* Members header */}
       <div className="flex items-center justify-between mb-1 shrink-0">
         <Label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
           Members ({memberCount})
+          {acceptedGrades.length > 0 && (
+            <span className="ml-1 normal-case text-muted-foreground/70">
+              · accepts {acceptedGrades.map((g) => `G${g}`).join(', ')}
+            </span>
+          )}
         </Label>
         <Button
           variant="ghost"
@@ -330,7 +396,6 @@ function EditGroupBody({
         <div className="flex flex-wrap gap-1.5">
           {(members ?? []).map((m) => {
             const offCentre = group?.centerId && m.centerId && m.centerId !== group.centerId;
-            const offGrade = group?.grade != null && m.schoolGrade !== group.grade;
             return (
               <span
                 key={m._id}
@@ -338,9 +403,7 @@ function EditGroupBody({
                 style={{ backgroundColor: color.soft, color: color.text, border: `1px solid ${color.border}` }}
               >
                 {m.name}
-                {(offCentre || offGrade) && (
-                  <AlertTriangle className="w-3 h-3 text-amber-500" />
-                )}
+                {offCentre && <AlertTriangle className="w-3 h-3 text-amber-500" />}
                 <button onClick={() => handleRemoveMember(m._id)} className="hover:text-destructive">
                   <X className="w-3 h-3" />
                 </button>
@@ -352,53 +415,79 @@ function EditGroupBody({
           )}
         </div>
 
-        {(offCentreMembers.length > 0 || offGradeMembers.length > 0) && (
-          <div className="text-[10px] text-amber-600 space-y-0.5 mt-1">
-            {offCentreMembers.length > 0 && (
-              <p className="flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                {offCentreMembers.map((m) => m.name).join(', ')} from another centre.
-              </p>
-            )}
-            {offGradeMembers.length > 0 && group && (
-              <p className="flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                {offGradeMembers.map((m) => m.name).join(', ')} not Grade {group.grade}.
-              </p>
-            )}
-          </div>
+        {offCentreMembers.length > 0 && (
+          <p className="text-[10px] text-amber-600 mt-1 flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" />
+            {offCentreMembers.map((m) => m.name).join(', ')} from another centre.
+          </p>
         )}
 
         {addingStudent && (
           <div className="rounded-lg border border-border/60 p-2 mt-1.5">
-            <div className="relative mb-1.5">
-              <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                autoFocus
-                placeholder="Search students…"
-                value={studentSearch}
-                onChange={(e) => setStudentSearch(e.target.value)}
-                className="h-8 text-xs pl-7"
-              />
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  autoFocus
+                  placeholder={
+                    acceptedGrades.length > 0
+                      ? `Search G${acceptedGrades.join('/')} students…`
+                      : 'Search students…'
+                  }
+                  value={studentSearch}
+                  onChange={(e) => setStudentSearch(e.target.value)}
+                  className="h-8 text-xs pl-7"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setIncludeInOtherGroups((v) => !v)}
+                className={cn(
+                  'h-8 px-2 rounded-md border border-input flex items-center gap-1 text-[10px] shrink-0',
+                  includeInOtherGroups
+                    ? 'bg-primary/10 text-primary border-primary/40'
+                    : 'text-muted-foreground hover:bg-muted',
+                )}
+                title={
+                  includeInOtherGroups
+                    ? 'Hiding students from other groups'
+                    : 'Showing all matching students (including ones in other groups)'
+                }
+              >
+                {includeInOtherGroups ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                {includeInOtherGroups ? 'All' : 'Free'}
+              </button>
             </div>
+
             <div className="max-h-40 overflow-y-auto space-y-0.5">
-              {candidates.slice(0, 30).map((s) => (
+              {candidates === undefined && (
+                <p className="text-xs text-muted-foreground px-2 py-1">Loading…</p>
+              )}
+              {candidates !== undefined && filteredCandidates.slice(0, 30).map((s) => (
                 <button
                   key={s._id}
-                  onClick={() => handleAddMember(s._id)}
+                  onClick={() => handleAddMember(s._id, s.name)}
                   className="w-full flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-muted text-left text-xs"
                 >
                   <span>{s.name}</span>
                   <span className="text-muted-foreground">G{s.schoolGrade}</span>
                 </button>
               ))}
-              {candidates.length === 0 && <p className="text-xs text-muted-foreground px-2 py-1">No matches</p>}
+              {candidates !== undefined && filteredCandidates.length === 0 && (
+                <p className="text-xs text-muted-foreground px-2 py-1">
+                  {acceptedGrades.length === 0
+                    ? 'No matches.'
+                    : includeInOtherGroups
+                      ? 'No matches in selected grade(s).'
+                      : 'No free students in selected grade(s). Tap "All" to include ones already in other groups.'}
+                </p>
+              )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Weekly sessions — pinned above the footer */}
+      {/* Weekly sessions */}
       <div className="shrink-0 mb-2">
         <Label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
           Weekly sessions
@@ -447,5 +536,141 @@ function EditGroupBody({
         </Button>
       </div>
     </div>
+  );
+}
+
+// Multi-grade picker: one primary (radio) + up to 2 extras (checkboxes).
+// Renders as a button-styled trigger whose label collapses the state into
+// "Any" / "G10" / "G10 +G9" / "G10 +2".
+function GradePopover({
+  disabled,
+  primary,
+  extras,
+  onChange,
+}: {
+  disabled?: boolean;
+  primary?: number;
+  extras: number[];
+  onChange: (primary: number | undefined, extras: number[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const label = (() => {
+    if (primary == null) return 'Any';
+    if (extras.length === 0) return `G${primary}`;
+    if (extras.length === 1) return `G${primary} +G${extras[0]}`;
+    return `G${primary} +${extras.length}`;
+  })();
+
+  const handlePrimary = (g: number | undefined) => {
+    if (g == null) {
+      onChange(undefined, []);
+      return;
+    }
+    // If new primary collides with an existing extra, drop it from extras.
+    const cleanedExtras = extras.filter((e) => e !== g);
+    onChange(g, cleanedExtras);
+  };
+
+  const toggleExtra = (g: number) => {
+    if (g === primary) return; // primary can't also be an extra
+    if (extras.includes(g)) {
+      onChange(primary, extras.filter((e) => e !== g));
+    } else {
+      if (extras.length >= 2) {
+        toast('Max 2 extra grades');
+        return;
+      }
+      onChange(primary, [...extras, g]);
+    }
+  };
+
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <PopoverPrimitive.Trigger
+        disabled={disabled}
+        className={cn(
+          'mt-0.5 h-8 w-full text-xs bg-transparent border border-input rounded-lg px-2 flex items-center justify-between gap-1',
+          'focus:outline-none focus:ring-2 focus:ring-ring/50',
+          'disabled:opacity-50 disabled:cursor-not-allowed',
+          'dark:bg-input/30',
+          primary == null && 'text-muted-foreground',
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" />
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Positioner sideOffset={4} className="z-[60]">
+          <PopoverPrimitive.Popup className="rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 p-2 w-52 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0">
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+              Primary grade
+            </div>
+            <div className="grid grid-cols-4 gap-1 mb-2">
+              <button
+                type="button"
+                onClick={() => handlePrimary(undefined)}
+                className={cn(
+                  'h-7 rounded text-[11px] border',
+                  primary == null
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'border-input hover:bg-muted',
+                )}
+              >
+                Any
+              </button>
+              {GRADE_OPTIONS.map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => handlePrimary(g)}
+                  className={cn(
+                    'h-7 rounded text-[11px] border',
+                    primary === g
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-input hover:bg-muted',
+                  )}
+                >
+                  G{g}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+              Also accepts (max 2)
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {GRADE_OPTIONS.map((g) => {
+                const isPrimary = g === primary;
+                const isExtra = extras.includes(g);
+                return (
+                  <button
+                    key={g}
+                    type="button"
+                    disabled={isPrimary || primary == null}
+                    onClick={() => toggleExtra(g)}
+                    className={cn(
+                      'h-7 rounded text-[11px] border flex items-center justify-center gap-0.5',
+                      isExtra
+                        ? 'bg-primary/15 text-primary border-primary/40'
+                        : 'border-input hover:bg-muted',
+                      (isPrimary || primary == null) && 'opacity-30 cursor-not-allowed hover:bg-transparent',
+                    )}
+                  >
+                    {isExtra && <Check className="w-2.5 h-2.5" />}
+                    G{g}
+                  </button>
+                );
+              })}
+            </div>
+            {primary == null && (
+              <p className="text-[10px] text-muted-foreground mt-1.5">
+                Pick a primary grade first.
+              </p>
+            )}
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }

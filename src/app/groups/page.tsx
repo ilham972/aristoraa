@@ -40,9 +40,10 @@ export default function GroupsPage() {
   const week = useQuery(api.groups.weekGrid);
   const rooms = useQuery(api.rooms.list);
   // Prefetch the dialog's reference lists at the page level so they're
-  // already in the Convex cache when the user opens a group editor —
-  // collapses ~4 round-trips out of the open path.
-  useQuery(api.students.list);
+  // already in the Convex cache when the user opens a group editor.
+  // Students are not prefetched here — the dialog now uses a server-filtered
+  // candidateStudents query so the full list never needs to ship to the
+  // client.
   useQuery(api.teachers.list);
   useQuery(api.centers.list);
   const dayData = useQuery(

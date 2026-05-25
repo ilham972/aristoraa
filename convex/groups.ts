@@ -542,6 +542,7 @@ export const create = mutation({
     autoName: v.optional(v.boolean()),
     centerId: v.optional(v.id("centers")),
     grade: v.optional(v.number()),
+    additionalGrades: v.optional(v.array(v.number())),
     mentorId: v.optional(v.id("teachers")),
     defaultRoomId: v.optional(v.id("rooms")),
     type: v.optional(v.string()),
@@ -550,13 +551,27 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Unauthenticated");
+
+    // Default mentor = current authenticated teacher. Saves an extra round-
+    // trip from the client to look this up on every create. Only applied
+    // when the caller didn't explicitly pass one.
+    let mentorId = args.mentorId;
+    if (mentorId === undefined) {
+      const caller = await ctx.db
+        .query("teachers")
+        .withIndex("by_clerk_user", (q) => q.eq("clerkUserId", identity.subject))
+        .first();
+      if (caller) mentorId = caller._id;
+    }
+
     const now = Date.now();
     return await ctx.db.insert("groups", {
       name: args.name,
       autoName: args.autoName ?? true,
       centerId: args.centerId,
       grade: args.grade,
-      mentorId: args.mentorId,
+      additionalGrades: args.additionalGrades,
+      mentorId,
       defaultRoomId: args.defaultRoomId,
       type: args.type,
       maxSize: args.maxSize,
@@ -574,6 +589,7 @@ export const update = mutation({
     autoName: v.optional(v.boolean()),
     centerId: v.optional(v.id("centers")),
     grade: v.optional(v.number()),
+    additionalGrades: v.optional(v.array(v.number())),
     mentorId: v.optional(v.id("teachers")),
     defaultRoomId: v.optional(v.id("rooms")),
     type: v.optional(v.string()),
@@ -624,13 +640,33 @@ export const remove = mutation({
   },
 });
 
-// Add a member. Caller is responsible for surfacing cross-centre /
-// cross-grade warnings (queries for that are below).
+// Add a member. Strict grade rule: when the group has any grade set
+// (primary or additional), the student's schoolGrade must be in that union.
+// Cross-centre is still a soft warning (rendered client-side); cross-grade
+// is now a hard block.
 export const addMember = mutation({
   args: { groupId: v.id("groups"), studentId: v.id("students") },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Unauthenticated");
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) throw new ConvexError("Group not found");
+
+    const acceptedGrades: number[] = [
+      ...(group.grade != null ? [group.grade] : []),
+      ...(group.additionalGrades ?? []),
+    ];
+    if (acceptedGrades.length > 0) {
+      const student = await ctx.db.get(args.studentId);
+      if (!student) throw new ConvexError("Student not found");
+      if (!acceptedGrades.includes(student.schoolGrade)) {
+        throw new ConvexError(
+          `Student is Grade ${student.schoolGrade}; this group accepts ${acceptedGrades.join(", ")}`,
+        );
+      }
+    }
+
     const existing = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_student", (q) =>
@@ -643,6 +679,66 @@ export const addMember = mutation({
       studentId: args.studentId,
       joinedAt: Date.now(),
     });
+  },
+});
+
+// Eligible-student list for the Edit-Group "Add member" picker.
+//
+// Filters:
+//   - Student's schoolGrade must be in (group.grade ∪ group.additionalGrades).
+//     If neither is set, falls back to listing all students.
+//   - Default: hide students already in any OTHER active group. The toggle
+//     `includeInOtherGroups` reveals them (still excludes own-group members,
+//     and ignores archived groups).
+//   - Always excludes students who are already members of THIS group.
+//
+// One query keeps grade-matching + cross-group exclusion server-side, so the
+// client doesn't have to ship a full students.list + groupMembers.list to do
+// the same join on every keystroke.
+export const candidateStudents = query({
+  args: {
+    groupId: v.id("groups"),
+    includeInOtherGroups: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) return [];
+
+    const acceptedGrades = new Set<number>([
+      ...(group.grade != null ? [group.grade] : []),
+      ...(group.additionalGrades ?? []),
+    ]);
+
+    // Own-group members (always excluded).
+    const ownMembers = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const ownIds = new Set(ownMembers.map((m) => m.studentId));
+
+    // Students booked in OTHER active groups (excluded unless toggle is on).
+    const inOtherActive = new Set<string>();
+    if (!args.includeInOtherGroups) {
+      const allMembers = await ctx.db.query("groupMembers").collect();
+      const activeGroupIds = new Set<string>();
+      const allGroups = await ctx.db.query("groups").collect();
+      for (const g of allGroups) {
+        if (!g.archived && g._id !== args.groupId) activeGroupIds.add(g._id);
+      }
+      for (const m of allMembers) {
+        if (activeGroupIds.has(m.groupId)) inOtherActive.add(m.studentId);
+      }
+    }
+
+    const all = await ctx.db.query("students").collect();
+    return all
+      .filter((s) => !ownIds.has(s._id))
+      .filter((s) => acceptedGrades.size === 0 || acceptedGrades.has(s.schoolGrade))
+      .filter((s) => args.includeInOtherGroups || !inOtherActive.has(s._id))
+      .sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 

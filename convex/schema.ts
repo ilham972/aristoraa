@@ -118,7 +118,11 @@ export default defineSchema({
     name: v.string(),
     autoName: v.boolean(),                       // true → regenerate on member change
     centerId: v.optional(v.id("centers")),
-    grade: v.optional(v.number()),
+    grade: v.optional(v.number()),               // primary grade
+    // Phase F (extension): up to 2 extra grades that this group also accepts.
+    // Members must belong to (grade ∪ additionalGrades). Server enforces this
+    // strictly in addMember; existing soft-warning UX is retired.
+    additionalGrades: v.optional(v.array(v.number())),
     mentorId: v.optional(v.id("teachers")),
     defaultRoomId: v.optional(v.id("rooms")),    // used when toggling a new cell in the weekly grid
     type: v.optional(v.string()),                // "small" | "medium" | "large" | "private"
