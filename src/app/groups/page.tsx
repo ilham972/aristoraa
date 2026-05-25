@@ -39,6 +39,12 @@ export default function GroupsPage() {
   const today = todayYmd();
   const week = useQuery(api.groups.weekGrid);
   const rooms = useQuery(api.rooms.list);
+  // Prefetch the dialog's reference lists at the page level so they're
+  // already in the Convex cache when the user opens a group editor —
+  // collapses ~4 round-trips out of the open path.
+  useQuery(api.students.list);
+  useQuery(api.teachers.list);
+  useQuery(api.centers.list);
   const dayData = useQuery(
     api.groups.dayView,
     view === 'day'
@@ -205,6 +211,11 @@ export default function GroupsPage() {
 
       <EditGroupDialog
         groupId={editingGroup}
+        seed={
+          editingGroup
+            ? week?.groups.find((g) => g._id === editingGroup)
+            : undefined
+        }
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
       />
