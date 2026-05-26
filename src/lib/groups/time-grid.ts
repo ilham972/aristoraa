@@ -34,13 +34,12 @@ function hh(h: number): string {
 }
 
 function bandLabel(h: number): string {
-  const startAmpm = h >= 12 ? "P" : "A";
+  // A/P suffix dropped: morning vs evening is already obvious from where the
+  // band sits on the grid (separate weekend-morning block, evening block).
   const endH = h + 1;
-  const endAmpm = endH >= 12 && endH < 24 ? "P" : "A";
   const s12 = h % 12 === 0 ? 12 : h % 12;
   const e12 = endH % 12 === 0 ? 12 : endH % 12;
-  // Compact: drop the meridiem on the start when both share it.
-  return startAmpm === endAmpm ? `${s12}-${e12}${endAmpm}` : `${s12}${startAmpm}-${e12}${endAmpm}`;
+  return `${s12}-${e12}`;
 }
 
 function bandsForRange(startHour: number, endHour: number): HourBand[] {

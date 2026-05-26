@@ -149,6 +149,13 @@ export default defineSchema({
     groupId: v.id("groups"),
     studentId: v.id("students"),
     joinedAt: v.number(),
+    // ─── Phase F: per-group fee in LKR ─────────────────────────────────────
+    // Overrides students.hourlyRate for THIS group only. Lets the tutor give
+    // a discount or free seat for a poor student in a specific group while
+    // keeping the student's regular fee in other groups they attend.
+    // Resolution order: groupMembers.hourlyRate → students.hourlyRate →
+    // RATE_DEFAULT_LKR (250). Use 0 for "free".
+    hourlyRate: v.optional(v.number()),
   })
     .index("by_group", ["groupId"])
     .index("by_student", ["studentId"])

@@ -32,6 +32,17 @@ function rangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: strin
   return aStart < bEnd && aEnd > bStart;
 }
 
+// Resolution order for a student's hourly fee within a specific group:
+//   1. groupMembers.hourlyRate (per-group override; 0 ⇒ free seat)
+//   2. students.hourlyRate     (student's standard fee across groups)
+//   3. RATE_DEFAULT_LKR        (system default, 250)
+// `memberRate` is the value on the groupMembers row for this (group, student).
+function resolveRate(memberRate: number | undefined, studentRate: number | undefined): number {
+  if (memberRate !== undefined) return memberRate;
+  if (studentRate !== undefined) return studentRate;
+  return RATE_DEFAULT_LKR;
+}
+
 // ── Queries ───────────────────────────────────────────────────────────────
 
 export const list = query({
@@ -53,7 +64,10 @@ export const get = query({
   },
 });
 
-// Members of a group with full student records folded in.
+// Members of a group with full student records folded in. memberRate is the
+// per-group override (undefined ⇒ falls back to student rate, then default)
+// — surfaced separately from the student row so the editor can distinguish
+// "this group set 100" from "the student's standard fee is 100".
 export const members = query({
   args: { groupId: v.id("groups") },
   handler: async (ctx, args) => {
@@ -63,10 +77,25 @@ export const members = query({
       .query("groupMembers")
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
       .collect();
-    const out: Array<Doc<"students"> & { membershipId: Id<"groupMembers">; joinedAt: number }> = [];
+    const out: Array<
+      Doc<"students"> & {
+        membershipId: Id<"groupMembers">;
+        joinedAt: number;
+        memberRate: number | undefined;
+        effectiveRate: number;
+      }
+    > = [];
     for (const row of rows) {
       const s = await ctx.db.get(row.studentId);
-      if (s) out.push({ ...s, membershipId: row._id, joinedAt: row.joinedAt });
+      if (s) {
+        out.push({
+          ...s,
+          membershipId: row._id,
+          joinedAt: row.joinedAt,
+          memberRate: row.hourlyRate,
+          effectiveRate: resolveRate(row.hourlyRate, s.hourlyRate),
+        });
+      }
     }
     return out;
   },
@@ -110,6 +139,9 @@ export const dayView = query({
         .query("groupMembers")
         .withIndex("by_group", (q) => q.eq("groupId", group._id))
         .collect();
+      // Per-(group,student) rate map so overrides can apply the correct fee.
+      const memberRateById = new Map<string, number | undefined>();
+      for (const m of memberRows) memberRateById.set(m.studentId, m.hourlyRate);
 
       const memberStudents: Array<Doc<"students">> = [];
       for (const m of memberRows) {
@@ -143,7 +175,8 @@ export const dayView = query({
 
       const hours = hoursBetween(slot.startTime, slot.endTime);
       const revenue = effectiveStudents.reduce(
-        (sum, s) => sum + (s.hourlyRate ?? RATE_DEFAULT_LKR) * hours,
+        (sum, s) =>
+          sum + resolveRate(memberRateById.get(s._id), s.hourlyRate) * hours,
         0,
       );
 
@@ -203,7 +236,7 @@ export const weekGrid = query({
       let ratePerHour = 0;
       for (const m of memberRows) {
         const s = await ctx.db.get(m.studentId);
-        if (s) ratePerHour += s.hourlyRate ?? RATE_DEFAULT_LKR;
+        if (s) ratePerHour += resolveRate(m.hourlyRate, s.hourlyRate);
       }
       const memberCount = memberRows.length;
 
@@ -388,7 +421,9 @@ export const revenue = query({
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
       .collect();
     const baseStudents: Array<Doc<"students">> = [];
+    const memberRateById = new Map<string, number | undefined>();
     for (const m of memberRows) {
+      memberRateById.set(m.studentId, m.hourlyRate);
       const s = await ctx.db.get(m.studentId);
       if (s) baseStudents.push(s);
     }
@@ -432,7 +467,8 @@ export const revenue = query({
         attending = merged;
       }
       total += attending.reduce(
-        (sum, s) => sum + (s.hourlyRate ?? RATE_DEFAULT_LKR) * hours,
+        (sum, s) =>
+          sum + resolveRate(memberRateById.get(s._id), s.hourlyRate) * hours,
         0,
       );
     }
@@ -466,7 +502,9 @@ export const dayRevenue = query({
         .withIndex("by_group", (q) => q.eq("groupId", g._id))
         .collect();
       const baseStudents: Array<Doc<"students">> = [];
+      const memberRateById = new Map<string, number | undefined>();
       for (const m of memberRows) {
+        memberRateById.set(m.studentId, m.hourlyRate);
         const s = await ctx.db.get(m.studentId);
         if (s) baseStudents.push(s);
       }
@@ -492,7 +530,8 @@ export const dayRevenue = query({
           }
         }
         total += attending.reduce(
-          (sum, s) => sum + (s.hourlyRate ?? RATE_DEFAULT_LKR) * hours,
+          (sum, s) =>
+            sum + resolveRate(memberRateById.get(s._id), s.hourlyRate) * hours,
           0,
         );
       }
@@ -524,7 +563,7 @@ export const weekRevenue = query({
       for (const m of memberRows) {
         const s = await ctx.db.get(m.studentId);
         if (!s) continue;
-        perStudent += s.hourlyRate ?? RATE_DEFAULT_LKR;
+        perStudent += resolveRate(m.hourlyRate, s.hourlyRate);
       }
       for (const slot of slots) {
         total += perStudent * hoursBetween(slot.startTime, slot.endTime);
@@ -757,6 +796,33 @@ export const candidateStudents = query({
   },
 });
 
+// Set (or clear) a per-group fee override for one student. Pass
+// hourlyRate=0 for a free seat, a positive number for a custom rate, or
+// undefined to clear the override and fall back to the student's standard
+// rate.
+export const setMemberFee = mutation({
+  args: {
+    groupId: v.id("groups"),
+    studentId: v.id("students"),
+    hourlyRate: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    if (args.hourlyRate !== undefined && args.hourlyRate < 0) {
+      throw new ConvexError("Fee cannot be negative");
+    }
+    const row = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_student", (q) =>
+        q.eq("groupId", args.groupId).eq("studentId", args.studentId),
+      )
+      .first();
+    if (!row) throw new ConvexError("Student is not a member of this group");
+    await ctx.db.patch(row._id, { hourlyRate: args.hourlyRate });
+  },
+});
+
 export const removeMember = mutation({
   args: { groupId: v.id("groups"), studentId: v.id("students") },
   handler: async (ctx, args) => {
@@ -953,26 +1019,32 @@ export const revenueInsights = query({
     const centerName = new Map(centers.map((c) => [c._id, c.name]));
     const teacherName = new Map(teachers.map((t) => [t._id, t.name]));
 
-    // Build per-group: members + their hourlyRate sum (per-hour fee).
-    const membersByGroup = new Map<string, { studentId: Id<"students">; rate: number }[]>();
+    // Build per-group: members + their resolved per-hour fee. We resolve
+    // each (group, student) row independently because a student may be in
+    // two groups with different per-group overrides.
     const studentIds = new Set<Id<"students">>();
-    for (const m of allMembers) {
-      studentIds.add(m.studentId);
-      const list = membersByGroup.get(m.groupId) ?? [];
-      list.push({ studentId: m.studentId, rate: RATE_DEFAULT_LKR });
-      membersByGroup.set(m.groupId, list);
-    }
-    // Resolve student rates in one batch. Array.from over the Set to avoid
-    // tripping convex tsconfig's downlevelIteration check.
+    for (const m of allMembers) studentIds.add(m.studentId);
     const studentList = await Promise.all(
       Array.from(studentIds).map((id) => ctx.db.get(id)),
     );
-    const rateById = new Map<string, number>();
+    const studentRateById = new Map<string, number | undefined>();
     for (const s of studentList) {
-      if (s) rateById.set(s._id, s.hourlyRate ?? RATE_DEFAULT_LKR);
+      if (s) studentRateById.set(s._id, s.hourlyRate);
     }
-    for (const list of Array.from(membersByGroup.values())) {
-      for (const m of list) m.rate = rateById.get(m.studentId) ?? RATE_DEFAULT_LKR;
+
+    // membersByGroup uses the resolved per-(group,student) rate so each
+    // group's hourly fee is the simple sum of these.
+    const membersByGroup = new Map<string, { studentId: Id<"students">; rate: number }[]>();
+    // Lookup for the attendance loop below: "<groupId>|<studentId>" → rate.
+    // Lets realized-revenue charge the per-group rate without rebuilding the
+    // membership map.
+    const rateByGroupStudent = new Map<string, number>();
+    for (const m of allMembers) {
+      const rate = resolveRate(m.hourlyRate, studentRateById.get(m.studentId));
+      const list = membersByGroup.get(m.groupId) ?? [];
+      list.push({ studentId: m.studentId, rate });
+      membersByGroup.set(m.groupId, list);
+      rateByGroupStudent.set(`${m.groupId}|${m.studentId}`, rate);
     }
 
     // Slots keyed by group (active groups only); also keep a flat list of
@@ -1062,25 +1134,29 @@ export const revenueInsights = query({
     let realizedTotal = 0;
 
     // Pre-fetch any student rate we don't already have (students who attended
-    // but were since removed from the roster).
+    // but were since removed from the roster). These fall back to the
+    // student's standard rate when there's no per-group override on file.
     const missingStudentIds = new Set<Id<"students">>();
     for (const a of recent) {
-      if (!rateById.has(a.studentId)) missingStudentIds.add(a.studentId);
+      if (!studentRateById.has(a.studentId)) missingStudentIds.add(a.studentId);
     }
     if (missingStudentIds.size > 0) {
       const extra = await Promise.all(
         Array.from(missingStudentIds).map((id) => ctx.db.get(id)),
       );
       for (const s of extra) {
-        if (s) rateById.set(s._id, s.hourlyRate ?? RATE_DEFAULT_LKR);
+        if (s) studentRateById.set(s._id, s.hourlyRate);
       }
     }
 
     for (const a of recent) {
       const slot = slotById.get(a.slotId);
-      if (!slot) continue;
+      if (!slot || !slot.groupId) continue;
       const hours = hoursBetween(slot.startTime, slot.endTime);
-      const rate = rateById.get(a.studentId) ?? RATE_DEFAULT_LKR;
+      // Prefer the per-group override; fall back to student rate; then default.
+      const rate =
+        rateByGroupStudent.get(`${slot.groupId}|${a.studentId}`) ??
+        resolveRate(undefined, studentRateById.get(a.studentId));
       const rev = rate * hours;
       realizedTotal += rev;
       realizedByDay.set(a.date, (realizedByDay.get(a.date) ?? 0) + rev);

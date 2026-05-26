@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { toast } from 'sonner';
-import { BarChart3, CalendarDays, LayoutGrid, Plus, UserMinus, UserPlus } from 'lucide-react';
+import { BarChart3, CalendarDays, LayoutGrid, UserMinus, UserPlus } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
@@ -21,7 +21,6 @@ import {
   type DayNum,
   type HourBand,
 } from '@/lib/groups/time-grid';
-import { Button } from '@/components/ui/button';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { RevenueTab } from '@/components/groups/revenue-tab';
@@ -96,22 +95,21 @@ export default function GroupsPage() {
   const loading = week === undefined;
   const hasGroups = (week?.groups.length ?? 0) > 0;
 
+  // Fixed-height page: the only thing allowed to scroll vertically is the
+  // active sub-view's overflow region (DayList list, RevenueTab content).
+  // The week-grid view scrolls horizontally only — vertical sizing inside
+  // it is sized to fit so the user never has to scroll up/down while
+  // browsing slots. Calc subtracts the bottom-nav padding (5rem) applied
+  // by AuthLayout's <main>.
   return (
-    <div className="px-4 pt-5 pb-24 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-3">
-        <h1 className="text-lg font-bold text-foreground">Groups</h1>
-        <Button size="sm" className="rounded-xl gap-1.5 h-8" onClick={() => handleCreate()}>
-          <Plus className="w-4 h-4" /> New
-        </Button>
-      </div>
-
-      {/* Today's exceptions */}
+    <div className="h-[calc(100svh-5rem)] flex flex-col overflow-hidden max-w-3xl mx-auto px-3 pt-3">
+      {/* Today's exceptions — only when present, hidden on Revenue tab. */}
       {view !== 'revenue' && exceptions && exceptions.length > 0 && (
-        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 mb-4">
-          <p className="text-[10px] text-amber-600 uppercase tracking-wider font-semibold mb-1">
-            Today&apos;s exceptions
-          </p>
-          <div className="flex flex-wrap gap-1.5">
+        <div className="shrink-0 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] text-amber-600 uppercase tracking-wider font-semibold">
+              Today
+            </span>
             {exceptions.map((o) => (
               <span
                 key={o._id}
@@ -129,9 +127,9 @@ export default function GroupsPage() {
         </div>
       )}
 
-      {/* View toggle: Week / Day on the left, Revenue tucked right so it
-          reads as a different mode (analysis, not scheduling). */}
-      <div className="flex items-center justify-between gap-2 mb-4">
+      {/* View toggle is the sole header chrome now — tap an empty slot in
+          Week view to create a group, so the old "+ New" button is gone. */}
+      <div className="shrink-0 flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-1 p-1 bg-muted rounded-xl w-fit">
           <button
             onClick={() => setView('week')}
@@ -165,47 +163,53 @@ export default function GroupsPage() {
         </button>
       </div>
 
-      {/* While the grid loads, hold the layout with a skeleton so we never
-          flash the "No groups" empty state before data arrives. Revenue tab
-          owns its own loading skeleton. */}
-      {view !== 'revenue' && loading && (
-        <div className="animate-pulse space-y-1">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
-              <div className="h-12 rounded-md bg-muted/40" />
-              {[...Array(7)].map((_, j) => <div key={j} className="h-12 rounded-md bg-muted/30" />)}
+      {/* Body fills the remaining height; each view manages its own scroll. */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {view !== 'revenue' && loading && (
+          <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
+                <div className="h-9 rounded-md bg-muted/40" />
+                {[...Array(7)].map((_, j) => <div key={j} className="h-9 rounded-md bg-muted/30" />)}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {view !== 'revenue' && !loading && !hasGroups && (
+          <div className="flex-1 min-h-0 flex items-center justify-center">
+            <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
+              <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
+              <p className="text-xs text-muted-foreground">Tap any empty slot below to create one.</p>
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        )}
 
-      {view !== 'revenue' && !loading && !hasGroups && (
-        <div className="rounded-xl border border-dashed border-border/60 py-10 text-center">
-          <p className="text-sm text-muted-foreground mb-3">No groups yet.</p>
-          <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={() => handleCreate()}>
-            <Plus className="w-4 h-4" /> Create your first group
-          </Button>
-        </div>
-      )}
+        {!loading && hasGroups && view === 'week' && week && (
+          <WeekGrid
+            cells={week.cells}
+            onOpenGroup={openEditor}
+            onCreateAt={(dayOfWeek, band) => handleCreate({ dayOfWeek, band })}
+          />
+        )}
 
-      {!loading && hasGroups && view === 'week' && week && (
-        <WeekGrid
-          cells={week.cells}
-          onOpenGroup={openEditor}
-          onCreateAt={(dayOfWeek, band) => handleCreate({ dayOfWeek, band })}
-        />
-      )}
+        {!loading && hasGroups && view === 'day' && (
+          <div className="flex-1 min-h-0 overflow-y-auto pb-3">
+            <DayList
+              day={selectedDay}
+              setDay={setSelectedDay}
+              rows={dayData}
+              onOpenGroup={openEditor}
+            />
+          </div>
+        )}
 
-      {!loading && hasGroups && view === 'day' && (
-        <DayList
-          day={selectedDay}
-          setDay={setSelectedDay}
-          rows={dayData}
-          onOpenGroup={openEditor}
-        />
-      )}
-
-      {view === 'revenue' && <RevenueTab />}
+        {view === 'revenue' && (
+          <div className="flex-1 min-h-0 overflow-y-auto pb-3">
+            <RevenueTab />
+          </div>
+        )}
+      </div>
 
       <EditGroupDialog
         groupId={editingGroup}

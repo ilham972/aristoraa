@@ -116,6 +116,7 @@ function EditGroupBody({
   const remove = useMutation(api.groups.remove);
   const addMember = useMutation(api.groups.addMember);
   const removeMember = useMutation(api.groups.removeMember);
+  const setMemberFee = useMutation(api.groups.setMemberFee);
   const toggleSession = useMutation(api.groups.toggleSession);
 
   const [nameInput, setNameInput] = useState(seed?.name ?? '');
@@ -450,9 +451,16 @@ function EditGroupBody({
             return (
               <span
                 key={m._id}
-                className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[11px]"
+                className="inline-flex items-center gap-1 pl-1.5 pr-1 py-0.5 rounded-full text-[11px]"
                 style={{ backgroundColor: color.soft, color: color.text, border: `1px solid ${color.border}` }}
               >
+                <FeeDot
+                  effectiveRate={m.effectiveRate}
+                  hasOverride={m.memberRate !== undefined}
+                  onSet={(rate) =>
+                    setMemberFee({ groupId, studentId: m._id, hourlyRate: rate })
+                  }
+                />
                 {m.name}
                 {offCentre && <AlertTriangle className="w-3 h-3 text-amber-500" />}
                 <button onClick={() => handleRemoveMember(m._id)} className="hover:text-destructive">
@@ -720,6 +728,157 @@ function GradePopover({
               <p className="text-[10px] text-muted-foreground mt-1.5">
                 Pick a primary grade first.
               </p>
+            )}
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
+  );
+}
+
+// ── FeeDot ────────────────────────────────────────────────────────────────
+// Tiny coloured pill on each member chip surfacing the per-group fee at a
+// glance and letting the tutor adjust it with a tap.
+//   • grey  → standard fee (RATE_DEFAULT_LKR = 250)
+//   • green → free seat (rate = 0)
+//   • amber → discounted (any other rate; covers both the common 100/150/200
+//             cases and any custom value)
+// "Has-override" is rendered with a thin ring so the tutor can tell a group
+// override from a student-level rate that happened to match the default.
+
+const FEE_DEFAULT = 250;
+const FEE_PRESETS = [0, 100, 150, 200, 250] as const;
+
+function FeeDot({
+  effectiveRate,
+  hasOverride,
+  onSet,
+}: {
+  effectiveRate: number;
+  hasOverride: boolean;
+  onSet: (rate: number | undefined) => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [customStr, setCustomStr] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const isFree = effectiveRate === 0;
+  const isDiscounted = effectiveRate > 0 && effectiveRate < FEE_DEFAULT;
+  const isCustomHigh = effectiveRate > FEE_DEFAULT;
+  const dotClass = isFree
+    ? 'bg-emerald-500'
+    : isDiscounted
+      ? 'bg-amber-500'
+      : isCustomHigh
+        ? 'bg-sky-500'
+        : 'bg-muted-foreground/40';
+
+  const commit = async (rate: number | undefined) => {
+    setSaving(true);
+    try {
+      await onSet(rate);
+      toast.success(
+        rate === undefined
+          ? 'Fee cleared (uses student default)'
+          : rate === 0
+            ? 'Marked as free'
+            : `Fee set to Rs ${rate}`,
+      );
+      setOpen(false);
+      setCustomStr('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save fee');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const commitCustom = async () => {
+    const n = Number(customStr);
+    if (!Number.isFinite(n) || n < 0) {
+      toast.error('Enter a valid amount');
+      return;
+    }
+    await commit(n);
+  };
+
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <PopoverPrimitive.Trigger
+        onClick={(e) => e.stopPropagation()}
+        title={`Fee: Rs ${effectiveRate}/hr${hasOverride ? ' (group override)' : ''}`}
+        className={cn(
+          'w-2.5 h-2.5 rounded-full transition-transform hover:scale-125',
+          dotClass,
+          hasOverride && 'ring-1 ring-offset-1 ring-offset-transparent ring-current/40',
+        )}
+      />
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Positioner sideOffset={6} className="z-[70]">
+          <PopoverPrimitive.Popup
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 p-2 w-56 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0"
+          >
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+              Hourly fee in this group
+            </div>
+            <div className="grid grid-cols-5 gap-1 mb-2">
+              {FEE_PRESETS.map((p) => {
+                const active = effectiveRate === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    disabled={saving}
+                    onClick={() => commit(p)}
+                    className={cn(
+                      'h-7 rounded text-[10px] border tabular-nums',
+                      active
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'border-input hover:bg-muted',
+                      saving && 'opacity-50 cursor-wait',
+                    )}
+                  >
+                    {p === 0 ? 'Free' : p}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-[10px] text-muted-foreground shrink-0">Rs</span>
+              <Input
+                inputMode="numeric"
+                placeholder="custom"
+                value={customStr}
+                onChange={(e) => setCustomStr(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void commitCustom();
+                  }
+                }}
+                className="h-7 text-xs"
+                disabled={saving}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[10px] px-2"
+                disabled={saving || customStr === ''}
+                onClick={commitCustom}
+              >
+                Set
+              </Button>
+            </div>
+            {hasOverride && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => commit(undefined)}
+                className="w-full text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border/60 rounded h-6"
+              >
+                Clear override (use student default)
+              </button>
             )}
           </PopoverPrimitive.Popup>
         </PopoverPrimitive.Positioner>
