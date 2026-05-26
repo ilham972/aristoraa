@@ -564,15 +564,30 @@ export const create = mutation({
       if (caller) mentorId = caller._id;
     }
 
+    // Default centre = settings.defaultCenterId. Default room = that centre's
+    // own defaultRoomId. Both apply only when the caller didn't pass them.
+    let centerId = args.centerId;
+    let defaultRoomId = args.defaultRoomId;
+    if (centerId === undefined || defaultRoomId === undefined) {
+      const settings = await ctx.db.query("settings").first();
+      if (centerId === undefined && settings?.defaultCenterId) {
+        centerId = settings.defaultCenterId;
+      }
+      if (defaultRoomId === undefined && centerId) {
+        const center = await ctx.db.get(centerId);
+        if (center?.defaultRoomId) defaultRoomId = center.defaultRoomId;
+      }
+    }
+
     const now = Date.now();
     return await ctx.db.insert("groups", {
       name: args.name,
       autoName: args.autoName ?? true,
-      centerId: args.centerId,
+      centerId,
       grade: args.grade,
       additionalGrades: args.additionalGrades,
       mentorId,
-      defaultRoomId: args.defaultRoomId,
+      defaultRoomId,
       type: args.type,
       maxSize: args.maxSize,
       archived: false,

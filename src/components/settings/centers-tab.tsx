@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Pencil, Calendar } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Pencil, Calendar, Star } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,10 +27,13 @@ export function CentersTab() {
 
   const centers = useQuery(api.centers.list);
   const rooms = useQuery(api.rooms.list);
+  const settings = useQuery(api.settings.get);
 
   const addCenterMutation = useMutation(api.centers.add);
   const updateCenterMutation = useMutation(api.centers.update);
   const removeCenterMutation = useMutation(api.centers.remove);
+  const setDefaultRoomMutation = useMutation(api.centers.setDefaultRoom);
+  const setDefaultCenterMutation = useMutation(api.settings.setDefaultCenter);
   const addRoomMutation = useMutation(api.rooms.add);
   const removeRoomMutation = useMutation(api.rooms.remove);
   const setTimetableMutation = useMutation(api.rooms.setTimetable);
@@ -43,6 +47,11 @@ export function CentersTab() {
       </div>
     );
   }
+
+  const defaultCenterId = settings?.defaultCenterId as Id<"centers"> | undefined;
+  const NONE = '__';
+  const centerItemsMap: Record<string, ReactNode> = { [NONE]: 'None' };
+  for (const c of centers) centerItemsMap[c._id] = c.name;
 
   const resetForm = () => {
     setFormName('');
@@ -111,9 +120,39 @@ export function CentersTab() {
         </Card>
       ) : (
         <div className="space-y-2">
+          {centers.length > 1 && (
+            <Card className="border-border/50">
+              <CardContent className="p-3 flex items-center gap-2">
+                <Star className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <Label className="text-xs text-muted-foreground shrink-0">Default centre</Label>
+                <div className="ml-auto min-w-32">
+                  <Select
+                    items={centerItemsMap}
+                    value={defaultCenterId ?? NONE}
+                    onValueChange={async (v) => {
+                      const next = !v || v === NONE ? null : (v as Id<"centers">);
+                      await setDefaultCenterMutation({ centerId: next });
+                      toast.success(next ? 'Default centre updated' : 'Default cleared');
+                    }}
+                  >
+                    <SelectTrigger className="h-7 text-xs w-full" size="sm">
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>None</SelectItem>
+                      {centers.map((c) => (
+                        <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {centers.map((center: typeof centers[0]) => {
             const centerRooms = rooms.filter((r: typeof rooms[0]) => r.centerId === center._id);
             const isExpanded = expandedCenter === center._id;
+            const isDefaultCenter = defaultCenterId === center._id;
             return (
               <Card key={center._id} className="border-border/50">
                 <CardContent className="p-0">
@@ -126,7 +165,12 @@ export function CentersTab() {
                   >
                     {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-foreground text-sm">{center.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-semibold text-foreground text-sm">{center.name}</p>
+                        {isDefaultCenter && (
+                          <Star className="w-3 h-3 text-amber-500 fill-amber-500" aria-label="Default centre" />
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">{center.road}, {center.district}, {center.city}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">{centerRooms.length} room{centerRooms.length !== 1 ? 's' : ''}</p>
                     </div>
@@ -148,11 +192,37 @@ export function CentersTab() {
                           {centerRooms.map((room: typeof centerRooms[0]) => {
                             const tt = (room.moduleTimetable || {}) as Record<string, string>;
                             const isEditingTT = editTimetableRoomId === room._id;
+                            const isDefaultRoom = center.defaultRoomId === room._id;
                             return (
                               <div key={room._id} className="bg-muted rounded-lg overflow-hidden">
                                 <div className="flex items-center justify-between py-2 px-3">
-                                  <span className="text-sm text-foreground">{room.name}</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-sm text-foreground">{room.name}</span>
+                                    {isDefaultRoom && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-semibold">
+                                        default
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="flex gap-1">
+                                    <button
+                                      onClick={async () => {
+                                        await setDefaultRoomMutation({
+                                          centerId: center._id,
+                                          roomId: isDefaultRoom ? null : room._id,
+                                        });
+                                        toast.success(isDefaultRoom ? 'Default room cleared' : 'Default room set');
+                                      }}
+                                      className={cn(
+                                        'w-6 h-6 rounded-lg flex items-center justify-center transition-colors',
+                                        isDefaultRoom
+                                          ? 'text-amber-500 hover:bg-amber-500/10'
+                                          : 'text-muted-foreground hover:bg-amber-500/10 hover:text-amber-500',
+                                      )}
+                                      title={isDefaultRoom ? 'Clear default room' : 'Set as default room'}
+                                    >
+                                      <Star className={cn('w-3.5 h-3.5', isDefaultRoom && 'fill-amber-500')} />
+                                    </button>
                                     <button
                                       onClick={() => setEditTimetableRoomId(isEditingTT ? null : room._id)}
                                       className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"

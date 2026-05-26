@@ -39,6 +39,21 @@ export const update = mutation({
   },
 });
 
+// Per-centre default room. Passing roomId === null clears the default.
+export const setDefaultRoom = mutation({
+  args: {
+    centerId: v.id("centers"),
+    roomId: v.union(v.id("rooms"), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await ctx.db.patch(args.centerId, {
+      defaultRoomId: args.roomId ?? undefined,
+    });
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("centers") },
   handler: async (ctx, args) => {

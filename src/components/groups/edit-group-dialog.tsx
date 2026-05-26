@@ -18,7 +18,7 @@
 //     a single Select. Native <select> was retired now that we're in a Base
 //     UI Dialog (vaul→Dialog removed the pointer-capture portal conflict).
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
@@ -231,6 +231,35 @@ function EditGroupBody({
     return q ? candidates.filter((s) => s.name.toLowerCase().includes(q)) : candidates;
   }, [candidates, studentSearch]);
 
+  // Rooms are filtered to the selected centre. With no centre set the user
+  // sees an empty list + a hint — picking a centre is required before a room
+  // can be chosen.
+  const filteredRooms = useMemo(() => {
+    if (!rooms) return [];
+    if (!group?.centerId) return [];
+    return rooms.filter((r) => r.centerId === group.centerId);
+  }, [rooms, group?.centerId]);
+
+  // items-prop maps for the Select triggers. Base UI Select reads these to
+  // render the selected value's label on the trigger — without them, the
+  // trigger falls back to showing the raw id while the popup is closed
+  // (which is what produced the "mentor id" leak the user saw).
+  const mentorItems = useMemo(() => {
+    const m: Record<string, ReactNode> = { [NONE]: 'None' };
+    for (const t of teachers ?? []) m[t._id] = t.name;
+    return m;
+  }, [teachers]);
+  const centerItems = useMemo(() => {
+    const m: Record<string, ReactNode> = { [NONE]: 'Any' };
+    for (const c of centers ?? []) m[c._id] = c.name;
+    return m;
+  }, [centers]);
+  const roomItems = useMemo(() => {
+    const m: Record<string, ReactNode> = { [NONE]: 'Pick' };
+    for (const r of filteredRooms) m[r._id] = r.name;
+    return m;
+  }, [filteredRooms]);
+
   const triggerClass = 'w-full h-8 px-2 text-xs';
 
   return (
@@ -275,6 +304,7 @@ function EditGroupBody({
         <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Mentor</Label>
           <Select
+            items={mentorItems}
             value={group?.mentorId ?? NONE}
             onValueChange={(v) =>
               group && update({
@@ -318,13 +348,31 @@ function EditGroupBody({
         <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Centre</Label>
           <Select
+            items={centerItems}
             value={group?.centerId ?? NONE}
-            onValueChange={(v) =>
-              group && update({
+            onValueChange={(v) => {
+              if (!group) return;
+              const nextCenter = v && v !== NONE ? (v as Id<'centers'>) : undefined;
+              // If the room belongs to a different centre, fall back to the
+              // new centre's defaultRoomId (or clear). Avoids the user seeing
+              // a room from another centre after switching.
+              let nextRoom = group.defaultRoomId;
+              if (nextRoom) {
+                const currentRoom = (rooms ?? []).find((r) => r._id === nextRoom);
+                if (!currentRoom || currentRoom.centerId !== nextCenter) {
+                  const newCenter = (centers ?? []).find((c) => c._id === nextCenter);
+                  nextRoom = newCenter?.defaultRoomId ?? undefined;
+                }
+              } else if (nextCenter) {
+                const newCenter = (centers ?? []).find((c) => c._id === nextCenter);
+                if (newCenter?.defaultRoomId) nextRoom = newCenter.defaultRoomId;
+              }
+              update({
                 id: group._id,
-                centerId: (v && v !== NONE ? (v as Id<'centers'>) : undefined),
-              })
-            }
+                centerId: nextCenter,
+                defaultRoomId: nextRoom,
+              });
+            }}
             disabled={!groupReady || !refsReady}
           >
             <SelectTrigger className={triggerClass} size="sm">
@@ -339,10 +387,13 @@ function EditGroupBody({
           </Select>
         </div>
 
-        {/* Room */}
+        {/* Room — filtered to the selected centre. Disabled when no centre
+            picked yet, since a free-floating "all rooms" list mixes rooms
+            from every centre and is rarely what the user wants. */}
         <div className="min-w-0">
           <Label className="text-[10px] text-muted-foreground">Room</Label>
           <Select
+            items={roomItems}
             value={group?.defaultRoomId ?? NONE}
             onValueChange={(v) =>
               group && update({
@@ -350,14 +401,14 @@ function EditGroupBody({
                 defaultRoomId: (v && v !== NONE ? (v as Id<'rooms'>) : undefined),
               })
             }
-            disabled={!groupReady || !refsReady}
+            disabled={!groupReady || !refsReady || !group?.centerId}
           >
             <SelectTrigger className={triggerClass} size="sm">
-              <SelectValue placeholder="Pick" />
+              <SelectValue placeholder={group?.centerId ? 'Pick' : 'Set centre'} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={NONE}>Pick</SelectItem>
-              {(rooms ?? []).map((r) => (
+              {filteredRooms.map((r) => (
                 <SelectItem key={r._id} value={r._id}>{r.name}</SelectItem>
               ))}
             </SelectContent>
@@ -427,8 +478,10 @@ function EditGroupBody({
             <div className="flex items-center gap-1.5 mb-1.5">
               <div className="relative flex-1">
                 <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                {/* No autoFocus: on mobile, popping the keyboard the moment
+                    the picker opens is laggy and unwanted. User taps the
+                    input themselves when they're ready to type. */}
                 <Input
-                  autoFocus
                   placeholder={
                     acceptedGrades.length > 0
                       ? `Search G${acceptedGrades.join('/')} students…`

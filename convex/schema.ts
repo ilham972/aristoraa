@@ -74,6 +74,8 @@ export default defineSchema({
   settings: defineTable({
     tuitionName: v.optional(v.string()),
     allowManualSlotSelection: v.optional(v.boolean()),
+    // Default centre used as the starting value for new groups.
+    defaultCenterId: v.optional(v.id("centers")),
   }),
 
   centers: defineTable({
@@ -81,6 +83,9 @@ export default defineSchema({
     city: v.string(),
     district: v.string(),
     road: v.string(),
+    // Per-centre default room. Used to prefill a new group's room when the
+    // group is created with this centre.
+    defaultRoomId: v.optional(v.id("rooms")),
   }),
 
   rooms: defineTable({

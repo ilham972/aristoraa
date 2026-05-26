@@ -112,7 +112,6 @@ export function TeachersTab() {
                       {teacher.role}
                     </Badge>
                   </div>
-                  <p className="text-[11px] text-muted-foreground truncate">{teacher.clerkUserId}</p>
                 </div>
                 <div className="flex gap-0.5 shrink-0">
                   <Button variant="ghost" size="icon-xs" onClick={() => handleEdit(teacher)}>
