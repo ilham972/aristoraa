@@ -9,7 +9,16 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { toast } from 'sonner';
-import { BarChart3, CalendarDays, LayoutGrid, UserMinus, UserPlus } from 'lucide-react';
+import {
+  BarChart3,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  LayoutGrid,
+  UserMinus,
+  UserPlus,
+  XCircle,
+} from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
@@ -17,26 +26,53 @@ import {
   DAYS,
   fmtLKR,
   fmtTime12,
-  todayDayNum,
-  type DayNum,
   type HourBand,
 } from '@/lib/groups/time-grid';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { RevenueTab } from '@/components/groups/revenue-tab';
+import { SessionDialog } from '@/components/groups/session-dialog';
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function todayYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return ymd(new Date());
+}
+
+// Monday of the week containing `dateYmd`. dayOfWeek uses 1=Mon..7=Sun
+// throughout this app, so we shift JS getDay()=0..6 accordingly.
+function mondayOf(dateYmd: string): string {
+  const d = new Date(dateYmd + 'T00:00:00');
+  const js = d.getDay();
+  const offset = js === 0 ? -6 : 1 - js; // Sun → −6, Mon → 0, Tue → −1 …
+  d.setDate(d.getDate() + offset);
+  return ymd(d);
+}
+
+function addDays(dateYmd: string, n: number): string {
+  const d = new Date(dateYmd + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return ymd(d);
 }
 
 export default function GroupsPage() {
   const [view, setView] = useState<'week' | 'day' | 'revenue'>('week');
-  const [selectedDay, setSelectedDay] = useState<DayNum>(todayDayNum());
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // Day view is date-aware (the only date-aware surface in /groups). The
+  // Week-grid view stays purely a standard timetable as the user asked.
+  // selectedDate defaults to today; weekStartYmd is always the Monday of
+  // the selectedDate's week so the pill row scrolls with it.
   const today = todayYmd();
+  const [selectedDate, setSelectedDate] = useState<string>(today);
+  const weekStartYmd = mondayOf(selectedDate);
+
+  // Session-dialog state — page-level so it stays open across query refetches.
+  const [sessionDlg, setSessionDlg] = useState<{ slotId: Id<'scheduleSlots'>; date: string } | null>(null);
+
   const week = useQuery(api.groups.weekGrid);
   const rooms = useQuery(api.rooms.list);
   // Prefetch the dialog's reference lists at the page level so they're
@@ -46,17 +82,9 @@ export default function GroupsPage() {
   // client.
   useQuery(api.teachers.list);
   useQuery(api.centers.list);
-  const dayData = useQuery(
-    api.groups.dayView,
-    view === 'day'
-      ? {
-          dayOfWeek: selectedDay,
-          // Only apply date-keyed overrides when the selected pill is actually
-          // today — overrides are keyed to specific dates, so mixing today's
-          // date with another weekday's slots would silently drop them.
-          date: selectedDay === todayDayNum() ? today : undefined,
-        }
-      : 'skip',
+  const weekSessions = useQuery(
+    api.sessionRecords.weekSessions,
+    view === 'day' ? { weekStartDate: weekStartYmd } : 'skip',
   );
   const exceptions = useQuery(api.groups.overridesForDate, { date: today });
 
@@ -194,19 +222,19 @@ export default function GroupsPage() {
         )}
 
         {!loading && hasGroups && view === 'day' && (
-          <div className="flex-1 min-h-0 overflow-y-auto pb-3">
-            <DayList
-              day={selectedDay}
-              setDay={setSelectedDay}
-              rows={dayData}
-              onOpenGroup={openEditor}
-            />
-          </div>
+          <DayList
+            weekStartYmd={weekStartYmd}
+            selectedDate={selectedDate}
+            setSelectedDate={setSelectedDate}
+            shiftWeek={(deltaDays) => setSelectedDate((d) => addDays(d, deltaDays))}
+            data={weekSessions}
+            onOpenSession={(slotId, date) => setSessionDlg({ slotId, date })}
+          />
         )}
 
         {view === 'revenue' && (
           <div className="flex-1 min-h-0 overflow-y-auto pb-3">
-            <RevenueTab />
+            <RevenueTab onOpenGroup={openEditor} />
           </div>
         )}
       </div>
@@ -221,6 +249,13 @@ export default function GroupsPage() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
       />
+
+      <SessionDialog
+        slotId={sessionDlg?.slotId ?? null}
+        date={sessionDlg?.date ?? null}
+        open={sessionDlg !== null}
+        onClose={() => setSessionDlg(null)}
+      />
     </div>
   );
 }
@@ -230,78 +265,334 @@ function ExceptionStudent({ studentId }: { studentId: Id<'students'> }) {
   return <>{s?.name ?? '…'}</>;
 }
 
-type DayRow = {
-  slot: { _id: Id<'scheduleSlots'>; startTime: string; endTime: string };
-  group: { _id: Id<'groups'>; name: string };
-  members: Array<{ _id: Id<'students'>; name: string }>;
-  effectiveCount: number;
-  revenue: number;
+// ── DayList ───────────────────────────────────────────────────────────────
+// Date-aware Day view. The pill row shows the seven dates of the current
+// week and the body shows the session cards for `selectedDate`. Ring
+// colours signal "needs entry" vs "logged" vs "tutor cancelled" — derived
+// from the sessionLogs table plus the current wall clock.
+//
+// Week navigation: prev/next arrows shift by 7 days, the same day-of-week
+// stays selected so the tutor can flip between weeks comparing the same
+// slot. A "Today" jump-back appears when the user has navigated away.
+
+type SessionEntry = {
+  slotId: Id<'scheduleSlots'>;
+  groupId: Id<'groups'>;
+  groupName: string;
+  date: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  hours: number;
+  logStatus: 'unlogged' | 'held' | 'cancelled';
+  rosterCount: number;
+  presentCount: number;
+  absentCount: number;
+  expected: number;
+  collected: number;
+  credit: number;
 };
 
+function ymdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Has the session's start time already passed for that date in local time?
+// Drives the red ring on cards: a future session is allowed to be unlogged.
+function isSessionPast(date: string, startTime: string, now: Date): boolean {
+  const [h, m] = startTime.split(':').map(Number);
+  const sessionStart = new Date(date + 'T00:00:00');
+  sessionStart.setHours(h, m, 0, 0);
+  return now > sessionStart;
+}
+
 function DayList({
-  day,
-  setDay,
-  rows,
-  onOpenGroup,
+  weekStartYmd,
+  selectedDate,
+  setSelectedDate,
+  shiftWeek,
+  data,
+  onOpenSession,
 }: {
-  day: DayNum;
-  setDay: (d: DayNum) => void;
-  rows: DayRow[] | undefined;
-  onOpenGroup: (id: Id<'groups'>) => void;
+  weekStartYmd: string;
+  selectedDate: string;
+  setSelectedDate: (d: string) => void;
+  shiftWeek: (deltaDays: number) => void;
+  data: { sessions: SessionEntry[]; perStudentWeek: Array<{ studentId: Id<'students'>; name: string; expected: number; collected: number; credit: number }> } | undefined;
+  onOpenSession: (slotId: Id<'scheduleSlots'>, date: string) => void;
 }) {
-  const dayTotal = useMemo(
-    () => (rows ?? []).reduce((s, r) => s + r.revenue, 0),
-    [rows],
-  );
+  const now = new Date();
+  const todayStr = ymdLocal(now);
+
+  // Seven dates of the visible week — Mon..Sun, paired with their dow label.
+  const weekDates = useMemo(() => {
+    const out: Array<{ date: string; dow: number; label: string; dayNum: number }> = [];
+    const start = new Date(weekStartYmd + 'T00:00:00');
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      const js = d.getDay();
+      const appDow = js === 0 ? 7 : js;
+      const label = DAYS.find((x) => x.num === appDow)?.short ?? '';
+      out.push({ date: ymdLocal(d), dow: appDow, label, dayNum: d.getDate() });
+    }
+    return out;
+  }, [weekStartYmd]);
+
+  // Sessions for the selected date, sorted by start time.
+  const todaysSessions = useMemo(() => {
+    const list = (data?.sessions ?? []).filter((s) => s.date === selectedDate);
+    return list.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  }, [data, selectedDate]);
+
+  // Does any day in the visible week have a past-time unlogged session?
+  // Used to red-ring the day pill itself.
+  const dayHasMissing = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of data?.sessions ?? []) {
+      if (s.logStatus === 'unlogged' && isSessionPast(s.date, s.startTime, now)) {
+        set.add(s.date);
+      }
+    }
+    return set;
+    // now is recreated every render — that's fine, we don't need millisecond
+    // precision on the ring state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const dayTotalExpected = todaysSessions.reduce((s, r) => s + r.expected, 0);
+  const dayTotalCollected = todaysSessions.reduce((s, r) => s + r.collected, 0);
+  const dayTotalCredit = todaysSessions.reduce((s, r) => s + r.credit, 0);
+
+  const weekRangeLabel = useMemo(() => {
+    const start = new Date(weekStartYmd + 'T00:00:00');
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    const sameMonth = start.getMonth() === end.getMonth();
+    const startStr = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const endStr = end.toLocaleDateString(undefined, sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' });
+    return `${startStr} – ${endStr}`;
+  }, [weekStartYmd]);
+
+  const offToday = selectedDate !== todayStr;
 
   return (
-    <div>
-      <div className="flex gap-1.5 mb-3 overflow-x-auto">
-        {DAYS.map((d) => (
-          <button
-            key={d.num}
-            onClick={() => setDay(d.num)}
-            className={cn(
-              'px-3 py-1.5 rounded-lg text-sm font-medium transition-all shrink-0',
-              day === d.num ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
-            )}
-          >
-            {d.short}
-          </button>
-        ))}
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* Week navigation */}
+      <div className="shrink-0 flex items-center justify-between gap-2 mb-2">
+        <button
+          onClick={() => shiftWeek(-7)}
+          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+          aria-label="Previous week"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-foreground tabular-nums">
+            {weekRangeLabel}
+          </span>
+          {offToday && (
+            <button
+              onClick={() => setSelectedDate(todayStr)}
+              className="text-[10px] font-semibold text-primary hover:underline"
+            >
+              Today
+            </button>
+          )}
+        </div>
+        <button
+          onClick={() => shiftWeek(7)}
+          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+          aria-label="Next week"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
       </div>
 
-      {rows && rows.length > 0 && (
-        <p className="text-xs text-muted-foreground mb-2">
-          {rows.length} session{rows.length !== 1 ? 's' : ''} · {fmtLKR(dayTotal)}
-        </p>
-      )}
-
-      <div className="space-y-2">
-        {rows?.map((r) => {
-          const color = groupColor(r.group._id);
+      {/* Date pills */}
+      <div className="shrink-0 flex gap-1 mb-3 overflow-x-auto">
+        {weekDates.map(({ date, label, dayNum }) => {
+          const isSelected = date === selectedDate;
+          const isToday = date === todayStr;
+          const missing = dayHasMissing.has(date);
           return (
             <button
-              key={r.slot._id}
-              onClick={() => onOpenGroup(r.group._id)}
-              className="w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors hover:bg-muted/40"
-              style={{ borderColor: color.border }}
+              key={date}
+              onClick={() => setSelectedDate(date)}
+              className={cn(
+                'shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex flex-col items-center gap-0 leading-tight border-2',
+                isSelected
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-muted text-muted-foreground border-transparent',
+                missing && !isSelected && 'border-destructive/60',
+                isToday && !isSelected && !missing && 'border-primary/40',
+              )}
             >
-              <span className="w-1.5 h-10 rounded-full shrink-0" style={{ backgroundColor: color.solid }} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground truncate">{r.group.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {fmtTime12(r.slot.startTime)} – {fmtTime12(r.slot.endTime)} · {r.effectiveCount} present
-                </p>
-              </div>
-              <span className="text-xs font-semibold text-foreground shrink-0">{fmtLKR(r.revenue)}</span>
+              <span className="text-[10px] opacity-80">{label}</span>
+              <span className="text-sm font-bold tabular-nums">{dayNum}</span>
             </button>
           );
         })}
-        {rows && rows.length === 0 && (
+      </div>
+
+      {/* Day totals */}
+      {todaysSessions.length > 0 && (
+        <div className="shrink-0 grid grid-cols-3 gap-1.5 mb-2 text-[10px]">
+          <div className="rounded-md bg-muted px-2 py-1">
+            <p className="text-muted-foreground uppercase tracking-wider">Expected</p>
+            <p className="font-bold text-foreground tabular-nums">{fmtLKR(dayTotalExpected)}</p>
+          </div>
+          <div className="rounded-md bg-muted px-2 py-1">
+            <p className="text-muted-foreground uppercase tracking-wider">Collected</p>
+            <p className="font-bold text-foreground tabular-nums">{fmtLKR(dayTotalCollected)}</p>
+          </div>
+          <div
+            className={cn(
+              'rounded-md px-2 py-1',
+              dayTotalCredit > 0 ? 'bg-amber-500/10' : 'bg-muted',
+            )}
+          >
+            <p className={cn(
+              'uppercase tracking-wider',
+              dayTotalCredit > 0 ? 'text-amber-600' : 'text-muted-foreground',
+            )}>Credit</p>
+            <p className={cn(
+              'font-bold tabular-nums',
+              dayTotalCredit > 0 ? 'text-amber-600' : 'text-foreground',
+            )}>{fmtLKR(dayTotalCredit)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Session cards (scrollable within the day-list region) */}
+      <div className="flex-1 min-h-0 overflow-y-auto pb-2">
+        {data === undefined ? (
+          <div className="space-y-2 animate-pulse">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-16 rounded-xl bg-muted/30" />
+            ))}
+          </div>
+        ) : todaysSessions.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-6">No sessions this day.</p>
+        ) : (
+          <div className="space-y-2">
+            {todaysSessions.map((s) => (
+              <SessionCard
+                key={s.slotId}
+                session={s}
+                isPastNow={isSessionPast(s.date, s.startTime, now)}
+                onOpen={() => onOpenSession(s.slotId, s.date)}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>
+  );
+}
+
+function SessionCard({
+  session,
+  isPastNow,
+  onOpen,
+}: {
+  session: SessionEntry;
+  isPastNow: boolean;
+  onOpen: () => void;
+}) {
+  const color = groupColor(session.groupId);
+
+  // Ring state: cancelled = grey, held = green, unlogged + past = red,
+  // unlogged + future = none (no urgency yet).
+  let ringClass = '';
+  let badge: { label: string; tone: 'green' | 'red' | 'grey' | 'none' } = { label: '', tone: 'none' };
+  if (session.logStatus === 'cancelled') {
+    ringClass = 'ring-2 ring-muted-foreground/30';
+    badge = { label: 'Cancelled', tone: 'grey' };
+  } else if (session.logStatus === 'held') {
+    ringClass = 'ring-2 ring-emerald-500/60';
+    badge = { label: 'Logged', tone: 'green' };
+  } else if (isPastNow) {
+    ringClass = 'ring-2 ring-destructive/70';
+    badge = { label: 'Needs entry', tone: 'red' };
+  }
+
+  const isCancelled = session.logStatus === 'cancelled';
+
+  return (
+    <button
+      onClick={onOpen}
+      className={cn(
+        'w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-transform active:scale-[0.99] hover:bg-muted/30',
+        ringClass,
+        isCancelled && 'opacity-70',
+      )}
+      style={{ borderColor: color.border }}
+    >
+      <span
+        className="w-1.5 h-10 rounded-full shrink-0"
+        style={{ backgroundColor: color.solid }}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <p
+            className={cn(
+              'text-sm font-semibold text-foreground truncate',
+              isCancelled && 'line-through',
+            )}
+          >
+            {session.groupName}
+          </p>
+          {badge.tone !== 'none' && (
+            <span
+              className={cn(
+                'shrink-0 inline-flex items-center gap-0.5 px-1.5 py-px rounded text-[9px] font-bold uppercase tracking-wide',
+                badge.tone === 'green' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+                badge.tone === 'red' && 'bg-destructive/15 text-destructive',
+                badge.tone === 'grey' && 'bg-muted-foreground/15 text-muted-foreground',
+              )}
+            >
+              {badge.tone === 'grey' && <XCircle className="w-2.5 h-2.5" />}
+              {badge.label}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {fmtTime12(session.startTime)} – {fmtTime12(session.endTime)}
+          {session.logStatus === 'held' && (
+            <>
+              {' · '}
+              {session.presentCount}/{session.rosterCount} present
+            </>
+          )}
+          {session.logStatus === 'unlogged' && (
+            <>
+              {' · '}
+              {session.rosterCount} expected
+            </>
+          )}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        {session.logStatus === 'cancelled' ? (
+          <span className="text-[10px] text-muted-foreground">—</span>
+        ) : session.logStatus === 'held' ? (
+          <>
+            <p className="text-xs font-bold text-foreground tabular-nums">
+              {fmtLKR(session.collected)}
+            </p>
+            {session.credit > 0 && (
+              <p className="text-[10px] text-amber-600 tabular-nums">
+                + {fmtLKR(session.credit)} credit
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-xs font-semibold text-muted-foreground tabular-nums">
+            {fmtLKR(session.expected)}
+          </p>
+        )}
+      </div>
+    </button>
   );
 }

@@ -222,6 +222,42 @@ export default defineSchema({
     .index("by_slot_date", ["slotId", "date"])
     .index("by_teacher", ["teacherId"]),
 
+  // ─── Phase F: per-occurrence session log ────────────────────────────────
+  // A row appears here the moment the tutor saves the Day-view SessionDialog
+  // for a (slotId, date). Its mere existence means "this session has been
+  // logged" — the Day view uses this to switch a card from a red 'missing
+  // entry' ring to a green 'logged' one. status='cancelled_by_tutor' marks
+  // sessions the tutor called off (poya / fever / travel) for that one date
+  // only; no attendance or payment is expected.
+  sessionLogs: defineTable({
+    slotId: v.id("scheduleSlots"),
+    date: v.string(),
+    status: v.string(), // "held" | "cancelled_by_tutor"
+    note: v.optional(v.string()),
+    loggedByTeacherId: v.optional(v.id("teachers")),
+    loggedAt: v.number(),
+  })
+    .index("by_slot_date", ["slotId", "date"])
+    .index("by_date", ["date"]),
+
+  // ─── Phase F: cash collected for a specific session occurrence ──────────
+  // One row per cash hand-off. Multiple rows for the same (slot, date,
+  // student) are allowed — a student might pay 100 mid-class and 150 later;
+  // both are recorded. Credit for a session = expected − Σ amount; positive
+  // value means the student still owes. amount=0 is permitted as a
+  // 'recorded zero' (use the note field if you want a reason).
+  sessionPayments: defineTable({
+    slotId: v.id("scheduleSlots"),
+    date: v.string(),
+    studentId: v.id("students"),
+    amount: v.number(),
+    paidAt: v.number(),
+    note: v.optional(v.string()),
+  })
+    .index("by_slot_date", ["slotId", "date"])
+    .index("by_slot_date_student", ["slotId", "date", "studentId"])
+    .index("by_student_date", ["studentId", "date"]),
+
   textbooks: defineTable({
     grade: v.number(),
     part: v.number(),

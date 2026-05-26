@@ -22,7 +22,13 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export function RevenueTab() {
+export function RevenueTab({
+  onOpenGroup,
+}: {
+  // Same callback the slot grid uses, threaded through the page so closing
+  // the Edit-Group dialog returns the user here (state stays 'revenue').
+  onOpenGroup?: (groupId: Id<'groups'>) => void;
+}) {
   const [range, setRange] = useState<Range>(30);
   const insights = useQuery(api.groups.revenueInsights, { days: range });
   const todayActual = useQuery(api.groups.dayRevenue, { date: todayYmd() });
@@ -127,7 +133,11 @@ export function RevenueTab() {
           </span>
         }
       >
-        <PerGroupList rows={insights.forecast.perGroup} weekTotal={insights.forecast.week} />
+        <PerGroupList
+          rows={insights.forecast.perGroup}
+          weekTotal={insights.forecast.week}
+          onOpenGroup={onOpenGroup}
+        />
       </Card>
 
       {/* ── Mentor / Centre / Grade breakdowns ────────────────────────── */}
@@ -357,6 +367,7 @@ function PerDayBars({ perDay }: { perDay: Array<{ dayOfWeek: number; revenue: nu
 function PerGroupList({
   rows,
   weekTotal,
+  onOpenGroup,
 }: {
   rows: Array<{
     groupId: Id<'groups'>;
@@ -367,6 +378,7 @@ function PerGroupList({
     weekRevenue: number;
   }>;
   weekTotal: number;
+  onOpenGroup?: (groupId: Id<'groups'>) => void;
 }) {
   const max = Math.max(1, rows[0]?.weekRevenue ?? 1);
 
@@ -381,9 +393,12 @@ function PerGroupList({
         const pct = (r.weekRevenue / max) * 100;
         const share = weekTotal > 0 ? (r.weekRevenue / weekTotal) * 100 : 0;
         return (
-          <div
+          <button
             key={r.groupId}
-            className="relative rounded-lg border border-border/60 p-2.5 overflow-hidden"
+            type="button"
+            onClick={() => onOpenGroup?.(r.groupId)}
+            disabled={!onOpenGroup}
+            className="relative w-full text-left rounded-lg border border-border/60 p-2.5 overflow-hidden transition-transform enabled:hover:bg-muted/30 enabled:active:scale-[0.99] disabled:cursor-default"
             style={{ borderColor: color.border }}
           >
             <div
@@ -410,7 +425,7 @@ function PerGroupList({
                 </p>
               </div>
             </div>
-          </div>
+          </button>
         );
       })}
     </div>

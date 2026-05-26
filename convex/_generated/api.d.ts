@@ -46,6 +46,7 @@ import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
 import type * as seeds_paperStructures from "../seeds/paperStructures.js";
 import type * as seeds_topicTags from "../seeds/topicTags.js";
+import type * as sessionRecords from "../sessionRecords.js";
 import type * as sessionSubmissions from "../sessionSubmissions.js";
 import type * as settings from "../settings.js";
 import type * as slotTeachers from "../slotTeachers.js";
@@ -103,6 +104,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   "seeds/paperStructures": typeof seeds_paperStructures;
   "seeds/topicTags": typeof seeds_topicTags;
+  sessionRecords: typeof sessionRecords;
   sessionSubmissions: typeof sessionSubmissions;
   settings: typeof settings;
   slotTeachers: typeof slotTeachers;
