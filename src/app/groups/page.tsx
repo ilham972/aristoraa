@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { toast } from 'sonner';
-import { CalendarDays, LayoutGrid, Plus, UserMinus, UserPlus } from 'lucide-react';
+import { BarChart3, CalendarDays, LayoutGrid, Plus, UserMinus, UserPlus } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
@@ -24,6 +24,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
+import { RevenueTab } from '@/components/groups/revenue-tab';
 
 function todayYmd(): string {
   const d = new Date();
@@ -31,7 +32,7 @@ function todayYmd(): string {
 }
 
 export default function GroupsPage() {
-  const [view, setView] = useState<'week' | 'day'>('week');
+  const [view, setView] = useState<'week' | 'day' | 'revenue'>('week');
   const [selectedDay, setSelectedDay] = useState<DayNum>(todayDayNum());
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -89,20 +90,14 @@ export default function GroupsPage() {
     if (!onlyRoom) toast('Pick a default room, then add sessions');
   };
 
-  // Revenue is derived from the grid cells already loaded — no extra queries,
-  // so the page paints in one pass. Today/week are forecasts (standard
-  // roster); date-specific absences show in the exceptions strip below.
+  // Page-level loading mirrors the week-grid availability; the Revenue tab
+  // owns its own loading via api.groups.revenueInsights so the toggle stays
+  // responsive when the user lands on Revenue first.
   const loading = week === undefined;
   const hasGroups = (week?.groups.length ?? 0) > 0;
-  const todayNum = todayDayNum();
-  const weekForecast = (week?.cells ?? []).reduce((s, c) => s + c.revenue, 0);
-  const todayForecast = (week?.cells ?? [])
-    .filter((c) => c.dayOfWeek === todayNum)
-    .reduce((s, c) => s + c.revenue, 0);
 
   return (
     <div className="px-4 pt-5 pb-24 max-w-3xl mx-auto">
-      {/* Header + revenue */}
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-foreground">Groups</h1>
         <Button size="sm" className="rounded-xl gap-1.5 h-8" onClick={() => handleCreate()}>
@@ -110,23 +105,8 @@ export default function GroupsPage() {
         </Button>
       </div>
 
-      <div className="flex gap-2 mb-4">
-        <div className="flex-1 rounded-xl bg-card border border-border/60 px-3 py-2">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Today</p>
-          <p className="text-base font-bold text-foreground">
-            {loading ? '—' : fmtLKR(todayForecast)}
-          </p>
-        </div>
-        <div className="flex-1 rounded-xl bg-card border border-border/60 px-3 py-2">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Week forecast</p>
-          <p className="text-base font-bold text-foreground">
-            {loading ? '—' : fmtLKR(weekForecast)}
-          </p>
-        </div>
-      </div>
-
       {/* Today's exceptions */}
-      {exceptions && exceptions.length > 0 && (
+      {view !== 'revenue' && exceptions && exceptions.length > 0 && (
         <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 mb-4">
           <p className="text-[10px] text-amber-600 uppercase tracking-wider font-semibold mb-1">
             Today&apos;s exceptions
@@ -149,31 +129,46 @@ export default function GroupsPage() {
         </div>
       )}
 
-      {/* View toggle */}
-      <div className="flex items-center gap-1 p-1 bg-muted rounded-xl mb-4 w-fit">
+      {/* View toggle: Week / Day on the left, Revenue tucked right so it
+          reads as a different mode (analysis, not scheduling). */}
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-xl w-fit">
+          <button
+            onClick={() => setView('week')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'week' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" /> Week
+          </button>
+          <button
+            onClick={() => setView('day')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'day' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            <CalendarDays className="w-3.5 h-3.5" /> Day
+          </button>
+        </div>
         <button
-          onClick={() => setView('week')}
+          onClick={() => setView('revenue')}
           className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-            view === 'week' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all border',
+            view === 'revenue'
+              ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+              : 'bg-muted text-muted-foreground border-transparent',
           )}
         >
-          <LayoutGrid className="w-3.5 h-3.5" /> Week
-        </button>
-        <button
-          onClick={() => setView('day')}
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-            view === 'day' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
-          )}
-        >
-          <CalendarDays className="w-3.5 h-3.5" /> Day
+          <BarChart3 className="w-3.5 h-3.5" /> Revenue
         </button>
       </div>
 
       {/* While the grid loads, hold the layout with a skeleton so we never
-          flash the "No groups" empty state before data arrives. */}
-      {loading && (
+          flash the "No groups" empty state before data arrives. Revenue tab
+          owns its own loading skeleton. */}
+      {view !== 'revenue' && loading && (
         <div className="animate-pulse space-y-1">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -184,7 +179,7 @@ export default function GroupsPage() {
         </div>
       )}
 
-      {!loading && !hasGroups && (
+      {view !== 'revenue' && !loading && !hasGroups && (
         <div className="rounded-xl border border-dashed border-border/60 py-10 text-center">
           <p className="text-sm text-muted-foreground mb-3">No groups yet.</p>
           <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={() => handleCreate()}>
@@ -209,6 +204,8 @@ export default function GroupsPage() {
           onOpenGroup={openEditor}
         />
       )}
+
+      {view === 'revenue' && <RevenueTab />}
 
       <EditGroupDialog
         groupId={editingGroup}

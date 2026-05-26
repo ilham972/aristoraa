@@ -910,3 +910,219 @@ export const overridesForDate = query({
     return all.filter((o) => o.date === args.date);
   },
 });
+
+// ── Revenue insights ─────────────────────────────────────────────────────
+//
+// One-shot snapshot powering the /groups → Revenue tab. Returns:
+//   • standard-week forecast (rate × hours, current roster, no overrides)
+//   • per-group / per-day / per-mentor / per-centre / per-grade forecasts
+//   • last-N-days realized revenue using the attendance table
+//       realized = Σ (hourlyRate × hours) over students with status="present"
+//
+// One query so the tab paints in one pass. All revenue is LKR; falls back to
+// RATE_DEFAULT_LKR when a student has no explicit hourlyRate.
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export const revenueInsights = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        forecast: { week: 0, perDay: [], perGroup: [], perMentor: [], perCenter: [], perGrade: [] },
+        actual: { days: 0, total: 0, perDay: [] },
+        meta: { totalSessions: 0, totalHoursPerWeek: 0, activeStudents: 0 },
+      };
+    }
+
+    const days = Math.min(Math.max(args.days ?? 30, 1), 90);
+
+    // ── reference data ──────────────────────────────────────────────────
+    const [groups, centers, teachers, allMembers, allSlots] = await Promise.all([
+      ctx.db.query("groups").collect(),
+      ctx.db.query("centers").collect(),
+      ctx.db.query("teachers").collect(),
+      ctx.db.query("groupMembers").collect(),
+      ctx.db.query("scheduleSlots").collect(),
+    ]);
+
+    const groupById = new Map(groups.map((g) => [g._id, g]));
+    const centerName = new Map(centers.map((c) => [c._id, c.name]));
+    const teacherName = new Map(teachers.map((t) => [t._id, t.name]));
+
+    // Build per-group: members + their hourlyRate sum (per-hour fee).
+    const membersByGroup = new Map<string, { studentId: Id<"students">; rate: number }[]>();
+    const studentIds = new Set<Id<"students">>();
+    for (const m of allMembers) {
+      studentIds.add(m.studentId);
+      const list = membersByGroup.get(m.groupId) ?? [];
+      list.push({ studentId: m.studentId, rate: RATE_DEFAULT_LKR });
+      membersByGroup.set(m.groupId, list);
+    }
+    // Resolve student rates in one batch. Array.from over the Set to avoid
+    // tripping convex tsconfig's downlevelIteration check.
+    const studentList = await Promise.all(
+      Array.from(studentIds).map((id) => ctx.db.get(id)),
+    );
+    const rateById = new Map<string, number>();
+    for (const s of studentList) {
+      if (s) rateById.set(s._id, s.hourlyRate ?? RATE_DEFAULT_LKR);
+    }
+    for (const list of Array.from(membersByGroup.values())) {
+      for (const m of list) m.rate = rateById.get(m.studentId) ?? RATE_DEFAULT_LKR;
+    }
+
+    // Slots keyed by group (active groups only); also keep a flat list of
+    // owned-slot rows for the per-day forecast loop.
+    const ownedSlots = allSlots.filter((s) => {
+      if (!s.groupId) return false;
+      const g = groupById.get(s.groupId);
+      return !!g && !g.archived;
+    });
+
+    // ── Forecast aggregates ─────────────────────────────────────────────
+    type GroupRow = { groupId: Id<"groups">; name: string; members: number; sessions: number; hoursPerWeek: number; weekRevenue: number };
+    const perGroup = new Map<string, GroupRow>();
+    const perDay = new Array(8).fill(0) as number[]; // index 1..7; 0 unused
+    const perMentor = new Map<string, { mentorId: Id<"teachers"> | null; name: string; weekRevenue: number }>();
+    const perCenter = new Map<string, { centerId: Id<"centers"> | null; name: string; weekRevenue: number }>();
+    const perGrade = new Map<string, { grade: number | null; weekRevenue: number }>();
+
+    let totalHoursPerWeek = 0;
+    let weekTotal = 0;
+
+    for (const slot of ownedSlots) {
+      const groupId = slot.groupId!;
+      const g = groupById.get(groupId)!;
+      const list = membersByGroup.get(groupId) ?? [];
+      const ratePerHour = list.reduce((s, m) => s + m.rate, 0);
+      const hours = hoursBetween(slot.startTime, slot.endTime);
+      const rev = ratePerHour * hours;
+
+      weekTotal += rev;
+      totalHoursPerWeek += hours;
+      perDay[slot.dayOfWeek] = (perDay[slot.dayOfWeek] ?? 0) + rev;
+
+      const gRow = perGroup.get(groupId) ?? {
+        groupId,
+        name: g.name,
+        members: list.length,
+        sessions: 0,
+        hoursPerWeek: 0,
+        weekRevenue: 0,
+      };
+      gRow.sessions += 1;
+      gRow.hoursPerWeek += hours;
+      gRow.weekRevenue += rev;
+      perGroup.set(groupId, gRow);
+
+      const mKey = g.mentorId ? String(g.mentorId) : "_none";
+      const mRow = perMentor.get(mKey) ?? {
+        mentorId: g.mentorId ?? null,
+        name: g.mentorId ? teacherName.get(g.mentorId) ?? "?" : "Unassigned",
+        weekRevenue: 0,
+      };
+      mRow.weekRevenue += rev;
+      perMentor.set(mKey, mRow);
+
+      const cKey = g.centerId ? String(g.centerId) : "_none";
+      const cRow = perCenter.get(cKey) ?? {
+        centerId: g.centerId ?? null,
+        name: g.centerId ? centerName.get(g.centerId) ?? "?" : "Unassigned",
+        weekRevenue: 0,
+      };
+      cRow.weekRevenue += rev;
+      perCenter.set(cKey, cRow);
+
+      const gradeKey = g.grade != null ? String(g.grade) : "_none";
+      const grRow = perGrade.get(gradeKey) ?? { grade: g.grade ?? null, weekRevenue: 0 };
+      grRow.weekRevenue += rev;
+      perGrade.set(gradeKey, grRow);
+    }
+
+    // ── Actual realized revenue from attendance (last `days` days) ──────
+    // Strategy: collect attendance with status="present" since cutoff, look
+    // up slot once, multiply hourlyRate × hours. Skips orphan / non-group
+    // slots automatically (revenue concept only applies to group slots).
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() - (days - 1));
+    const cutoffYmd = ymd(cutoff);
+
+    const attendance = await ctx.db.query("attendance").collect();
+    const recent = attendance.filter((a) => a.status === "present" && a.date >= cutoffYmd);
+
+    // Cache slot rows so we don't refetch.
+    const slotById = new Map(allSlots.map((s) => [s._id, s]));
+    const realizedByDay = new Map<string, number>();
+    let realizedTotal = 0;
+
+    // Pre-fetch any student rate we don't already have (students who attended
+    // but were since removed from the roster).
+    const missingStudentIds = new Set<Id<"students">>();
+    for (const a of recent) {
+      if (!rateById.has(a.studentId)) missingStudentIds.add(a.studentId);
+    }
+    if (missingStudentIds.size > 0) {
+      const extra = await Promise.all(
+        Array.from(missingStudentIds).map((id) => ctx.db.get(id)),
+      );
+      for (const s of extra) {
+        if (s) rateById.set(s._id, s.hourlyRate ?? RATE_DEFAULT_LKR);
+      }
+    }
+
+    for (const a of recent) {
+      const slot = slotById.get(a.slotId);
+      if (!slot) continue;
+      const hours = hoursBetween(slot.startTime, slot.endTime);
+      const rate = rateById.get(a.studentId) ?? RATE_DEFAULT_LKR;
+      const rev = rate * hours;
+      realizedTotal += rev;
+      realizedByDay.set(a.date, (realizedByDay.get(a.date) ?? 0) + rev);
+    }
+
+    // Fill missing days with 0 so the chart has a continuous x-axis.
+    const actualPerDay: Array<{ date: string; revenue: number }> = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (days - 1 - i));
+      const key = ymd(d);
+      actualPerDay.push({ date: key, revenue: realizedByDay.get(key) ?? 0 });
+    }
+
+    const forecastPerDay = perDay
+      .map((rev, dow) => ({ dayOfWeek: dow, revenue: rev }))
+      .filter((r) => r.dayOfWeek >= 1 && r.dayOfWeek <= 7);
+
+    const activeStudents = new Set<Id<"students">>();
+    for (const list of Array.from(membersByGroup.values())) {
+      for (const m of list) activeStudents.add(m.studentId);
+    }
+
+    return {
+      forecast: {
+        week: weekTotal,
+        perDay: forecastPerDay,
+        perGroup: Array.from(perGroup.values()).sort((a, b) => b.weekRevenue - a.weekRevenue),
+        perMentor: Array.from(perMentor.values()).sort((a, b) => b.weekRevenue - a.weekRevenue),
+        perCenter: Array.from(perCenter.values()).sort((a, b) => b.weekRevenue - a.weekRevenue),
+        perGrade: Array.from(perGrade.values()).sort((a, b) => b.weekRevenue - a.weekRevenue),
+      },
+      actual: {
+        days,
+        total: realizedTotal,
+        perDay: actualPerDay,
+      },
+      meta: {
+        totalSessions: ownedSlots.length,
+        totalHoursPerWeek,
+        activeStudents: activeStudents.size,
+      },
+    };
+  },
+});

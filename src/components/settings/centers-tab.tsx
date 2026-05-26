@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation } from 'convex/react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Pencil, Calendar, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -49,9 +49,6 @@ export function CentersTab() {
   }
 
   const defaultCenterId = settings?.defaultCenterId as Id<"centers"> | undefined;
-  const NONE = '__';
-  const centerItemsMap: Record<string, ReactNode> = { [NONE]: 'None' };
-  for (const c of centers) centerItemsMap[c._id] = c.name;
 
   const resetForm = () => {
     setFormName('');
@@ -124,27 +121,37 @@ export function CentersTab() {
             <Card className="border-border/50">
               <CardContent className="p-3 flex items-center gap-2">
                 <Star className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                <Label className="text-xs text-muted-foreground shrink-0">Default centre</Label>
+                <span className="text-xs text-muted-foreground shrink-0">Default centre</span>
                 <div className="ml-auto min-w-32">
-                  <Select
-                    items={centerItemsMap}
-                    value={defaultCenterId ?? NONE}
-                    onValueChange={async (v) => {
-                      const next = !v || v === NONE ? null : (v as Id<"centers">);
-                      await setDefaultCenterMutation({ centerId: next });
-                      toast.success(next ? 'Default centre updated' : 'Default cleared');
+                  {/* Default centre. Native <select> here (not shadcn Select)
+                      because this control sits inside two nested Cards plus an
+                      accordion <button>, which interacts badly with Base UI
+                      Select's portal/pointer-capture and silently swallowed
+                      item-click events. Native picks are bulletproof against
+                      that and require zero extra wiring. */}
+                  <select
+                    className="h-7 w-full text-xs bg-transparent border border-input rounded-lg px-2 dark:bg-input/30 focus:outline-none focus:ring-2 focus:ring-ring/50 appearance-none cursor-pointer bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22currentColor%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>')] bg-no-repeat bg-[right_6px_center] pr-6"
+                    value={defaultCenterId ?? ''}
+                    onChange={async (e) => {
+                      const v = e.target.value;
+                      try {
+                        if (v) {
+                          await setDefaultCenterMutation({ centerId: v as Id<"centers"> });
+                          toast.success('Default centre updated');
+                        } else {
+                          await setDefaultCenterMutation({ clear: true });
+                          toast.success('Default cleared');
+                        }
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Could not update');
+                      }
                     }}
                   >
-                    <SelectTrigger className="h-7 text-xs w-full" size="sm">
-                      <SelectValue placeholder="None" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE}>None</SelectItem>
-                      {centers.map((c) => (
-                        <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <option value="">None</option>
+                    {centers.map((c) => (
+                      <option key={c._id} value={c._id}>{c.name}</option>
+                    ))}
+                  </select>
                 </div>
               </CardContent>
             </Card>
@@ -206,12 +213,27 @@ export function CentersTab() {
                                   </div>
                                   <div className="flex gap-1">
                                     <button
-                                      onClick={async () => {
-                                        await setDefaultRoomMutation({
-                                          centerId: center._id,
-                                          roomId: isDefaultRoom ? null : room._id,
-                                        });
-                                        toast.success(isDefaultRoom ? 'Default room cleared' : 'Default room set');
+                                      type="button"
+                                      onClick={async (e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        try {
+                                          if (isDefaultRoom) {
+                                            await setDefaultRoomMutation({
+                                              centerId: center._id,
+                                              clear: true,
+                                            });
+                                            toast.success('Default room cleared');
+                                          } else {
+                                            await setDefaultRoomMutation({
+                                              centerId: center._id,
+                                              roomId: room._id,
+                                            });
+                                            toast.success('Default room set');
+                                          }
+                                        } catch (err) {
+                                          toast.error(err instanceof Error ? err.message : 'Could not update');
+                                        }
                                       }}
                                       className={cn(
                                         'w-6 h-6 rounded-lg flex items-center justify-center transition-colors',

@@ -39,17 +39,20 @@ export const update = mutation({
   },
 });
 
-// Per-centre default room. Passing roomId === null clears the default.
+// Per-centre default room. Pass `clear: true` to clear; omit roomId in that
+// case. Boolean clear flag avoids v.union(v.id, v.null) — see the parallel
+// note on settings.setDefaultCenter for why.
 export const setDefaultRoom = mutation({
   args: {
     centerId: v.id("centers"),
-    roomId: v.union(v.id("rooms"), v.null()),
+    roomId: v.optional(v.id("rooms")),
+    clear: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     await ctx.db.patch(args.centerId, {
-      defaultRoomId: args.roomId ?? undefined,
+      defaultRoomId: args.clear ? undefined : args.roomId,
     });
   },
 });

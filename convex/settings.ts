@@ -51,16 +51,23 @@ export const save = mutation({
   },
 });
 
-// Explicit setter for the default centre. Distinct from `save` so the centres
-// tab doesn't have to read+merge every other settings field just to toggle
-// this one value.
+// Explicit setter for the default centre. Pass undefined / omit to clear.
+// Distinct from `save` so the centres tab doesn't have to read+merge every
+// other settings field just to toggle this one value.
 export const setDefaultCenter = mutation({
-  args: { centerId: v.union(v.id("centers"), v.null()) },
+  // `clear` flag instead of nullable id: lets us distinguish "set to X" from
+  // "clear" without relying on JS null propagating cleanly through the
+  // validator (v.union(v.id, v.null) was rejecting client-side null in some
+  // browsers — bug surface we sidestep by carrying a boolean).
+  args: {
+    centerId: v.optional(v.id("centers")),
+    clear: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const existing = await ctx.db.query("settings").first();
-    const value = args.centerId ?? undefined;
+    const value = args.clear ? undefined : args.centerId;
     if (existing) {
       await ctx.db.patch(existing._id, { defaultCenterId: value });
     } else {
