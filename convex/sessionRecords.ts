@@ -551,3 +551,370 @@ export const logSession = mutation({
     }
   },
 });
+
+// ── Attendance insights ───────────────────────────────────────────────────
+//
+// One-shot read for /groups → Attendance tab. Aggregates the last `days`
+// days into:
+//   • meta         — counts of held / cancelled / unlogged sessions, plus
+//                    student presences vs absences
+//   • byStudent    — per-student attendance %, range expected/collected/
+//                    credit, and ALL-TIME outstanding credit (most useful
+//                    when chasing money)
+//   • byGroup      — per-group rollup of the same numbers
+//
+// All-time credit is computed by walking each student's full attendance +
+// payments history; pricey but bounded to one query and the dataset is
+// small for a single tutor.
+
+export const attendanceInsights = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        meta: {
+          days: 0,
+          sessionsHeld: 0,
+          sessionsCancelled: 0,
+          sessionsUnlogged: 0,
+          studentPresences: 0,
+          studentAbsences: 0,
+        },
+        byStudent: [],
+        byGroup: [],
+      };
+    }
+
+    const days = Math.min(Math.max(args.days ?? 30, 1), 365);
+
+    // Date window. We don't filter past sessions earlier than this for
+    // "unlogged" counts — only sessions that were supposed to happen within
+    // the window matter for compliance.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startD = new Date(today);
+    startD.setDate(startD.getDate() - (days - 1));
+    const startYmd = ymd(startD);
+    const todayYmd = ymd(today);
+
+    // ── Reference data ──────────────────────────────────────────────────
+    const [groups, allSlots, allMembers, allAttendance, allLogs, allPayments] =
+      await Promise.all([
+        ctx.db.query("groups").collect(),
+        ctx.db.query("scheduleSlots").collect(),
+        ctx.db.query("groupMembers").collect(),
+        ctx.db.query("attendance").collect(),
+        ctx.db.query("sessionLogs").collect(),
+        ctx.db.query("sessionPayments").collect(),
+      ]);
+
+    const groupById = new Map(groups.map((g) => [g._id, g]));
+    const slotById = new Map(allSlots.map((s) => [s._id, s]));
+
+    // Resolve every referenced student once.
+    const studentIds = new Set<Id<"students">>();
+    for (const m of allMembers) studentIds.add(m.studentId);
+    for (const a of allAttendance) studentIds.add(a.studentId);
+    for (const p of allPayments) studentIds.add(p.studentId);
+    const studentDocs = await Promise.all(
+      Array.from(studentIds).map((id) => ctx.db.get(id)),
+    );
+    const studentById = new Map<string, Doc<"students">>();
+    for (const s of studentDocs) {
+      if (s) studentById.set(s._id, s);
+    }
+
+    // (group, student) → rate map for the per-session expected calculation.
+    const rateByGroupStudent = new Map<string, number>();
+    for (const m of allMembers) {
+      const s = studentById.get(m.studentId);
+      rateByGroupStudent.set(
+        `${m.groupId}|${m.studentId}`,
+        resolveRate(m.hourlyRate, s?.hourlyRate),
+      );
+    }
+    // Fallback rate when a student attended a group they're no longer in.
+    const fallbackRateForStudent = (sid: Id<"students">) =>
+      resolveRate(undefined, studentById.get(sid)?.hourlyRate);
+
+    // Per-student group affiliations (active groups only) for the chip line.
+    const groupNamesByStudent = new Map<string, string[]>();
+    for (const m of allMembers) {
+      const g = groupById.get(m.groupId);
+      if (!g || g.archived) continue;
+      const list = groupNamesByStudent.get(m.studentId) ?? [];
+      if (!list.includes(g.name)) list.push(g.name);
+      groupNamesByStudent.set(m.studentId, list);
+    }
+
+    // ── Meta counts within the window ───────────────────────────────────
+    const logsInRange = allLogs.filter((l) => l.date >= startYmd && l.date <= todayYmd);
+    const sessionsHeld = logsInRange.filter((l) => l.status === "held").length;
+    const sessionsCancelled = logsInRange.filter((l) => l.status === "cancelled_by_tutor").length;
+
+    // Unlogged sessions: every (slot, date) in the window whose start time
+    // has already passed but which has no sessionLogs row.
+    const loggedKey = new Set(
+      logsInRange.map((l) => `${l.slotId}|${l.date}`),
+    );
+    let sessionsUnlogged = 0;
+    const now = new Date();
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (days - 1 - i));
+      const dateStr = ymd(d);
+      const js = d.getDay();
+      const dow = js === 0 ? 7 : js;
+      const slotsToday = allSlots.filter((s) => s.dayOfWeek === dow && s.groupId);
+      for (const slot of slotsToday) {
+        const g = groupById.get(slot.groupId!);
+        if (!g || g.archived) continue;
+        if (loggedKey.has(`${slot._id}|${dateStr}`)) continue;
+        // Past start time?
+        const [h, m] = slot.startTime.split(":").map(Number);
+        const sessionStart = new Date(d);
+        sessionStart.setHours(h, m, 0, 0);
+        if (sessionStart < now) sessionsUnlogged += 1;
+      }
+    }
+
+    const attendanceInRange = allAttendance.filter(
+      (a) => a.date >= startYmd && a.date <= todayYmd,
+    );
+    const studentPresences = attendanceInRange.filter((a) => a.status === "present").length;
+    const studentAbsences = attendanceInRange.filter((a) => a.status === "absent").length;
+
+    // ── Per-student rollup ──────────────────────────────────────────────
+    // expectedInRange / collectedInRange / creditInRange come from
+    // attendance × payments within the window. totalCredit is a separate
+    // walk over the student's FULL history (all-time outstanding).
+    type StudentRow = {
+      studentId: Id<"students">;
+      name: string;
+      groupNames: string[];
+      presentCount: number;
+      absentCount: number;
+      attendancePct: number; // 0..100
+      rangeExpected: number;
+      rangeCollected: number;
+      rangeCredit: number;
+      totalCredit: number;
+    };
+    const byStudent = new Map<string, StudentRow>();
+
+    const rowFor = (sid: Id<"students">): StudentRow => {
+      const existing = byStudent.get(sid);
+      if (existing) return existing;
+      const s = studentById.get(sid);
+      const row: StudentRow = {
+        studentId: sid,
+        name: s?.name ?? "?",
+        groupNames: groupNamesByStudent.get(sid) ?? [],
+        presentCount: 0,
+        absentCount: 0,
+        attendancePct: 0,
+        rangeExpected: 0,
+        rangeCollected: 0,
+        rangeCredit: 0,
+        totalCredit: 0,
+      };
+      byStudent.set(sid, row);
+      return row;
+    };
+
+    // Walk attendance once for in-range counts + expected.
+    for (const a of attendanceInRange) {
+      const row = rowFor(a.studentId);
+      if (a.status === "present") row.presentCount += 1;
+      else if (a.status === "absent") row.absentCount += 1;
+
+      if (a.status === "present") {
+        const slot = slotById.get(a.slotId);
+        if (!slot || !slot.groupId) continue;
+        const rate =
+          rateByGroupStudent.get(`${slot.groupId}|${a.studentId}`) ??
+          fallbackRateForStudent(a.studentId);
+        row.rangeExpected += rate * hoursBetween(slot.startTime, slot.endTime);
+      }
+    }
+
+    // Per-(slot,date,student) payments summed, then attributed to the row.
+    const paySummed = new Map<string, number>();
+    for (const p of allPayments) {
+      const k = `${p.slotId}|${p.date}|${p.studentId}`;
+      paySummed.set(k, (paySummed.get(k) ?? 0) + p.amount);
+    }
+    for (const a of attendanceInRange) {
+      if (a.status !== "present") continue;
+      const row = rowFor(a.studentId);
+      const paid = paySummed.get(`${a.slotId}|${a.date}|${a.studentId}`) ?? 0;
+      row.rangeCollected += paid;
+    }
+    // Range credit = max(0, expected − collected). Computed at the row
+    // level (not per-session) — partial overpayments on one session can
+    // offset under-payments on another in the window, which is what the
+    // tutor actually cares about: "this student is up-to-date or not".
+    for (const row of Array.from(byStudent.values())) {
+      row.rangeCredit = Math.max(0, row.rangeExpected - row.rangeCollected);
+      const total = row.presentCount + row.absentCount;
+      row.attendancePct = total === 0 ? 0 : Math.round((row.presentCount / total) * 100);
+    }
+
+    // All-time outstanding credit: walk full attendance history.
+    const allTimeExpected = new Map<string, number>();
+    const allTimeCollected = new Map<string, number>();
+    for (const a of allAttendance) {
+      if (a.status !== "present") continue;
+      const slot = slotById.get(a.slotId);
+      if (!slot || !slot.groupId) continue;
+      const rate =
+        rateByGroupStudent.get(`${slot.groupId}|${a.studentId}`) ??
+        fallbackRateForStudent(a.studentId);
+      const exp = rate * hoursBetween(slot.startTime, slot.endTime);
+      allTimeExpected.set(a.studentId, (allTimeExpected.get(a.studentId) ?? 0) + exp);
+      const paid = paySummed.get(`${a.slotId}|${a.date}|${a.studentId}`) ?? 0;
+      allTimeCollected.set(a.studentId, (allTimeCollected.get(a.studentId) ?? 0) + paid);
+    }
+    for (const sid of Array.from(allTimeExpected.keys())) {
+      const exp = allTimeExpected.get(sid) ?? 0;
+      const paid = allTimeCollected.get(sid) ?? 0;
+      const credit = Math.max(0, exp - paid);
+      if (credit > 0) {
+        const row = rowFor(sid as Id<"students">);
+        row.totalCredit = credit;
+      }
+    }
+
+    // ── Per-group rollup ────────────────────────────────────────────────
+    type GroupRow = {
+      groupId: Id<"groups">;
+      name: string;
+      memberCount: number;
+      sessionsHeld: number;
+      sessionsCancelled: number;
+      sessionsUnlogged: number;
+      presentCount: number;
+      absentCount: number;
+      attendancePct: number;
+      rangeExpected: number;
+      rangeCollected: number;
+      rangeCredit: number;
+      totalCredit: number;
+    };
+    const byGroup = new Map<string, GroupRow>();
+    const groupRowFor = (gid: Id<"groups">): GroupRow => {
+      const existing = byGroup.get(gid);
+      if (existing) return existing;
+      const g = groupById.get(gid);
+      const memberCount = allMembers.filter((m) => m.groupId === gid).length;
+      const row: GroupRow = {
+        groupId: gid,
+        name: g?.name ?? "?",
+        memberCount,
+        sessionsHeld: 0,
+        sessionsCancelled: 0,
+        sessionsUnlogged: 0,
+        presentCount: 0,
+        absentCount: 0,
+        attendancePct: 0,
+        rangeExpected: 0,
+        rangeCollected: 0,
+        rangeCredit: 0,
+        totalCredit: 0,
+      };
+      byGroup.set(gid, row);
+      return row;
+    };
+
+    // Held + cancelled per group.
+    for (const l of logsInRange) {
+      const slot = slotById.get(l.slotId);
+      if (!slot || !slot.groupId) continue;
+      const g = groupById.get(slot.groupId);
+      if (!g || g.archived) continue;
+      const row = groupRowFor(slot.groupId);
+      if (l.status === "held") row.sessionsHeld += 1;
+      else if (l.status === "cancelled_by_tutor") row.sessionsCancelled += 1;
+    }
+    // Unlogged per group: walk window again, attribute to group.
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (days - 1 - i));
+      const dateStr = ymd(d);
+      const js = d.getDay();
+      const dow = js === 0 ? 7 : js;
+      const slotsToday = allSlots.filter((s) => s.dayOfWeek === dow && s.groupId);
+      for (const slot of slotsToday) {
+        const g = groupById.get(slot.groupId!);
+        if (!g || g.archived) continue;
+        if (loggedKey.has(`${slot._id}|${dateStr}`)) continue;
+        const [h, m] = slot.startTime.split(":").map(Number);
+        const sessionStart = new Date(d);
+        sessionStart.setHours(h, m, 0, 0);
+        if (sessionStart < now) {
+          const row = groupRowFor(slot.groupId!);
+          row.sessionsUnlogged += 1;
+        }
+      }
+    }
+    // Per-group attendance + revenue rollup (from in-range attendance).
+    for (const a of attendanceInRange) {
+      const slot = slotById.get(a.slotId);
+      if (!slot || !slot.groupId) continue;
+      const g = groupById.get(slot.groupId);
+      if (!g || g.archived) continue;
+      const row = groupRowFor(slot.groupId);
+      if (a.status === "present") row.presentCount += 1;
+      else if (a.status === "absent") row.absentCount += 1;
+      if (a.status === "present") {
+        const rate =
+          rateByGroupStudent.get(`${slot.groupId}|${a.studentId}`) ??
+          fallbackRateForStudent(a.studentId);
+        const exp = rate * hoursBetween(slot.startTime, slot.endTime);
+        row.rangeExpected += exp;
+        const paid = paySummed.get(`${a.slotId}|${a.date}|${a.studentId}`) ?? 0;
+        row.rangeCollected += paid;
+      }
+    }
+    for (const row of Array.from(byGroup.values())) {
+      row.rangeCredit = Math.max(0, row.rangeExpected - row.rangeCollected);
+      const total = row.presentCount + row.absentCount;
+      row.attendancePct = total === 0 ? 0 : Math.round((row.presentCount / total) * 100);
+    }
+    // All-time credit per group (walk full attendance).
+    for (const a of allAttendance) {
+      if (a.status !== "present") continue;
+      const slot = slotById.get(a.slotId);
+      if (!slot || !slot.groupId) continue;
+      const g = groupById.get(slot.groupId);
+      if (!g || g.archived) continue;
+      const row = groupRowFor(slot.groupId);
+      const rate =
+        rateByGroupStudent.get(`${slot.groupId}|${a.studentId}`) ??
+        fallbackRateForStudent(a.studentId);
+      const exp = rate * hoursBetween(slot.startTime, slot.endTime);
+      const paid = paySummed.get(`${a.slotId}|${a.date}|${a.studentId}`) ?? 0;
+      // Per-session credit so partial overpayments don't offset elsewhere
+      // at the group level (different students in a group).
+      row.totalCredit += Math.max(0, exp - paid);
+    }
+
+    return {
+      meta: {
+        days,
+        sessionsHeld,
+        sessionsCancelled,
+        sessionsUnlogged,
+        studentPresences,
+        studentAbsences,
+      },
+      byStudent: Array.from(byStudent.values()).sort(
+        (a, b) => b.totalCredit - a.totalCredit || b.rangeCredit - a.rangeCredit || a.name.localeCompare(b.name),
+      ),
+      byGroup: Array.from(byGroup.values()).sort(
+        (a, b) => b.totalCredit - a.totalCredit || b.sessionsHeld - a.sessionsHeld,
+      ),
+    };
+  },
+});

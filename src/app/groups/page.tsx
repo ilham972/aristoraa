@@ -14,6 +14,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   LayoutGrid,
   UserMinus,
   UserPlus,
@@ -31,6 +32,7 @@ import {
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { RevenueTab } from '@/components/groups/revenue-tab';
+import { AttendanceTab } from '@/components/groups/attendance-tab';
 import { SessionDialog } from '@/components/groups/session-dialog';
 
 function ymd(d: Date): string {
@@ -58,7 +60,7 @@ function addDays(dateYmd: string, n: number): string {
 }
 
 export default function GroupsPage() {
-  const [view, setView] = useState<'week' | 'day' | 'revenue'>('week');
+  const [view, setView] = useState<'week' | 'day' | 'revenue' | 'attendance'>('week');
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -132,7 +134,7 @@ export default function GroupsPage() {
   return (
     <div className="h-[calc(100svh-5rem)] flex flex-col overflow-hidden max-w-3xl mx-auto px-3 pt-3">
       {/* Today's exceptions — only when present, hidden on Revenue tab. */}
-      {view !== 'revenue' && exceptions && exceptions.length > 0 && (
+      {view !== 'revenue' && view !== 'attendance' && exceptions && exceptions.length > 0 && (
         <div className="shrink-0 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] text-amber-600 uppercase tracking-wider font-semibold">
@@ -178,22 +180,35 @@ export default function GroupsPage() {
             <CalendarDays className="w-3.5 h-3.5" /> Day
           </button>
         </div>
-        <button
-          onClick={() => setView('revenue')}
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all border',
-            view === 'revenue'
-              ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-              : 'bg-muted text-muted-foreground border-transparent',
-          )}
-        >
-          <BarChart3 className="w-3.5 h-3.5" /> Revenue
-        </button>
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-xl w-fit">
+          <button
+            onClick={() => setView('revenue')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'revenue'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground',
+            )}
+          >
+            <BarChart3 className="w-3.5 h-3.5" /> Revenue
+          </button>
+          <button
+            onClick={() => setView('attendance')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'attendance'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground',
+            )}
+          >
+            <ClipboardCheck className="w-3.5 h-3.5" /> Attendance
+          </button>
+        </div>
       </div>
 
       {/* Body fills the remaining height; each view manages its own scroll. */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {view !== 'revenue' && loading && (
+        {view !== 'revenue' && view !== 'attendance' && loading && (
           <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -204,7 +219,7 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {view !== 'revenue' && !loading && !hasGroups && (
+        {view !== 'revenue' && view !== 'attendance' && !loading && !hasGroups && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
               <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
@@ -235,6 +250,12 @@ export default function GroupsPage() {
         {view === 'revenue' && (
           <div className="flex-1 min-h-0 overflow-y-auto pb-3">
             <RevenueTab onOpenGroup={openEditor} />
+          </div>
+        )}
+
+        {view === 'attendance' && (
+          <div className="flex-1 min-h-0 overflow-y-auto pb-3">
+            <AttendanceTab onOpenGroup={openEditor} />
           </div>
         )}
       </div>
