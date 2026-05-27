@@ -796,6 +796,35 @@ export const candidateStudents = query({
   },
 });
 
+// Students not a member of any ACTIVE (non-archived) group. Powers the
+// "unassigned students" pill in /groups week view so a Lead can spot who
+// they've onboarded but forgotten to slot into a class. Archived groups
+// don't count — once a group is archived, its members are effectively
+// free agents until placed elsewhere.
+export const unassignedStudents = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const allGroups = await ctx.db.query("groups").collect();
+    const activeGroupIds = new Set(
+      allGroups.filter((g) => !g.archived).map((g) => g._id as string),
+    );
+
+    const allMembers = await ctx.db.query("groupMembers").collect();
+    const assigned = new Set<string>();
+    for (const m of allMembers) {
+      if (activeGroupIds.has(m.groupId)) assigned.add(m.studentId);
+    }
+
+    const all = await ctx.db.query("students").collect();
+    return all
+      .filter((s) => !assigned.has(s._id))
+      .sort((a, b) => a.schoolGrade - b.schoolGrade || a.name.localeCompare(b.name));
+  },
+});
+
 // Set (or clear) a per-group fee override for one student. Pass
 // hourlyRate=0 for a free seat, a positive number for a custom rate, or
 // undefined to clear the override and fall back to the student's standard
@@ -879,30 +908,38 @@ export const toggleSession = mutation({
       throw new ConvexError("No room: set a default room on the group first");
     }
 
-    // Hard block: another group already in that exact (day, time, room).
+    // Hard block: another LIVE group already in that exact (day, time, room).
+    // archive() doesn't detach its group's slots, so a row whose groupId points
+    // at an archived (or deleted) group is effectively an orphan — treat it as
+    // free, otherwise an archived class permanently blocks that time/room.
     const roomSlots = await ctx.db
       .query("scheduleSlots")
       .withIndex("by_room", (q) => q.eq("roomId", roomId))
       .collect();
-    const collision = roomSlots.find(
-      (s) =>
+    const orphanSlotIds = new Set<Id<"scheduleSlots">>();
+    for (const s of roomSlots) {
+      if (!s.groupId || s.groupId === args.groupId) continue;
+      const owner = await ctx.db.get(s.groupId);
+      if (!owner || owner.archived) {
+        orphanSlotIds.add(s._id);
+        continue;
+      }
+      if (
         s.dayOfWeek === args.dayOfWeek &&
-        rangesOverlap(s.startTime, s.endTime, args.startTime, args.endTime) &&
-        s.groupId &&
-        s.groupId !== args.groupId,
-    );
-    if (collision) {
-      throw new ConvexError("Room already booked at this time by another group");
+        rangesOverlap(s.startTime, s.endTime, args.startTime, args.endTime)
+      ) {
+        throw new ConvexError("Room already booked at this time by another group");
+      }
     }
 
-    // Reuse an empty (groupId=undefined) slot if one happens to match
-    // exactly; otherwise insert.
+    // Reuse an exact-time slot if one happens to match — either a true empty
+    // (groupId=undefined) or an orphan claimed from an archived/deleted group.
     const reusable = roomSlots.find(
       (s) =>
         s.dayOfWeek === args.dayOfWeek &&
         s.startTime === args.startTime &&
         s.endTime === args.endTime &&
-        !s.groupId,
+        (!s.groupId || orphanSlotIds.has(s._id)),
     );
     if (reusable) {
       await ctx.db.patch(reusable._id, { groupId: args.groupId });

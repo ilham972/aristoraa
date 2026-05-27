@@ -16,8 +16,10 @@ import {
   LayoutGrid,
   UserMinus,
   UserPlus,
+  UserRoundX,
   XCircle,
 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
@@ -59,6 +61,7 @@ export default function GroupsPage() {
   const [view, setView] = useState<'week' | 'day'>('day');
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [unassignedOpen, setUnassignedOpen] = useState(false);
 
   // Day view is date-aware (the only date-aware surface in /groups). The
   // Week-grid view stays purely a standard timetable as the user asked.
@@ -82,6 +85,11 @@ export default function GroupsPage() {
     view === 'day' ? { weekStartDate: weekStartYmd } : 'skip',
   );
   const exceptions = useQuery(api.groups.overridesForDate, { date: today });
+  // Only fetched when the Week view is up — Day view doesn't surface the pill.
+  const unassigned = useQuery(
+    api.groups.unassignedStudents,
+    view === 'week' ? {} : 'skip',
+  );
 
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
@@ -173,6 +181,19 @@ export default function GroupsPage() {
             <LayoutGrid className="w-3.5 h-3.5" /> Week
           </button>
         </div>
+
+        {/* Unassigned-students pill — week view only, only when count > 0. */}
+        {view === 'week' && unassigned && unassigned.length > 0 && (
+          <button
+            onClick={() => setUnassignedOpen(true)}
+            className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-600 text-[10px] font-medium hover:bg-amber-500/15 transition-colors"
+            title="Students not in any active group"
+          >
+            <UserRoundX className="w-3 h-3" />
+            <span className="tabular-nums">{unassigned.length}</span>
+            <span className="hidden sm:inline">unassigned</span>
+          </button>
+        )}
       </div>
 
       {/* Body fills the remaining height; each view manages its own scroll. */}
@@ -227,7 +248,88 @@ export default function GroupsPage() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
       />
+
+      <UnassignedStudentsDialog
+        open={unassignedOpen}
+        onClose={() => setUnassignedOpen(false)}
+        students={unassigned ?? []}
+      />
     </div>
+  );
+}
+
+// Lists students who aren't a member of any active group, so the user can
+// spot anyone they've onboarded but forgotten to slot into a class. Grouped
+// by schoolGrade because that's what the user reads first when deciding
+// where to drop a student.
+function UnassignedStudentsDialog({
+  open,
+  onClose,
+  students,
+}: {
+  open: boolean;
+  onClose: () => void;
+  students: Array<{
+    _id: Id<'students'>;
+    name: string;
+    schoolGrade: number;
+  }>;
+}) {
+  const byGrade = useMemo(() => {
+    const m = new Map<number, typeof students>();
+    for (const s of students) {
+      const arr = m.get(s.schoolGrade) ?? [];
+      arr.push(s);
+      m.set(s.schoolGrade, arr);
+    }
+    return Array.from(m.entries()).sort((a, b) => a[0] - b[0]);
+  }, [students]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm p-0 gap-0 overflow-hidden">
+        <DialogHeader className="px-4 pt-4 pb-2">
+          <DialogTitle className="text-sm font-semibold flex items-center gap-2">
+            <UserRoundX className="w-4 h-4 text-amber-500" />
+            Unassigned students
+            <span className="text-xs font-normal text-muted-foreground">
+              ({students.length})
+            </span>
+          </DialogTitle>
+          <p className="text-[11px] text-muted-foreground">
+            Not yet placed in any active group.
+          </p>
+        </DialogHeader>
+
+        <div className="max-h-[60vh] overflow-y-auto px-4 pb-4">
+          {students.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-6 text-center">
+              Every student is in a group.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {byGrade.map(([grade, group]) => (
+                <div key={grade}>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+                    Grade {grade}
+                  </p>
+                  <ul className="space-y-0.5">
+                    {group.map((s) => (
+                      <li
+                        key={s._id}
+                        className="text-xs px-2 py-1.5 rounded-md bg-muted/40 text-foreground"
+                      >
+                        {s.name}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
