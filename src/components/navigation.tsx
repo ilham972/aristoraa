@@ -2,19 +2,17 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardPen, Trophy, Users, Settings, Radio, BarChart3, FileSpreadsheet, CalendarRange } from 'lucide-react';
+import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 
-type NavItem = { href: string; label: string; icon: typeof ClipboardPen; leadOnly?: boolean };
+type NavItem = { href: string; label: string; icon: typeof Trophy; leadOnly?: boolean };
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '/score-entry', label: 'Scores', icon: ClipboardPen },
-  { href: '/lead', label: 'Lead', icon: Radio, leadOnly: true },
-  { href: '/groups', label: 'Groups', icon: CalendarRange, leadOnly: true },
+  { href: '/groups', label: 'Groups', icon: CalendarRange },
+  { href: '/analytics', label: 'Analytics', icon: LineChart, leadOnly: true },
   { href: '/algorithm', label: 'Insights', icon: BarChart3, leadOnly: true },
-  { href: '/sheets', label: 'Sheets', icon: FileSpreadsheet, leadOnly: true },
   { href: '/leaderboard', label: 'Board', icon: Trophy },
   { href: '/students', label: 'Students', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },
@@ -27,10 +25,11 @@ export function BottomNav() {
 
   if (hideBottomNav) return null;
 
-  // Show Lead tab when user is a Lead or Admin. If no teacher record exists
-  // (pre-bootstrap), show it so the first admin can reach the page.
-  const canSeeLead = !teacher || role === 'lead' || role === 'admin';
-  const items = NAV_ITEMS.filter((i) => !i.leadOnly || canSeeLead);
+  // Lead-only nav items (Analytics, Insights) are hidden for plain teachers.
+  // Pre-bootstrap (no teacher record yet) shows everything so the first admin
+  // can reach the pages.
+  const canSeeLeadOnly = !teacher || role === 'lead' || role === 'admin';
+  const items = NAV_ITEMS.filter((i) => !i.leadOnly || canSeeLeadOnly);
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">

@@ -50,6 +50,25 @@ type InferredState =
   | 'absent';
 
 export default function LeadDashboardPage() {
+  return <LeadWorkspace />;
+}
+
+// LeadWorkspace — the dashboard body. Exported separately so the session
+// page can mount it inside its Lead tab with `lockedSlotId`, forcing the
+// roster to that session's students instead of auto-resolving from the
+// teacher's active slot. The header chrome is hidden in locked mode
+// because the session page already shows the group / date / time.
+export function LeadWorkspace({
+  lockedSlotId,
+}: {
+  lockedSlotId?: Id<'scheduleSlots'>;
+  // lockedDate accepted for API symmetry with ScoreEntryWorkspace; Lead is
+  // a "right-now" dashboard so we always read today's doubts/entries even
+  // when the session is on a different date.
+  lockedDate?: string;
+} = {}) {
+  const locked = lockedSlotId !== undefined;
+
   const router = useRouter();
   const { teacher, role, isLoading: teacherLoading } = useCurrentTeacher();
   const today = getTodayDateStr();
@@ -59,16 +78,19 @@ export default function LeadDashboardPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Redirect non-lead roles
+  // Redirect non-lead roles — only when accessed as a standalone page.
+  // Inside the session Lead tab, every role can see the dashboard.
   useEffect(() => {
+    if (locked) return;
     if (teacherLoading) return;
-    if (role === 'correction' || role === 'teacher') router.replace('/score-entry');
-  }, [role, teacherLoading, router]);
+    if (role === 'correction' || role === 'teacher') router.replace('/groups');
+  }, [locked, role, teacherLoading, router]);
 
-  // Resolve today's active slot for this teacher
+  // Resolve today's active slot for this teacher (skipped in locked mode —
+  // lockedSlotId takes over).
   const teacherSlotRows = useQuery(
     api.slotTeachers.listByTeacher,
-    teacher ? { teacherId: teacher._id } : 'skip',
+    teacher && !locked ? { teacherId: teacher._id } : 'skip',
   );
   const allSlots = useQuery(api.scheduleSlots.list);
   const teacherSlots = useMemo(() => {
@@ -77,7 +99,9 @@ export default function LeadDashboardPage() {
     return allSlots.filter((s) => ids.has(s._id));
   }, [teacherSlotRows, allSlots]);
   const { activeSlot, nextSlot, minutesRemaining } = useActiveSlot(teacherSlots);
-  const slotId = (activeSlot?._id ?? null) as Id<'scheduleSlots'> | null;
+  const slotId: Id<'scheduleSlots'> | null = locked
+    ? (lockedSlotId as Id<'scheduleSlots'>)
+    : ((activeSlot?._id ?? null) as Id<'scheduleSlots'> | null);
 
   const roster = useQuery(
     api.lead.liveRoster,
@@ -158,7 +182,7 @@ export default function LeadDashboardPage() {
 
   if (teacherLoading || !roster) {
     return (
-      <div className="px-4 pt-5 pb-20 max-w-lg mx-auto">
+      <div className={locked ? 'h-full overflow-y-auto pb-4' : 'px-4 pt-5 pb-20 max-w-lg mx-auto'}>
         <div className="animate-pulse space-y-3">
           <div className="h-10 bg-muted rounded-xl" />
           <div className="h-24 bg-muted rounded-2xl" />
@@ -171,7 +195,14 @@ export default function LeadDashboardPage() {
 
   const nowJsDay = new Date().getDay();
   const nowDay = nowJsDay === 0 ? 7 : nowJsDay;
-  const slotModuleId = activeSlot?.moduleId ?? getModuleForDay(nowDay)?.id ?? null;
+  // In locked mode, derive the module from the session's slot day-of-week
+  // so drawers (Context / Curriculum / PastMistakes) see the right module
+  // even when the session is on a different weekday than today.
+  const lockedSlot = locked
+    ? allSlots?.find((s) => s._id === lockedSlotId)
+    : null;
+  const sourceDay = lockedSlot?.dayOfWeek ?? activeSlot?.dayOfWeek ?? nowDay;
+  const slotModuleId = activeSlot?.moduleId ?? getModuleForDay(sourceDay)?.id ?? null;
   const slotModule = slotModuleId ? getModuleById(slotModuleId) : null;
 
   const contextStudent = contextStudentId
@@ -185,8 +216,10 @@ export default function LeadDashboardPage() {
     : null;
 
   return (
-    <div className="px-4 pt-5 pb-20 max-w-lg mx-auto">
-      {/* Header */}
+    <div className={locked ? 'h-full overflow-y-auto pb-4' : 'px-4 pt-5 pb-20 max-w-lg mx-auto'}>
+      {/* Header — hidden in locked mode (session page chrome already shows
+          the group, date, and time). */}
+      {!locked && (
       <div className="flex items-center gap-2 mb-4">
         <div className="w-8 h-8 rounded-xl bg-primary/12 flex items-center justify-center">
           <Radio className="w-4 h-4 text-primary" />
@@ -209,6 +242,7 @@ export default function LeadDashboardPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Roster — students with doubts first, in queue order */}
       <div>

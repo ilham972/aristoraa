@@ -1,39 +1,33 @@
 'use client';
 
-// SessionDialog — attendance + payment surface for ONE occurrence of a
-// session (slotId + date). Opened from the date-aware Day view's session
-// cards; NOT used in the date-less Week view.
+// AttendanceTab — the per-session attendance + payment surface. Lives as
+// one of four tabs on /session/[slotId]/[date], replacing the old fullscreen
+// SessionDialog opened from /groups Day view.
 //
-// Replaces the previous Day-view-tap behaviour (which opened EditGroupDialog
-// for roster editing). Roster edits still happen in EditGroupDialog from
-// the Week view; here we only deal with what actually happened that day —
-//   1. Was the session held at all? (Cancel-session marks it tutor leave.)
+// Same three responsibilities as before:
+//   1. Was the session held? (Cancel-session marks it tutor leave.)
 //   2. Who showed up? (Came / Didn't toggle per member.)
-//   3. How much cash was collected? (Amount per present student, defaults
-//      to their full fee; partial → credit owed; 0 → fully on credit.)
+//   3. How much cash was collected? (Amount per present student.)
 //
-// All three writes land in one logSession mutation so the page paints once.
+// Logic is identical to the previous dialog; the only structural change is
+// that the page chrome (group title, date, time, back button) lives one
+// level up — this component owns just the roster body and the save footer.
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
-import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { toast } from 'sonner';
 import {
   AlertCircle,
-  Calendar,
   Check,
-  Clock,
   Loader2,
   Undo2,
-  X,
   XCircle,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
-import { groupColor } from '@/lib/groups/color';
-import { fmtLKR, fmtTime12 } from '@/lib/groups/time-grid';
+import { fmtLKR } from '@/lib/groups/time-grid';
 
 type AttendedState = 'present' | 'absent' | 'unset';
 
@@ -48,47 +42,12 @@ type DraftRow = {
   isOverrideAdd: boolean;
 };
 
-function fmtDateLong(ymd: string): string {
-  const d = new Date(ymd + 'T00:00:00');
-  return d.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
-export function SessionDialog({
+export function AttendanceTab({
   slotId,
   date,
-  open,
-  onClose,
-}: {
-  slotId: Id<'scheduleSlots'> | null;
-  date: string | null;
-  open: boolean;
-  onClose: () => void;
-}) {
-  return (
-    <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-background/40 duration-75 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
-        <DialogPrimitive.Popup className="fixed inset-0 z-50 bg-background outline-none duration-75 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0">
-          <DialogPrimitive.Title className="sr-only">Log session</DialogPrimitive.Title>
-          {slotId && date && <SessionBody slotId={slotId} date={date} onClose={onClose} />}
-        </DialogPrimitive.Popup>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
-  );
-}
-
-function SessionBody({
-  slotId,
-  date,
-  onClose,
 }: {
   slotId: Id<'scheduleSlots'>;
   date: string;
-  onClose: () => void;
 }) {
   const detail = useQuery(api.sessionRecords.sessionDetail, { slotId, date });
   const logSession = useMutation(api.sessionRecords.logSession);
@@ -109,9 +68,6 @@ function SessionBody({
         rate: m.rate,
         expected: m.expected,
         priorCredit: m.priorCredit,
-        // If we have a prior decision, keep it. Otherwise default to
-        // "present + full fee" — that's the dominant case; one tap to
-        // change otherwise.
         attended: m.attended === 'unset' ? 'present' : m.attended,
         amountPaid:
           m.attended === 'absent'
@@ -127,7 +83,6 @@ function SessionBody({
   }
 
   const cancelled = detail?.logStatus === 'cancelled';
-  const color = useMemo(() => (detail ? groupColor(detail.groupId) : null), [detail]);
 
   const totals = useMemo(() => {
     if (!draft) return { expected: 0, collected: 0, credit: 0, present: 0, absent: 0 };
@@ -162,8 +117,6 @@ function SessionBody({
             if (r.studentId !== studentId) return r;
             if (attended === 'absent') return { ...r, attended, amountPaid: 0 };
             if (attended === 'present' && r.attended !== 'present') {
-              // When flipping back to present, restore amountPaid to expected
-              // (which is the most common case).
               return { ...r, attended, amountPaid: r.expected };
             }
             return { ...r, attended };
@@ -188,7 +141,6 @@ function SessionBody({
         })),
       });
       toast.success('Session logged');
-      onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save');
     } finally {
@@ -206,7 +158,6 @@ function SessionBody({
         note: note.trim() || undefined,
       });
       toast.success('Session marked as cancelled');
-      onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not cancel');
     } finally {
@@ -218,9 +169,6 @@ function SessionBody({
     if (!draft) return;
     setSaving(true);
     try {
-      // Reopen = re-save as "held" with no entries (server keeps existing
-      // attendance + payments untouched when entries is omitted; here we
-      // just want to flip the log status back).
       await logSession({ slotId, date, status: 'held', note: note.trim() || undefined });
       toast.success('Session re-opened');
     } catch (e) {
@@ -239,57 +187,27 @@ function SessionBody({
   }
 
   return (
-    <div className="h-[100svh] flex flex-col bg-background">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border/60 px-4 pt-4 pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              {color && (
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color.solid }} />
-              )}
-              <h2 className="text-base font-bold text-foreground truncate">{detail.groupName}</h2>
-            </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Calendar className="w-3 h-3" /> {fmtDateLong(detail.date)}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                {fmtTime12(detail.startTime)} – {fmtTime12(detail.endTime)}
-              </span>
-            </div>
-          </div>
+    <div className="h-full flex flex-col">
+      {/* Status banner sits above the scroll region so it never scrolls away. */}
+      {cancelled && (
+        <div className="shrink-0 mb-2 rounded-lg bg-muted px-3 py-1.5 flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <XCircle className="w-3.5 h-3.5" />
+            Session cancelled by you on this date
+          </span>
           <button
             type="button"
-            onClick={onClose}
-            className="shrink-0 -mr-1 -mt-1 p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+            disabled={saving}
+            onClick={handleReopen}
+            className="text-[11px] font-semibold text-primary hover:underline inline-flex items-center gap-1"
           >
-            <X className="w-4 h-4" />
+            <Undo2 className="w-3 h-3" /> Reopen
           </button>
         </div>
+      )}
 
-        {/* Status banner */}
-        {cancelled && (
-          <div className="mt-2 rounded-lg bg-muted px-3 py-1.5 flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <XCircle className="w-3.5 h-3.5" />
-              Session cancelled by you on this date
-            </span>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleReopen}
-              className="text-[11px] font-semibold text-primary hover:underline inline-flex items-center gap-1"
-            >
-              <Undo2 className="w-3 h-3" /> Reopen
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Body */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      {/* Roster body — scrolls within the tab. */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {cancelled ? (
           <p className="text-sm text-muted-foreground text-center py-12">
             No attendance or payments expected.
@@ -313,9 +231,8 @@ function SessionBody({
           </ul>
         ) : null}
 
-        {/* Note */}
         {!cancelled && (
-          <div className="mt-4">
+          <div className="mt-4 pb-2">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
               Note (optional)
             </label>
@@ -329,9 +246,9 @@ function SessionBody({
         )}
       </div>
 
-      {/* Footer with totals + actions */}
+      {/* Footer: totals + actions. Sticks to the bottom of the tab area. */}
       {!cancelled && (
-        <div className="shrink-0 border-t border-border/60 bg-card px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+        <div className="shrink-0 border-t border-border/60 pt-3 mt-2">
           <div className="grid grid-cols-3 gap-2 mb-3">
             <Stat label="Expected" value={fmtLKR(totals.expected)} />
             <Stat label="Collected" value={fmtLKR(totals.collected)} />
@@ -430,7 +347,6 @@ function SessionRow({
       </div>
 
       <div className="flex items-center gap-1.5">
-        {/* Attended toggle */}
         <div className="flex rounded-lg border border-input overflow-hidden shrink-0">
           <button
             type="button"
@@ -458,7 +374,6 @@ function SessionRow({
           </button>
         </div>
 
-        {/* Amount input — only meaningful when present */}
         <div className={cn('flex items-center gap-1 flex-1 min-w-0', !isPresent && 'opacity-40')}>
           <span className="text-[10px] text-muted-foreground shrink-0">Rs</span>
           <Input
@@ -472,7 +387,6 @@ function SessionRow({
             onFocus={(e) => e.target.select()}
             className="h-7 text-xs tabular-nums"
           />
-          {/* Quick presets */}
           {isPresent && (
             <div className="flex gap-1 shrink-0">
               <PresetBtn label="Full" active={row.amountPaid === row.expected} onClick={() => onAmount(row.expected)} />

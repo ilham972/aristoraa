@@ -1,20 +1,18 @@
 'use client';
 
-// Phase F — /groups. Group-centric scheduling, replacing the old
-// Settings → Schedule tab. Default view is the whole-week grid (the user
-// thinks in weeks); a Day toggle gives a focused single-day card list.
-//
-// Top strip: today's revenue + week forecast + today's attendance exceptions.
+// /groups — the app home. Day view is the primary surface (tap a session
+// to enter the per-session page), with a Week toggle for timetable layout.
+// Revenue and Attendance analytics moved to /analytics in Phase 1 of the
+// session-page refactor.
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import { toast } from 'sonner';
 import {
-  BarChart3,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  ClipboardCheck,
   LayoutGrid,
   UserMinus,
   UserPlus,
@@ -31,9 +29,6 @@ import {
 } from '@/lib/groups/time-grid';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
-import { RevenueTab } from '@/components/groups/revenue-tab';
-import { AttendanceTab } from '@/components/groups/attendance-tab';
-import { SessionDialog } from '@/components/groups/session-dialog';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -60,7 +55,8 @@ function addDays(dateYmd: string, n: number): string {
 }
 
 export default function GroupsPage() {
-  const [view, setView] = useState<'week' | 'day' | 'revenue' | 'attendance'>('week');
+  const router = useRouter();
+  const [view, setView] = useState<'week' | 'day'>('day');
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -71,9 +67,6 @@ export default function GroupsPage() {
   const today = todayYmd();
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const weekStartYmd = mondayOf(selectedDate);
-
-  // Session-dialog state — page-level so it stays open across query refetches.
-  const [sessionDlg, setSessionDlg] = useState<{ slotId: Id<'scheduleSlots'>; date: string } | null>(null);
 
   const week = useQuery(api.groups.weekGrid);
   const rooms = useQuery(api.rooms.list);
@@ -125,16 +118,15 @@ export default function GroupsPage() {
   const loading = week === undefined;
   const hasGroups = (week?.groups.length ?? 0) > 0;
 
-  // Fixed-height page: the only thing allowed to scroll vertically is the
-  // active sub-view's overflow region (DayList list, RevenueTab content).
-  // The week-grid view scrolls horizontally only — vertical sizing inside
-  // it is sized to fit so the user never has to scroll up/down while
-  // browsing slots. Calc subtracts the bottom-nav padding (5rem) applied
-  // by AuthLayout's <main>.
+  // Fixed-height page: only the active sub-view's overflow region scrolls
+  // vertically (the DayList session list). Week-grid scrolls horizontally
+  // only — vertical sizing fits the viewport so the user never has to
+  // scroll up/down while browsing slots. Calc subtracts the bottom-nav
+  // padding (5rem) applied by AuthLayout's <main>.
   return (
     <div className="h-[calc(100svh-5rem)] flex flex-col overflow-hidden max-w-3xl mx-auto px-3 pt-3">
-      {/* Today's exceptions — only when present, hidden on Revenue tab. */}
-      {view !== 'revenue' && view !== 'attendance' && exceptions && exceptions.length > 0 && (
+      {/* Today's exceptions — shown when present. */}
+      {exceptions && exceptions.length > 0 && (
         <div className="shrink-0 rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] text-amber-600 uppercase tracking-wider font-semibold">
@@ -157,19 +149,11 @@ export default function GroupsPage() {
         </div>
       )}
 
-      {/* View toggle is the sole header chrome now — tap an empty slot in
-          Week view to create a group, so the old "+ New" button is gone. */}
-      <div className="shrink-0 flex items-center justify-between gap-2 mb-2">
+      {/* Day/Week toggle — Day is the primary view, listed first. Revenue &
+          Attendance live on /analytics, not here. Tap an empty Week-grid cell
+          to create a group, so no "+ New" button. */}
+      <div className="shrink-0 flex items-center gap-2 mb-2">
         <div className="flex items-center gap-1 p-1 bg-muted rounded-xl w-fit">
-          <button
-            onClick={() => setView('week')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'week' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
-            )}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" /> Week
-          </button>
           <button
             onClick={() => setView('day')}
             className={cn(
@@ -179,36 +163,21 @@ export default function GroupsPage() {
           >
             <CalendarDays className="w-3.5 h-3.5" /> Day
           </button>
-        </div>
-        <div className="flex items-center gap-1 p-1 bg-muted rounded-xl w-fit">
           <button
-            onClick={() => setView('revenue')}
+            onClick={() => setView('week')}
             className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'revenue'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground',
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'week' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
             )}
           >
-            <BarChart3 className="w-3.5 h-3.5" /> Revenue
-          </button>
-          <button
-            onClick={() => setView('attendance')}
-            className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'attendance'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground',
-            )}
-          >
-            <ClipboardCheck className="w-3.5 h-3.5" /> Attendance
+            <LayoutGrid className="w-3.5 h-3.5" /> Week
           </button>
         </div>
       </div>
 
       {/* Body fills the remaining height; each view manages its own scroll. */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {view !== 'revenue' && view !== 'attendance' && loading && (
+        {loading && (
           <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -219,7 +188,7 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {view !== 'revenue' && view !== 'attendance' && !loading && !hasGroups && (
+        {!loading && !hasGroups && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
               <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
@@ -243,20 +212,8 @@ export default function GroupsPage() {
             setSelectedDate={setSelectedDate}
             shiftWeek={(deltaDays) => setSelectedDate((d) => addDays(d, deltaDays))}
             data={weekSessions}
-            onOpenSession={(slotId, date) => setSessionDlg({ slotId, date })}
+            onOpenSession={(slotId, date) => router.push(`/session/${slotId}/${date}`)}
           />
-        )}
-
-        {view === 'revenue' && (
-          <div className="flex-1 min-h-0 overflow-y-auto pb-3">
-            <RevenueTab onOpenGroup={openEditor} />
-          </div>
-        )}
-
-        {view === 'attendance' && (
-          <div className="flex-1 min-h-0 overflow-y-auto pb-3">
-            <AttendanceTab onOpenGroup={openEditor} />
-          </div>
         )}
       </div>
 
@@ -269,13 +226,6 @@ export default function GroupsPage() {
         }
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-      />
-
-      <SessionDialog
-        slotId={sessionDlg?.slotId ?? null}
-        date={sessionDlg?.date ?? null}
-        open={sessionDlg !== null}
-        onClose={() => setSessionDlg(null)}
       />
     </div>
   );

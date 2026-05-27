@@ -61,6 +61,23 @@ function usePersistentState<T>(key: string, init: T): [T, React.Dispatch<React.S
 }
 
 export default function ScoreEntryPage() {
+  return <ScoreEntryWorkspace />;
+}
+
+// ScoreEntryWorkspace — the scoring UI body. Exported separately so the
+// session page can mount it inside its Score tab with `lockedSlotId` +
+// `lockedDate`, which freezes the slot/date selection, hides the top-bar
+// chrome (session info, unsubmitted dot, countdown), and hides the
+// attendance-mode toggle (Attendance has its own tab now).
+export function ScoreEntryWorkspace({
+  lockedSlotId,
+  lockedDate,
+}: {
+  lockedSlotId?: Id<'scheduleSlots'>;
+  lockedDate?: string;
+} = {}) {
+  const locked = lockedSlotId !== undefined && lockedDate !== undefined;
+
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const iv = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(iv); }, []);
 
@@ -215,10 +232,12 @@ export default function ScoreEntryPage() {
   }, [lastPickedSlotId, allSlots]);
 
   const effectiveSlot = useMemo(() => {
+    // Locked mode (session tab) — slot is pinned, ignore all auto-pivot logic.
+    if (lockedSlotId) return allSlots?.find((s: { _id: string }) => s._id === lockedSlotId) ?? null;
     if (manualSlotId) return allSlots?.find((s: { _id: string }) => s._id === manualSlotId) ?? null;
     // Priority: active → next today → next future day → last manual pick → fallback → first slot
     return activeSlot ?? nextSlot ?? nextWeekSlot ?? lastPickedSlot ?? fallbackSlot ?? usableSlots?.[0] ?? null;
-  }, [manualSlotId, allSlots, activeSlot, nextSlot, nextWeekSlot, lastPickedSlot, fallbackSlot, usableSlots]);
+  }, [lockedSlotId, manualSlotId, allSlots, activeSlot, nextSlot, nextWeekSlot, lastPickedSlot, fallbackSlot, usableSlots]);
 
   // Derive module from room's timetable for the slot's day
   const slotModule = useMemo(() => {
@@ -232,6 +251,8 @@ export default function ScoreEntryPage() {
   }, [effectiveSlot, rooms]);
 
   const effectiveDate = useMemo(() => {
+    // Locked mode (session tab) — date is pinned to the session's calendar day.
+    if (lockedDate) return lockedDate;
     if (manualSlotId) return attendanceDate;
     if (activeSlot || nextSlot) return today;
     if (nextWeekSlot) return weekDates[(nextWeekSlot as { dayOfWeek: number }).dayOfWeek - 1];
@@ -239,7 +260,7 @@ export default function ScoreEntryPage() {
     if (fallbackSlot) return weekDates[(fallbackSlot as { dayOfWeek: number }).dayOfWeek - 1];
     if (usableSlots?.[0]) return weekDates[(usableSlots[0] as { dayOfWeek: number }).dayOfWeek - 1];
     return today;
-  }, [manualSlotId, attendanceDate, activeSlot, nextSlot, nextWeekSlot, lastPickedSlot, lastPickedDate, fallbackSlot, usableSlots, today, weekDates]);
+  }, [lockedDate, manualSlotId, attendanceDate, activeSlot, nextSlot, nextWeekSlot, lastPickedSlot, lastPickedDate, fallbackSlot, usableSlots, today, weekDates]);
   const sessionKey = effectiveSlot ? `${effectiveSlot._id}|${effectiveDate}` : '';
 
   const effectiveStudents = useQuery(
@@ -1059,8 +1080,11 @@ export default function ScoreEntryPage() {
 
   // ═══ RENDER ═══
   return (
-    <div className="px-4 pt-4 pb-6 max-w-lg mx-auto">
-      {/* ═══ TOP BAR ═══ */}
+    <div className={locked ? 'h-full overflow-y-auto pb-4' : 'px-4 pt-4 pb-6 max-w-lg mx-auto'}>
+      {/* ═══ TOP BAR ═══ — session info / unsubmitted dot / countdown. Hidden
+          in locked mode (session tab) because the page chrome already shows
+          the group, date, and time. */}
+      {!locked && (
       <div className="flex items-center justify-between mb-4">
         {/* Left: Session info — tap to open calendar */}
         {effectiveSlot ? (
@@ -1128,10 +1152,13 @@ export default function ScoreEntryPage() {
           ) : null}
         </div>
       </div>
+      )}
 
       {/* ═══ SCORING PAGE ═══ */}
       <div>
-        {/* Attendance mode toggle */}
+        {/* Attendance mode toggle — hidden in locked mode because Attendance
+            is its own tab on the session page. */}
+        {!locked && (
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
             {attendanceMode ? 'Mark Attendance' : 'Students'}
@@ -1143,6 +1170,7 @@ export default function ScoreEntryPage() {
             Attendance {attendanceMode ? 'ON' : 'OFF'}
           </button>
         </div>
+        )}
 
         {/* Student badges — fixed 2-row min height for layout stability */}
         <div className="flex flex-wrap content-start gap-1.5 mb-4 min-h-[78px] p-1 -m-1">
