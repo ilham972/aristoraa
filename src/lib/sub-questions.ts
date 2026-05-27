@@ -1,9 +1,33 @@
 // ─── Sub-question utilities ───
-// subQuestions format on exercise: Record<string, { count: number, type: 'letter' | 'roman' }>
-// e.g., { "2": { count: 3, type: "letter" }, "5": { count: 6, type: "roman" } }
-// means Q2 has sub-questions a,b,c and Q5 has sub-questions i,ii,iii,iv,v,vi
+// subQuestions format on exercise:
+//   Record<string, {
+//     count: number,
+//     type: 'letter' | 'roman',
+//     subSub?: Record<string, { count: number; type: 'letter' | 'roman' }>
+//   }>
+//
+// Outer key   = main question number as string. e.g. "2".
+// `count/type` = the level-2 layout (a,b,c… or i,ii,iii…).
+// `subSub`     = OPTIONAL level-3 layout. Keys are 0-based sub-question
+//                indices as strings ("0" = first sub like "a" or "i").
+//                Indexes are stable across type toggles; labels are not.
+//
+// Examples:
+//   { "2": { count: 3, type: "letter" } }
+//     → Q2 has a, b, c
+//   { "5": { count: 3, type: "letter", subSub: { "0": { count: 3, type: "roman" } } } }
+//     → Q5 has a, b, c; Q5.a additionally has i, ii, iii (Q5.b and Q5.c don't)
+//
+// Backward compat: when `subSub` is absent (or empty), all helpers behave
+// identically to the original 2-level implementation. Live data must keep
+// behaving exactly as before.
 
-export type SubQuestionDef = { count: number; type: 'letter' | 'roman' };
+export type SubSubDef = { count: number; type: 'letter' | 'roman' };
+export type SubQuestionDef = {
+  count: number;
+  type: 'letter' | 'roman';
+  subSub?: Record<string, SubSubDef>;
+};
 export type SubQuestionsMap = Record<string, SubQuestionDef>;
 
 const LETTERS = 'abcdefghijklmnopqrst'.split('');
@@ -18,35 +42,82 @@ export function getSubLabels(count: number, type: 'letter' | 'roman'): string[] 
   return Array.from({ length: count }, (_, i) => getSubLabel(i, type));
 }
 
+// True when this sub-question has its own sub-sub-parts (level-3 leaves).
+export function hasSubSub(def: SubQuestionDef | undefined, subIndex: number): boolean {
+  const s = def?.subSub?.[String(subIndex)];
+  return !!s && s.count > 1;
+}
+
+export function getSubSubDef(
+  def: SubQuestionDef | undefined,
+  subIndex: number,
+): SubSubDef | undefined {
+  const s = def?.subSub?.[String(subIndex)];
+  return s && s.count > 1 ? s : undefined;
+}
+
 /**
  * Get total scoreable items for an exercise.
- * questionCount = number of main questions
- * subQuestions = which main questions have sub-parts
+ * Counts LEAVES only:
+ *   • Q without sub-parts            → 1
+ *   • Q with sub-parts, no sub-sub   → count of sub-parts (level-2 leaves)
+ *   • Q with sub-parts AND sub-sub   → count of sub-sub leaves on those subs
+ *                                       that have them, +1 per sub without
+ *                                       sub-sub.
+ * For any 2-level input (no `subSub`) this returns exactly what the
+ * previous implementation returned.
  */
 export function getTotalScoreable(questionCount: number, subQuestions?: SubQuestionsMap | null): number {
   if (!subQuestions) return questionCount;
   let total = 0;
   for (let q = 1; q <= questionCount; q++) {
     const sub = subQuestions[String(q)];
-    total += sub ? sub.count : 1;
+    if (!sub || sub.count <= 1) {
+      total += 1;
+      continue;
+    }
+    if (!sub.subSub) {
+      total += sub.count;
+      continue;
+    }
+    for (let s = 0; s < sub.count; s++) {
+      const ss = sub.subSub[String(s)];
+      total += ss && ss.count > 1 ? ss.count : 1;
+    }
   }
   return total;
 }
 
 /**
- * Generate ordered question keys for an exercise.
- * Returns keys like: ["1", "2.a", "2.b", "2.c", "3", "4.i", "4.ii", ...]
+ * Generate ordered question keys for an exercise (LEAF keys only).
+ * Examples:
+ *   • no sub-parts:        ["1", "2", "3"]
+ *   • Q2 has a,b,c:        ["1", "2.a", "2.b", "2.c", "3"]
+ *   • Q5 has a,b,c and
+ *     Q5.a has i,ii,iii:   ["1", "5.a.i", "5.a.ii", "5.a.iii", "5.b", "5.c"]
+ *
+ * NOTE: Stem keys ("5", "5.a") are NOT emitted here — they are not
+ * scoreable. For crop-key generation (which includes stems) use
+ * generateCropKeys() in crop-keys.ts.
  */
 export function generateQuestionKeys(questionCount: number, subQuestions?: SubQuestionsMap | null): string[] {
   const keys: string[] = [];
   for (let q = 1; q <= questionCount; q++) {
     const sub = subQuestions?.[String(q)];
-    if (sub && sub.count > 1) {
-      for (let s = 0; s < sub.count; s++) {
-        keys.push(`${q}.${getSubLabel(s, sub.type)}`);
-      }
-    } else {
+    if (!sub || sub.count <= 1) {
       keys.push(String(q));
+      continue;
+    }
+    for (let s = 0; s < sub.count; s++) {
+      const subLabel = getSubLabel(s, sub.type);
+      const ss = sub.subSub?.[String(s)];
+      if (ss && ss.count > 1) {
+        for (let t = 0; t < ss.count; t++) {
+          keys.push(`${q}.${subLabel}.${getSubLabel(t, ss.type)}`);
+        }
+      } else {
+        keys.push(`${q}.${subLabel}`);
+      }
     }
   }
   return keys;
@@ -54,41 +125,71 @@ export function generateQuestionKeys(questionCount: number, subQuestions?: SubQu
 
 /**
  * Build a structure map for UI rendering.
- * Returns array of { mainQ, key, label, subIndex? } for each scoreable item.
+ * Returns array of { mainQ, key, label, … } for each LEAF scoreable item.
  */
 export type QuestionItem = {
   mainQ: number;         // main question number (1-based)
-  key: string;           // entry key (e.g., "2.b")
-  label: string;         // display label (e.g., "b" for sub-question, "3" for standalone)
-  isSubQuestion: boolean;
-  subIndex?: number;     // 0-based index within sub-questions
-  subTotal?: number;     // total sub-questions for this main question
+  key: string;           // entry key (e.g., "2.b", "5.a.i")
+  label: string;         // display label for the deepest level
+  isSubQuestion: boolean; // true if at least 2-level deep
+  // Level-2 (sub) info — present when the item lives inside a sub-question.
+  subIndex?: number;
+  subLabel?: string;
+  subTotal?: number;
   subType?: 'letter' | 'roman';
+  // Level-3 (sub-sub) info — present when the item is a 3-level leaf.
+  subSubIndex?: number;
+  subSubLabel?: string;
+  subSubTotal?: number;
+  subSubType?: 'letter' | 'roman';
 };
 
 export function buildQuestionStructure(questionCount: number, subQuestions?: SubQuestionsMap | null): QuestionItem[] {
   const items: QuestionItem[] = [];
   for (let q = 1; q <= questionCount; q++) {
     const sub = subQuestions?.[String(q)];
-    if (sub && sub.count > 1) {
-      for (let s = 0; s < sub.count; s++) {
-        items.push({
-          mainQ: q,
-          key: `${q}.${getSubLabel(s, sub.type)}`,
-          label: getSubLabel(s, sub.type),
-          isSubQuestion: true,
-          subIndex: s,
-          subTotal: sub.count,
-          subType: sub.type,
-        });
-      }
-    } else {
+    if (!sub || sub.count <= 1) {
       items.push({
         mainQ: q,
         key: String(q),
         label: String(q),
         isSubQuestion: false,
       });
+      continue;
+    }
+    for (let s = 0; s < sub.count; s++) {
+      const subLabel = getSubLabel(s, sub.type);
+      const ss = sub.subSub?.[String(s)];
+      if (ss && ss.count > 1) {
+        for (let t = 0; t < ss.count; t++) {
+          const ssLabel = getSubLabel(t, ss.type);
+          items.push({
+            mainQ: q,
+            key: `${q}.${subLabel}.${ssLabel}`,
+            label: ssLabel,
+            isSubQuestion: true,
+            subIndex: s,
+            subLabel,
+            subTotal: sub.count,
+            subType: sub.type,
+            subSubIndex: t,
+            subSubLabel: ssLabel,
+            subSubTotal: ss.count,
+            subSubType: ss.type,
+          });
+        }
+      } else {
+        items.push({
+          mainQ: q,
+          key: `${q}.${subLabel}`,
+          label: subLabel,
+          isSubQuestion: true,
+          subIndex: s,
+          subLabel,
+          subTotal: sub.count,
+          subType: sub.type,
+        });
+      }
     }
   }
   return items;

@@ -1476,10 +1476,12 @@ function ExerciseCard({
           </button>
         </div>
 
-        {/* ── Row 3: capture-status dots — one per scoreable key ──
-            • Whole question (no sub-parts):  small filled square
-            • Stem of multi-part question:    small filled rectangle
-            • Each sub-part:                  small filled circle
+        {/* ── Row 3: capture-status dots — one per scoreable / stem key ──
+            • Whole question (no sub-parts):       small filled square
+            • Stem of multi-part main question:    horizontal filled rectangle
+            • Each sub-part (no sub-sub):          small filled circle
+            • Sub-stem (sub-part WITH sub-sub):    smaller horizontal rect
+            • Sub-sub leaf:                        tiny filled circle
             Outline-only = not yet captured. Tap = jump to that crop or
             pre-select that key in the crop view. */}
         {item.questionCount > 0 && (
@@ -1491,6 +1493,11 @@ function ExerciseCard({
               const q = i + 1;
               const sub = item.subQuestions?.[String(q)];
               const hasSubs = !!sub && sub.count > 1;
+              const tapKey = (k: string) => {
+                const id = cropsByKey.get(k);
+                if (id) onJumpToCrop(id);
+                else onJumpToKey(k);
+              };
               return (
                 <div key={q} className="flex items-center gap-0.5">
                   {hasSubs ? (
@@ -1498,28 +1505,47 @@ function ExerciseCard({
                       <CaptureDot
                         kind="stem"
                         filled={!!cropsByKey.get(String(q))}
-                        onPress={() => {
-                          const id = cropsByKey.get(String(q));
-                          if (id) onJumpToCrop(id);
-                          else onJumpToKey(String(q));
-                        }}
+                        onPress={() => tapKey(String(q))}
                         labelKey={String(q)}
                       />
                       {Array.from({ length: sub.count }, (_, s) => {
-                        const label = getSubLabel(s, sub.type);
-                        const key = `${q}.${label}`;
+                        const subLabel = getSubLabel(s, sub.type);
+                        const subKey = `${q}.${subLabel}`;
+                        const ss = sub.subSub?.[String(s)];
+                        const hasSubSub = !!ss && ss.count > 1;
+                        if (!hasSubSub) {
+                          return (
+                            <CaptureDot
+                              key={subKey}
+                              kind="sub"
+                              filled={!!cropsByKey.get(subKey)}
+                              onPress={() => tapKey(subKey)}
+                              labelKey={subKey}
+                            />
+                          );
+                        }
                         return (
-                          <CaptureDot
-                            key={key}
-                            kind="sub"
-                            filled={!!cropsByKey.get(key)}
-                            onPress={() => {
-                              const id = cropsByKey.get(key);
-                              if (id) onJumpToCrop(id);
-                              else onJumpToKey(key);
-                            }}
-                            labelKey={key}
-                          />
+                          <span key={subKey} className="flex items-center gap-0.5">
+                            <CaptureDot
+                              kind="sub-stem"
+                              filled={!!cropsByKey.get(subKey)}
+                              onPress={() => tapKey(subKey)}
+                              labelKey={subKey}
+                            />
+                            {Array.from({ length: ss!.count }, (_, t) => {
+                              const ssLabel = getSubLabel(t, ss!.type);
+                              const ssKey = `${q}.${subLabel}.${ssLabel}`;
+                              return (
+                                <CaptureDot
+                                  key={ssKey}
+                                  kind="sub-sub"
+                                  filled={!!cropsByKey.get(ssKey)}
+                                  onPress={() => tapKey(ssKey)}
+                                  labelKey={ssKey}
+                                />
+                              );
+                            })}
+                          </span>
                         );
                       })}
                     </>
@@ -1527,11 +1553,7 @@ function ExerciseCard({
                     <CaptureDot
                       kind="whole"
                       filled={!!cropsByKey.get(String(q))}
-                      onPress={() => {
-                        const id = cropsByKey.get(String(q));
-                        if (id) onJumpToCrop(id);
-                        else onJumpToKey(String(q));
-                      }}
+                      onPress={() => tapKey(String(q))}
                       labelKey={String(q)}
                     />
                   )}
@@ -1647,7 +1669,12 @@ function CaptureDot({
   onPress,
   labelKey,
 }: {
-  kind: 'whole' | 'stem' | 'sub';
+  // whole    — Q with no sub-parts
+  // stem     — main-Q stem when Q has multiple sub-parts
+  // sub      — sub-part with no further sub-parts (leaf)
+  // sub-stem — sub-part that itself has sub-sub parts (its own stem)
+  // sub-sub  — level-3 leaf
+  kind: 'whole' | 'stem' | 'sub' | 'sub-stem' | 'sub-sub';
   filled: boolean;
   onPress: () => void;
   labelKey: string;
@@ -1665,6 +1692,22 @@ function CaptureDot({
     shape = (
       <span
         className={`w-3.5 h-1.5 rounded-[1.5px] transition-colors ${
+          filled ? 'bg-emerald-500' : 'border border-muted-foreground/40'
+        }`}
+      />
+    );
+  } else if (kind === 'sub-stem') {
+    shape = (
+      <span
+        className={`w-2.5 h-1 rounded-[1px] transition-colors ${
+          filled ? 'bg-emerald-500' : 'border border-muted-foreground/40'
+        }`}
+      />
+    );
+  } else if (kind === 'sub-sub') {
+    shape = (
+      <span
+        className={`w-1.5 h-1.5 rounded-full transition-colors ${
           filled ? 'bg-emerald-500' : 'border border-muted-foreground/40'
         }`}
       />
@@ -1738,27 +1781,63 @@ function CaptureGrid({
           const q = i + 1;
           const sub = subQuestions?.[String(q)];
           const hasSubs = !!sub && sub.count > 1;
+          const anySubHasSubSub =
+            hasSubs &&
+            Array.from({ length: sub!.count }).some((_, s) => {
+              const ss = sub!.subSub?.[String(s)];
+              return !!ss && ss.count > 1;
+            });
           return (
             <div
               key={q}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-card border border-border/30"
+              className="rounded-md bg-card border border-border/30 px-2 py-1 space-y-1"
             >
-              <span className="text-[11px] font-mono font-semibold text-foreground min-w-[28px]">
-                Q{q}
-              </span>
-              {hasSubs
-                ? cell(String(q), 'stem')
-                : cell(String(q), 'whole')}
-              {hasSubs && (
-                <>
-                  <span className="text-[10px] text-muted-foreground/50">
-                    ·
-                  </span>
-                  {Array.from({ length: sub.count }, (_, s) => {
-                    const label = getSubLabel(s, sub.type);
-                    return cell(`${q}.${label}`, label);
+              {/* Main-Q row: stem cell + flat sub-cell list (sub-stems show
+                  the sub-letter label; sub-sub leaves get their own row
+                  below). */}
+              <div className="flex items-center flex-wrap gap-1.5">
+                <span className="text-[11px] font-mono font-semibold text-foreground min-w-[28px]">
+                  Q{q}
+                </span>
+                {hasSubs
+                  ? cell(String(q), 'stem')
+                  : cell(String(q), 'whole')}
+                {hasSubs && (
+                  <>
+                    <span className="text-[10px] text-muted-foreground/50">·</span>
+                    {Array.from({ length: sub!.count }, (_, s) => {
+                      const label = getSubLabel(s, sub!.type);
+                      return cell(`${q}.${label}`, label);
+                    })}
+                  </>
+                )}
+              </div>
+
+              {/* Sub-sub rows — one per sub-part that has level-3 leaves.
+                  Indented and labelled "q.subLabel" so the relationship is
+                  visible. Hidden when no sub-part has sub-sub. */}
+              {anySubHasSubSub && (
+                <div className="space-y-1 pl-6">
+                  {Array.from({ length: sub!.count }, (_, s) => {
+                    const ss = sub!.subSub?.[String(s)];
+                    if (!ss || ss.count <= 1) return null;
+                    const subLabel = getSubLabel(s, sub!.type);
+                    return (
+                      <div
+                        key={s}
+                        className="flex items-center flex-wrap gap-1.5 rounded-sm bg-muted/40 px-1.5 py-0.5"
+                      >
+                        <span className="text-[10px] font-mono font-semibold text-muted-foreground min-w-[36px]">
+                          {q}.{subLabel}
+                        </span>
+                        {Array.from({ length: ss.count }, (_, t) => {
+                          const ssLabel = getSubLabel(t, ss.type);
+                          return cell(`${q}.${subLabel}.${ssLabel}`, ssLabel);
+                        })}
+                      </div>
+                    );
                   })}
-                </>
+                </div>
               )}
             </div>
           );

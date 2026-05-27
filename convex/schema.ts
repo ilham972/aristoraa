@@ -45,7 +45,7 @@ export default defineSchema({
     type: v.optional(v.string()), // "exercise" | "concept"
     pageNumber: v.optional(v.number()),
     pageNumberEnd: v.optional(v.number()),
-    subQuestions: v.optional(v.any()), // Record<string, { count: number, type: 'letter' | 'roman' }>
+    subQuestions: v.optional(v.any()), // Record<string, { count: number; type: 'letter' | 'roman'; subSub?: Record<string, { count: number; type: 'letter' | 'roman' }> }>. Outer key = main-Q number; subSub key = 0-based sub-index ("0" = first sub like "a" or "i"). See src/lib/sub-questions.ts.
     videoUrl: v.optional(v.string()), // YouTube (unlisted) URL for concept-type rows
     conceptSummary: v.optional(v.string()), // short text shown next to video
     // For concept-type rows only: other concept-type exercise rows that must

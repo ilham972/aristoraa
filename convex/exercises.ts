@@ -247,7 +247,7 @@ export const trimToCount = mutation({
 export const setSubQuestions = mutation({
   args: {
     id: v.id("exercises"),
-    subQuestions: v.any(), // Record<string, { count: number, type: 'letter' | 'roman' }> or null to clear
+    subQuestions: v.any(), // Record<string, { count: number; type: 'letter' | 'roman'; subSub?: Record<string, { count: number; type: 'letter' | 'roman' }> }> or null to clear. See src/lib/sub-questions.ts.
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();

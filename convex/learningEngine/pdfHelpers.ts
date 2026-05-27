@@ -136,14 +136,21 @@ export const getSheetForRender = internalQuery({
       return null;
     };
 
-    // Resolve stem attachments for a picked sub-question crop (case
-    // "ok-sub-with-stem"). For other integrity kinds → [] (whole questions
-    // have no stem; blocking kinds throw before render so the field never
-    // gets read).
+    // Resolve stem attachments for a picked sub-question / level-3-leaf
+    // crop. Both "ok-sub-with-stem" and "ok-leaf3-with-stems" expose the
+    // same `stemQuestionIds` field (level-3 packs mainQ stems first, then
+    // sub-stems, in print order). For other integrity kinds → [] (whole
+    // questions have no stem; blocking kinds throw before render so the
+    // field never gets read).
     const resolveStemAttachments = async (
       integrity: CropIntegrityWithMessage,
     ): Promise<QuestionForRender["stemAttachments"]> => {
-      if (integrity.kind !== "ok-sub-with-stem") return [];
+      if (
+        integrity.kind !== "ok-sub-with-stem" &&
+        integrity.kind !== "ok-leaf3-with-stems"
+      ) {
+        return [];
+      }
       const stems: QuestionForRender["stemAttachments"] = [];
       for (const sid of integrity.stemQuestionIds) {
         const stemDoc = await ctx.db.get(sid);

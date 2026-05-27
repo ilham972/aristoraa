@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { parseCropKey } from '@/lib/crop-keys';
-import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
+import { getSubLabel, getSubLabels, type SubQuestionsMap } from '@/lib/sub-questions';
 import type { Id } from '@/lib/convex';
 
 type Exercise = {
@@ -20,8 +20,12 @@ interface Props {
   onCancelSelection: () => void;
 }
 
-// Two-row picker shown above the crop body. Row 1 = main-Q numbers,
-// Row 2 = sub-letters of the currently-selected main-Q (or just "Stem").
+// Three-row picker shown above the crop body.
+//   Row 1 = main-Q numbers (1, 2, 3, …)
+//   Row 2 = "Stem" + sub-letters of the active main-Q (or "Whole" if no subs)
+//   Row 3 = "Sub-stem" + sub-sub letters of the active sub-Q
+//           (only when that sub-Q has level-3 sub-parts)
+//
 // Bigger touch targets, current target highlighted, existing-cropped keys
 // shown with a small dot so the user knows what's already done.
 export function CropPillHeader({
@@ -34,8 +38,26 @@ export function CropPillHeader({
 }: Props) {
   const parsed = currentKey ? parseCropKey(currentKey) : null;
   const activeMainQ = parsed?.mainQ ?? 0;
+  const activeSubLabel = parsed?.subLabel ?? null;
   const subDef = exercise.subQuestions?.[String(activeMainQ)];
   const hasSubs = !!subDef && subDef.count > 1;
+
+  // Resolve the active sub-question's INDEX (0-based) by matching the label
+  // back to its position. The label is derived from index + type, so it's
+  // safe — but it does mean a type-toggle on the parent would invalidate
+  // a previously-active key (which is fine: the user picks a new pill).
+  const activeSubIndex = useMemo(() => {
+    if (!subDef || !activeSubLabel) return -1;
+    const labels = getSubLabels(subDef.count, subDef.type);
+    return labels.indexOf(activeSubLabel);
+  }, [subDef, activeSubLabel]);
+
+  const subSubDef =
+    activeSubIndex >= 0
+      ? subDef?.subSub?.[String(activeSubIndex)]
+      : undefined;
+  const hasSubSub = !!subSubDef && subSubDef.count > 1;
+
   const existingSet = useMemo(() => new Set(existingKeys), [existingKeys]);
 
   const mainBtn = (q: number) => {
@@ -89,9 +111,42 @@ export function CropPillHeader({
     );
   };
 
+  const subSubBtn = (label: string, key: string) => {
+    const isActive = currentKey === key;
+    const done = existingSet.has(key);
+    return (
+      <button
+        key={key}
+        onClick={() => onPickKey(key)}
+        className={`relative h-7 min-w-[30px] px-1.5 rounded-md text-[11px] font-mono font-semibold transition-all active:scale-95 ${
+          isActive
+            ? 'bg-primary text-primary-foreground shadow-sm'
+            : 'bg-muted text-foreground hover:bg-muted/70'
+        }`}
+      >
+        {label}
+        {done && (
+          <span
+            className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
+              isActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
+            }`}
+          />
+        )}
+      </button>
+    );
+  };
+
   const stemKey = String(activeMainQ);
   const stemActive = currentKey === stemKey;
   const stemDone = existingSet.has(stemKey);
+
+  // The "Sub-stem" key — e.g. "5.a" — is the stem for level-3 leaves.
+  const subStemKey =
+    activeSubIndex >= 0 && subDef
+      ? `${activeMainQ}.${getSubLabel(activeSubIndex, subDef.type)}`
+      : null;
+  const subStemActive = subStemKey != null && currentKey === subStemKey;
+  const subStemDone = subStemKey != null && existingSet.has(subStemKey);
 
   // Status strip removed — keep this header lean. The currently-selected
   // pill (highlighted via `currentKey`) and the sky-blue dot on a re-key
@@ -108,7 +163,7 @@ export function CropPillHeader({
         )}
       </div>
 
-      {/* Sub-letter row (or just Stem) */}
+      {/* Sub-letter row (or just Stem / Whole) */}
       <div className="flex flex-wrap gap-1 items-center">
         <button
           onClick={() => onPickKey(stemKey)}
@@ -132,17 +187,47 @@ export function CropPillHeader({
         </button>
         {hasSubs && (
           <>
-            <span className="text-[10px] text-muted-foreground/60 mx-0.5">
-              ·
-            </span>
-            {Array.from({ length: subDef.count }, (_, i) => {
-              const label = getSubLabel(i, subDef.type);
+            <span className="text-[10px] text-muted-foreground/60 mx-0.5">·</span>
+            {Array.from({ length: subDef!.count }, (_, i) => {
+              const label = getSubLabel(i, subDef!.type);
               const key = `${activeMainQ}.${label}`;
               return subBtn(label, key);
             })}
           </>
         )}
       </div>
+
+      {/* Sub-sub row — only when the active sub-question has level-3 leaves.
+          Shown below the sub row so the parent/child relationship is clear.
+          The "Sub-stem" pill captures the intermediate stem (e.g. "5.a"); the
+          rest are leaves (e.g. "5.a.i", "5.a.ii"). */}
+      {hasSubSub && subStemKey && (
+        <div className="flex flex-wrap gap-1 items-center pl-4 border-l-2 border-primary/20 ml-1">
+          <button
+            onClick={() => onPickKey(subStemKey)}
+            className={`relative h-7 px-2 rounded-md text-[11px] font-semibold transition-all active:scale-95 ${
+              subStemActive
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-muted text-foreground hover:bg-muted/70'
+            }`}
+          >
+            Sub-stem
+            {subStemDone && (
+              <span
+                className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
+                  subStemActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
+                }`}
+              />
+            )}
+          </button>
+          <span className="text-[10px] text-muted-foreground/60 mx-0.5">·</span>
+          {Array.from({ length: subSubDef!.count }, (_, i) => {
+            const label = getSubLabel(i, subSubDef!.type);
+            const key = `${subStemKey}.${label}`;
+            return subSubBtn(label, key);
+          })}
+        </div>
+      )}
     </div>
   );
 }

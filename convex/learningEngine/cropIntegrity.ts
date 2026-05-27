@@ -4,10 +4,15 @@
 //   - a whole question        e.g. key "3" when Q3 has no sub-parts
 //   - a stem ("preamble")     e.g. key "1" when Q1 has sub-parts {a, b, c}
 //   - a sub-question          e.g. key "1.a"
+//   - a sub-stem              e.g. key "5.a" when 5.a itself has sub-sub
+//                             parts {i, ii, iii} (level-3 mode)
+//   - a level-3 leaf          e.g. key "5.a.i"
 //
-// The student's atomic answerable unit is a whole-question or a single
-// sub-question. A bare stem is useless without its sub-parts; a bare
-// sub-question is useless without its stem (the instruction text).
+// The student's atomic answerable unit is a whole-question, a single
+// sub-question (level-2 leaf), or a level-3 leaf. A bare stem is useless
+// without its sub-parts; a bare sub-question / sub-stem is useless without
+// its stem (the instruction text). A level-3 leaf needs BOTH parent stems
+// (the main-Q stem and the sub-stem) to make sense on the printed sheet.
 //
 // This module classifies one picked crop's role and surfaces the action a
 // human must take when the cropping is incomplete. The PDF renderer reads
@@ -39,7 +44,12 @@ function subLabel(index: number, type: "letter" | "roman"): string {
   return SUB_LETTERS[index] ?? String(index + 1);
 }
 
-type SubQuestionDef = { count: number; type: "letter" | "roman" };
+type SubSubDef = { count: number; type: "letter" | "roman" };
+type SubQuestionDef = {
+  count: number;
+  type: "letter" | "roman";
+  subSub?: Record<string, SubSubDef>;
+};
 
 export type CropIntegrity =
   // No textbook structure to check (past-paper, teacher-authored, or
@@ -75,6 +85,40 @@ export type CropIntegrity =
       kind: "block-sub-without-stem";
       mainQ: number;
       subKey: string;
+    }
+  // Level-3 leaf (e.g. "5.a.i") with BOTH parent stems cropped.
+  // `stemQuestionIds` shares its name + shape with `ok-sub-with-stem` so
+  // the renderer can read either case the same way. Order is print
+  // order: mainQ stem first (Q5's preamble), then sub-stem (Q5.a's
+  // preamble), so they glue above the leaf in reading order.
+  | {
+      kind: "ok-leaf3-with-stems";
+      mainQ: number;
+      subLabel: string;
+      stemQuestionIds: Id<"questionBank">[];
+    }
+  // Level-3 leaf cropped but one or both parent stems are missing.
+  | {
+      kind: "block-leaf3-missing-stems";
+      mainQ: number;
+      subLabel: string;
+      missingMainStem: boolean;
+      missingSubStem: boolean;
+    }
+  // Planner picked a sub-stem (e.g. "5.a") when sub-sub leaves exist —
+  // analogous to block-stem-when-subparts-exist but one level deeper.
+  | {
+      kind: "block-sub-stem-when-leaves-exist";
+      mainQ: number;
+      subLabel: string;
+      availableLeafLabels: string[];
+    }
+  // Sub-stem cropped but level-3 leaves not yet cropped.
+  | {
+      kind: "block-sub-stem-missing-leaves";
+      mainQ: number;
+      subLabel: string;
+      missingLeafLabels: string[];
     };
 
 export type CropIntegrityWithMessage = CropIntegrity & {
@@ -89,7 +133,30 @@ function decorate(c: CropIntegrity): CropIntegrityWithMessage {
     case "ok-pass-through":
     case "ok-whole":
     case "ok-sub-with-stem":
+    case "ok-leaf3-with-stems":
       return { ...c, message: "", blocking: false };
+    case "block-leaf3-missing-stems": {
+      const parts: string[] = [];
+      if (c.missingMainStem) parts.push(`main stem Q${c.mainQ}`);
+      if (c.missingSubStem) parts.push(`sub-stem Q${c.mainQ}.${c.subLabel}`);
+      return {
+        ...c,
+        blocking: true,
+        message: `Q${c.mainQ}.${c.subLabel}: level-3 leaf needs ${parts.join(" and ")} cropped first.`,
+      };
+    }
+    case "block-sub-stem-when-leaves-exist":
+      return {
+        ...c,
+        blocking: true,
+        message: `Q${c.mainQ}.${c.subLabel}: this is the sub-stem only. Swap to one of the leaves (${c.availableLeafLabels.join(", ")}).`,
+      };
+    case "block-sub-stem-missing-leaves":
+      return {
+        ...c,
+        blocking: true,
+        message: `Q${c.mainQ}.${c.subLabel}: sub-stem cropped but leaves (${c.missingLeafLabels.join(", ")}) not cropped. Open the cropping page and add them.`,
+      };
     case "block-stem-missing-subparts":
       return {
         ...c,
@@ -124,21 +191,37 @@ export async function analyzeCropIntegrity(
   }
 
   const key = q.linkedQuestionKey;
-  const dot = key.indexOf(".");
-  const mainQStr = dot < 0 ? key : key.slice(0, dot);
-  const subLabelStr = dot < 0 ? null : key.slice(dot + 1);
-  const mainQ = parseInt(mainQStr, 10);
+  // Split into up to 3 parts: "5" / "5.a" / "5.a.i". Any deeper key is
+  // currently outside the supported structure — treat as pass-through.
+  const parts = key.split(".");
+  const mainQ = parseInt(parts[0], 10);
   if (!Number.isFinite(mainQ) || mainQ <= 0) {
     return decorate({ kind: "ok-pass-through" });
   }
+  const subLabelStr = parts.length >= 2 ? parts[1] : null;
+  const subSubLabelStr = parts.length >= 3 ? parts.slice(2).join(".") : null;
 
   const exercise = await ctx.db.get(q.linkedExerciseId);
   if (!exercise) return decorate({ kind: "ok-pass-through" });
 
-  const subDef = (exercise.subQuestions as
+  const subQuestionsMap = exercise.subQuestions as
     | Record<string, SubQuestionDef>
-    | undefined)?.[String(mainQ)];
+    | undefined;
+  const subDef = subQuestionsMap?.[String(mainQ)];
   const hasSubparts = !!subDef && subDef.count > 1;
+
+  // Resolve sub-index (0-based) from the level-2 label, when we have one.
+  const subIndex =
+    subDef && subLabelStr
+      ? (() => {
+          for (let i = 0; i < subDef.count; i++) {
+            if (subLabel(i, subDef.type) === subLabelStr) return i;
+          }
+          return -1;
+        })()
+      : -1;
+  const subSubDef = subIndex >= 0 ? subDef?.subSub?.[String(subIndex)] : undefined;
+  const hasSubSubLeaves = !!subSubDef && subSubDef.count > 1;
 
   // Single sibling read covers stem-lookup AND sub-part presence in O(1)
   // index scans. Filter in memory by key.
@@ -149,34 +232,52 @@ export async function analyzeCropIntegrity(
     )
     .collect();
 
-  // Sibling sub-questions of the SAME mainQ (any sub-letter).
-  const siblingSubKeys = new Set<string>();
-  // Sibling stem crops keyed exactly "<mainQ>". Multiple are allowed —
-  // a stem can have several figures sharing the key.
-  const stemQuestionIds: Id<"questionBank">[] = [];
+  // mainQ stem crops keyed exactly "<mainQ>". Multiple allowed (figures
+  // share the key).
+  const mainStemIds: Id<"questionBank">[] = [];
+  // Sub-part keys for this mainQ at level-2 (the second segment only).
+  // e.g. for sibling "5.a" or "5.a.i" → records "a".
+  const siblingSubLabels = new Set<string>();
+  // Sub-stem crops for the CURRENT sub-part keyed exactly "<mainQ>.<subLabel>".
+  const subStemIds: Id<"questionBank">[] = [];
+  // Leaf labels for the CURRENT sub-part — the level-3 third segment.
+  // e.g. for sibling "5.a.i" when analyzing "5.a.*" → records "i".
+  const siblingLeafLabels = new Set<string>();
+
   for (const s of siblings) {
     const sk = s.linkedQuestionKey;
     if (!sk) continue;
-    if (sk === String(mainQ)) {
-      // Don't count the row we're analyzing as its own stem.
-      if (s._id !== q._id) stemQuestionIds.push(s._id);
+    const sp = sk.split(".");
+    if (sp[0] !== String(mainQ)) continue;
+
+    if (sp.length === 1) {
+      // "<mainQ>" — main stem crop. Don't count the row being analyzed.
+      if (s._id !== q._id) mainStemIds.push(s._id);
       continue;
     }
-    const sdot = sk.indexOf(".");
-    if (sdot < 0) continue;
-    if (sk.slice(0, sdot) === String(mainQ)) {
-      siblingSubKeys.add(sk.slice(sdot + 1));
+    // sp.length >= 2
+    siblingSubLabels.add(sp[1]);
+
+    // Only treat as sub-stem / leaf siblings if they share the current
+    // sub-label being analyzed.
+    if (subLabelStr && sp[1] === subLabelStr) {
+      if (sp.length === 2) {
+        if (s._id !== q._id) subStemIds.push(s._id);
+      } else {
+        // length >= 3 — leaf
+        siblingLeafLabels.add(sp.slice(2).join("."));
+      }
     }
   }
 
-  // ── No dot in key ⇒ the crop is keyed at the mainQ (stem OR whole).
+  // ── 1 part: the crop is keyed at the mainQ (stem OR whole). ───────
   if (subLabelStr === null) {
     if (!hasSubparts) return decorate({ kind: "ok-whole" });
 
     // Stem of a sub-divided question.
-    if (siblingSubKeys.size > 0) {
+    if (siblingSubLabels.size > 0) {
       // Sub-parts exist → planner shouldn't have picked the stem.
-      const availableSubLabels = Array.from(siblingSubKeys).sort();
+      const availableSubLabels = Array.from(siblingSubLabels).sort();
       return decorate({
         kind: "block-stem-when-subparts-exist",
         mainQ,
@@ -196,18 +297,70 @@ export async function analyzeCropIntegrity(
     });
   }
 
-  // ── Dot in key ⇒ sub-question crop.
-  if (stemQuestionIds.length === 0) {
+  // ── 2 parts: the crop is keyed at a sub-part or sub-stem. ─────────
+  if (subSubLabelStr === null) {
+    // Missing main stem is always blocking — sub-questions cannot be
+    // printed without their parent instruction text.
+    if (mainStemIds.length === 0) {
+      return decorate({
+        kind: "block-sub-without-stem",
+        mainQ,
+        subKey: key,
+      });
+    }
+
+    // If THIS sub-part has its own sub-sub leaves, this row is a
+    // sub-stem. Planner should pick one of the leaves instead.
+    if (hasSubSubLeaves && siblingLeafLabels.size > 0) {
+      return decorate({
+        kind: "block-sub-stem-when-leaves-exist",
+        mainQ,
+        subLabel: subLabelStr,
+        availableLeafLabels: Array.from(siblingLeafLabels).sort(),
+      });
+    }
+    if (hasSubSubLeaves) {
+      // Sub-stem cropped but level-3 leaves missing.
+      const expected: string[] = [];
+      for (let i = 0; i < subSubDef!.count; i++) {
+        expected.push(subLabel(i, subSubDef!.type));
+      }
+      return decorate({
+        kind: "block-sub-stem-missing-leaves",
+        mainQ,
+        subLabel: subLabelStr,
+        missingLeafLabels: expected,
+      });
+    }
+
+    // Regular 2-level sub-part with parent stem present — happy path.
     return decorate({
-      kind: "block-sub-without-stem",
+      kind: "ok-sub-with-stem",
       mainQ,
-      subKey: key,
+      stemQuestionIds: mainStemIds,
+    });
+  }
+
+  // ── 3 parts: the crop is a level-3 leaf. ──────────────────────────
+  // Needs BOTH the main stem and the sub-stem for context.
+  const missingMainStem = mainStemIds.length === 0;
+  const missingSubStem = subStemIds.length === 0;
+  if (missingMainStem || missingSubStem) {
+    return decorate({
+      kind: "block-leaf3-missing-stems",
+      mainQ,
+      subLabel: subLabelStr,
+      missingMainStem,
+      missingSubStem,
     });
   }
   return decorate({
-    kind: "ok-sub-with-stem",
+    kind: "ok-leaf3-with-stems",
     mainQ,
-    stemQuestionIds,
+    subLabel: subLabelStr,
+    // Print order: mainQ stem(s) first, then sub-stem(s). Both lists may
+    // contain >1 entry when multiple figures share the same stem key.
+    stemQuestionIds: [...mainStemIds, ...subStemIds],
   });
 }
 
