@@ -60,23 +60,19 @@ function usePersistentState<T>(key: string, init: T): [T, React.Dispatch<React.S
   return [val, setVal];
 }
 
-export default function ScoreEntryPage() {
-  return <ScoreEntryWorkspace />;
-}
-
-// ScoreEntryWorkspace — the scoring UI body. Exported separately so the
-// session page can mount it inside its Score tab with `lockedSlotId` +
-// `lockedDate`, which freezes the slot/date selection, hides the top-bar
-// chrome (session info, unsubmitted dot, countdown), and hides the
-// attendance-mode toggle (Attendance has its own tab now).
-export function ScoreEntryWorkspace({
+// ScoreTab — the scoring UI body, mounted as the Score tab on
+// /session/[slotId]/[date]. Receives lockedSlotId + lockedDate from the
+// session page, which freezes the slot/date selection, hides the legacy
+// top-bar chrome (session info, unsubmitted dot, countdown), and hides
+// the attendance-mode toggle (Attendance has its own tab now).
+export function ScoreTab({
   lockedSlotId,
   lockedDate,
 }: {
-  lockedSlotId?: Id<'scheduleSlots'>;
-  lockedDate?: string;
-} = {}) {
-  const locked = lockedSlotId !== undefined && lockedDate !== undefined;
+  lockedSlotId: Id<'scheduleSlots'>;
+  lockedDate: string;
+}) {
+  const locked = true;
 
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const iv = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(iv); }, []);

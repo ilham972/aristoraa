@@ -1023,20 +1023,13 @@ function AlgorithmPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Phase E.5 — the old Sheet subtab has moved to the top-level /sheets
-  // nav. Redirect anyone landing here via a bookmark so they don't see a
-  // broken tab id.
+  // The old Sheet subtab has been retired — Sheets is now a per-session
+  // tab reached via /groups → Day view → tap session. Redirect anyone
+  // landing here via a stale bookmark to the new home so they don't see
+  // a broken tab id.
   useEffect(() => {
     if (searchParams.get('tab') === 'sheet') {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete('tab');
-      // Drop the algorithm-only g/t selectors too — they were grade/term
-      // pickers for the inspector, which the new /sheets page resolves
-      // per-student.
-      params.delete('g');
-      params.delete('t');
-      const qs = params.toString();
-      router.replace(qs ? `/sheets?${qs}` : '/sheets');
+      router.replace('/groups');
     }
   }, [router, searchParams]);
 

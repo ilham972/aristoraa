@@ -35,6 +35,7 @@ import {
   analyzeManyCropIntegrity,
   type CropIntegrityWithMessage,
 } from "./cropIntegrity";
+import { effectiveStudentIdsForSlot } from "../lib/roster";
 
 // Local copy of the planner's module-of-day mapping. Defaults are Sunday off
 // only; per-student `offDays` overrides this. Names match what students.offDays
@@ -82,13 +83,16 @@ async function buildRowsForSlotDate(
   slotId: Id<"scheduleSlots">,
   dateStr: string,
 ): Promise<SheetRowForDashboard[]> {
-  const links = await ctx.db
-    .query("slotStudents")
-    .withIndex("by_slot", (q) => q.eq("slotId", slotId))
-    .collect();
-
+  // Roster seam — resolves group-owned slots via groupMembers, falls back
+  // to legacy slotStudents for un-migrated slots. Also applies date-level
+  // add/remove overrides from slotOverrides. Without this, sessions created
+  // via /groups (which only populates groupMembers, not slotStudents) would
+  // show "0 students" here even though Attendance can see them.
+  const slot = await ctx.db.get(slotId);
+  if (!slot) return [];
+  const ids = await effectiveStudentIdsForSlot(ctx, slot, dateStr);
   const students = (
-    await Promise.all(links.map((l) => ctx.db.get(l.studentId)))
+    await Promise.all(ids.map((id) => ctx.db.get(id)))
   ).filter((s): s is Doc<"students"> => s !== null);
 
   const rows: SheetRowForDashboard[] = [];

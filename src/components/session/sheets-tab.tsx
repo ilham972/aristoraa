@@ -7,15 +7,15 @@
 //   • the search box and grade filter (roster is fixed)
 //   • the off-slot "Other students" section
 //   • the alerts-only filter
+//   • the in-tab date stepper (the session-page header stepper now
+//     navigates across the group's sessions; this tab is purely "sheets
+//     for the current session's date")
 // and keeps only the status filter — the one ergonomic filter for
-// triaging the morning queue. The session's date is the default, but a
-// compact stepper lets the tutor look at yesterday / tomorrow without
-// leaving the session page.
+// triaging the morning queue.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { toast } from 'sonner';
-import { ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { SheetPreviewDrawer } from '@/components/algorithm/sheet-preview';
@@ -39,25 +39,6 @@ import {
   type StudentLite,
 } from '@/lib/sheets/scope';
 
-function ymdLocal(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function addDays(ymd: string, n: number): string {
-  const d = new Date(ymd + 'T00:00:00');
-  d.setDate(d.getDate() + n);
-  return ymdLocal(d);
-}
-
-function fmtDateLabel(ymd: string): string {
-  const d = new Date(ymd + 'T00:00:00');
-  return d.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
 export function SheetsTab({
   slotId,
   sessionDate,
@@ -65,9 +46,10 @@ export function SheetsTab({
   slotId: Id<'scheduleSlots'>;
   sessionDate: string;
 }) {
-  // Visible date — starts at the session date; user can step ±1 day or
-  // jump back. Roster never changes.
-  const [dateStr, setDateStr] = useState(sessionDate);
+  // Date is always the session's date. To view other days for the same
+  // group, the user uses the session-page header stepper (which navigates
+  // to the next/prev session of this group, possibly on a different slot).
+  const dateStr = sessionDate;
 
   // Status filter only. No grade, no alertsOnly, no search.
   const [statuses, setStatuses] = useState<SheetRowStatus[]>([]);
@@ -341,20 +323,10 @@ export function SheetsTab({
   }, [zipAction, slotId, dateStr]);
 
   // ── Render ──
-  const isOffDate = dateStr !== sessionDate;
-
   return (
     <div className="h-full flex flex-col">
-      {/* Date stepper + status chips — sticky at the top of the tab. */}
-      <div className="shrink-0 space-y-2 pb-2">
-        <DateStepper
-          dateStr={dateStr}
-          sessionDate={sessionDate}
-          isOffDate={isOffDate}
-          onPrev={() => setDateStr((d) => addDays(d, -1))}
-          onNext={() => setDateStr((d) => addDays(d, +1))}
-          onReset={() => setDateStr(sessionDate)}
-        />
+      {/* Status chips — sticky at the top of the tab. */}
+      <div className="shrink-0 pb-2">
         <StatusChips selected={statuses} onChange={setStatuses} />
       </div>
 
@@ -440,60 +412,6 @@ export function SheetsTab({
           sheetId={editSheetId}
           onClose={() => setEditSheetId(null)}
         />
-      )}
-    </div>
-  );
-}
-
-function DateStepper({
-  dateStr,
-  sessionDate,
-  isOffDate,
-  onPrev,
-  onNext,
-  onReset,
-}: {
-  dateStr: string;
-  sessionDate: string;
-  isOffDate: boolean;
-  onPrev: () => void;
-  onNext: () => void;
-  onReset: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={onPrev}
-        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
-        aria-label="Previous day"
-      >
-        <ChevronLeft className="w-4 h-4" />
-      </button>
-      <div className="flex-1 text-center">
-        <p className="text-xs font-semibold text-foreground tabular-nums">
-          {fmtDateLabel(dateStr)}
-        </p>
-        {isOffDate && (
-          <p className="text-[10px] text-muted-foreground">
-            session day: {fmtDateLabel(sessionDate)}
-          </p>
-        )}
-      </div>
-      <button
-        onClick={onNext}
-        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
-        aria-label="Next day"
-      >
-        <ChevronRight className="w-4 h-4" />
-      </button>
-      {isOffDate && (
-        <button
-          onClick={onReset}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary hover:bg-primary/10"
-          aria-label="Reset to session date"
-        >
-          <RotateCcw className="w-3 h-3" /> Reset
-        </button>
       )}
     </div>
   );

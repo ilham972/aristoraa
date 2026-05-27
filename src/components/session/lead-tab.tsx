@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import {
   Radio,
@@ -49,42 +48,30 @@ type InferredState =
   | 'not-in-slot'
   | 'absent';
 
-export default function LeadDashboardPage() {
-  return <LeadWorkspace />;
-}
-
-// LeadWorkspace — the dashboard body. Exported separately so the session
-// page can mount it inside its Lead tab with `lockedSlotId`, forcing the
-// roster to that session's students instead of auto-resolving from the
-// teacher's active slot. The header chrome is hidden in locked mode
-// because the session page already shows the group / date / time.
-export function LeadWorkspace({
+// LeadTab — the dashboard body, mounted as the Lead tab on
+// /session/[slotId]/[date]. Receives lockedSlotId to force the roster to
+// that session's students instead of auto-resolving from the teacher's
+// active slot. The header chrome is hidden because the session page
+// already shows the group / date / time. lockedDate is accepted for API
+// symmetry but ignored — Lead is a "right-now" dashboard so we always
+// read today's doubts / entries even when the session is on another date.
+export function LeadTab({
   lockedSlotId,
+  lockedDate,
 }: {
-  lockedSlotId?: Id<'scheduleSlots'>;
-  // lockedDate accepted for API symmetry with ScoreEntryWorkspace; Lead is
-  // a "right-now" dashboard so we always read today's doubts/entries even
-  // when the session is on a different date.
-  lockedDate?: string;
-} = {}) {
-  const locked = lockedSlotId !== undefined;
+  lockedSlotId: Id<'scheduleSlots'>;
+  lockedDate: string;
+}) {
+  void lockedDate;
+  const locked = true;
 
-  const router = useRouter();
-  const { teacher, role, isLoading: teacherLoading } = useCurrentTeacher();
+  const { teacher, isLoading: teacherLoading } = useCurrentTeacher();
   const today = getTodayDateStr();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
-
-  // Redirect non-lead roles — only when accessed as a standalone page.
-  // Inside the session Lead tab, every role can see the dashboard.
-  useEffect(() => {
-    if (locked) return;
-    if (teacherLoading) return;
-    if (role === 'correction' || role === 'teacher') router.replace('/groups');
-  }, [locked, role, teacherLoading, router]);
 
   // Resolve today's active slot for this teacher (skipped in locked mode —
   // lockedSlotId takes over).

@@ -7,14 +7,28 @@ const nextConfig: NextConfig = {
     },
   },
   async redirects() {
-    // Legacy URLs from the pre-E.5 split (Insights → Sheet subtab and the
-    // dedicated /algorithm/sheets dashboard). Both consolidate into /sheets.
-    // `/algorithm?tab=sheet` is handled in src/app/algorithm/page.tsx since
-    // Next.js `redirects()` only matches paths, not query strings.
+    // Retired standalone routes — Sheets / Score / Lead are now per-session
+    // tabs reached via /groups → Day view → tap session. Old bookmarks
+    // land on the new home so they never 404.
     return [
       {
         source: '/algorithm/sheets',
-        destination: '/sheets',
+        destination: '/groups',
+        permanent: false,
+      },
+      {
+        source: '/sheets',
+        destination: '/groups',
+        permanent: false,
+      },
+      {
+        source: '/score-entry',
+        destination: '/groups',
+        permanent: false,
+      },
+      {
+        source: '/lead',
+        destination: '/groups',
         permanent: false,
       },
     ];
