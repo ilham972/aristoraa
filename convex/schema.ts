@@ -138,6 +138,13 @@ export default defineSchema({
     // optional so existing rows still validate; new code never sets or
     // reads it. Hard delete is the only "remove" path now.
     archived: v.optional(v.boolean()),
+    // First date this group's sessions count for analytics + Day-view ring
+    // state. Sessions strictly before this date are "pre-tracking": they
+    // render as muted on the Day view (no red 'needs entry' urgency) and are
+    // excluded from every analytics aggregate. Used when a group existed
+    // before the tutor started logging into the app, so historical schedule
+    // shadows don't pollute revenue/attendance numbers. YYYY-MM-DD.
+    loggingStartDate: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -235,6 +242,11 @@ export default defineSchema({
     slotId: v.id("scheduleSlots"),
     date: v.string(),
     status: v.string(), // "held" | "cancelled_by_tutor"
+    // Structured cancellation reason. Only meaningful when status =
+    // "cancelled_by_tutor". One of: "sick" | "poya" | "festival" |
+    // "students_unavailable" | "personal" | "other". The free-text `note`
+    // field is still available for extra context on top of the reason.
+    reason: v.optional(v.string()),
     note: v.optional(v.string()),
     loggedByTeacherId: v.optional(v.id("teachers")),
     loggedAt: v.number(),

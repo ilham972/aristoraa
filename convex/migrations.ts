@@ -1,4 +1,5 @@
 import { mutation } from "./_generated/server";
+import { v } from "convex/values";
 
 // Day-of-week to moduleId mapping (the default timetable)
 const DAY_TO_MODULE: Record<string, string> = {
@@ -32,5 +33,42 @@ export const backfillRoomTimetables = mutation({
     }
 
     return `Migration complete: ${updated} rooms updated, ${skipped} already had timetables, ${rooms.length} total rooms`;
+  },
+});
+
+/**
+ * One-time migration: stamp every group without a loggingStartDate with
+ * today's local date. After this runs, all historical Day-view sessions
+ * (which existed in the schedule before app adoption) become "pre-tracking"
+ * and stop polluting revenue/attendance analytics.
+ *
+ * Run via: npx convex run migrations:backfillLoggingStartDate
+ * Pass a custom date with: npx convex run migrations:backfillLoggingStartDate '{"date":"2026-05-28"}'
+ */
+export const backfillLoggingStartDate = mutation({
+  args: {
+    // Optional override. When omitted we use the date the migration runs.
+    date: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const today =
+      args.date ??
+      (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      })();
+
+    const groups = await ctx.db.query("groups").collect();
+    let updated = 0;
+    let skipped = 0;
+    for (const g of groups) {
+      if (g.loggingStartDate) {
+        skipped += 1;
+        continue;
+      }
+      await ctx.db.patch(g._id, { loggingStartDate: today });
+      updated += 1;
+    }
+    return `Migration complete: ${updated} groups stamped with ${today}, ${skipped} already had a loggingStartDate`;
   },
 });

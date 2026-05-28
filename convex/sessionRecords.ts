@@ -152,7 +152,13 @@ export const weekSessions = query({
       startTime: string;
       endTime: string;
       hours: number;
-      logStatus: "unlogged" | "held" | "cancelled";
+      // pre-tracking: date < group.loggingStartDate. Card renders muted with
+      // no urgency ring; excluded from analytics aggregates.
+      logStatus: "unlogged" | "held" | "cancelled" | "pre-tracking";
+      // Surfaced only when logStatus="cancelled". Drives the Day-view
+      // full-day banner ("Day off — Poya") so the UI can show the reason
+      // without re-querying sessionLogs.
+      cancelReason?: string;
       rosterCount: number;
       presentCount: number;
       absentCount: number;
@@ -177,6 +183,31 @@ export const weekSessions = query({
         if (!slot.groupId) continue;
         const group = await ctx.db.get(slot.groupId);
         if (!group) continue;
+
+        // Pre-tracking: render a placeholder card with no aggregates so the
+        // tutor sees the slot existed but understands it's out of scope.
+        const isPreTracking =
+          !!group.loggingStartDate && date < group.loggingStartDate;
+        if (isPreTracking) {
+          sessions.push({
+            slotId: slot._id,
+            groupId: group._id,
+            groupName: group.name,
+            date,
+            dayOfWeek: slot.dayOfWeek,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            hours: hoursBetween(slot.startTime, slot.endTime),
+            logStatus: "pre-tracking",
+            rosterCount: 0,
+            presentCount: 0,
+            absentCount: 0,
+            expected: 0,
+            collected: 0,
+            credit: 0,
+          });
+          continue;
+        }
 
         const [log, attendance, payments, roster] = await Promise.all([
           ctx.db
@@ -250,6 +281,7 @@ export const weekSessions = query({
           endTime: slot.endTime,
           hours,
           logStatus,
+          cancelReason: logStatus === "cancelled" ? log?.reason : undefined,
           rosterCount: roster.length,
           presentCount,
           absentCount,
@@ -413,11 +445,24 @@ export const sessionDetail = query({
 //   • Wipes attendance + sessionPayments for this (slot, date).
 //   • Writes a single sessionLogs row marking the session as off.
 //   • Ignores `entries`.
+// Cancellation reasons accepted on `cancelled_by_tutor` logs. The Day-view
+// cancel sheet surfaces these as chips; analytics groups cancellations by
+// reason on the Operations tab.
+const CANCEL_REASONS = new Set([
+  "sick",
+  "poya",
+  "festival",
+  "students_unavailable",
+  "personal",
+  "other",
+]);
+
 export const logSession = mutation({
   args: {
     slotId: v.id("scheduleSlots"),
     date: v.string(),
     status: v.string(), // "held" | "cancelled_by_tutor"
+    reason: v.optional(v.string()),
     note: v.optional(v.string()),
     entries: v.optional(
       v.array(
@@ -435,6 +480,9 @@ export const logSession = mutation({
     if (args.status !== "held" && args.status !== "cancelled_by_tutor") {
       throw new ConvexError("Invalid session status");
     }
+    if (args.reason !== undefined && !CANCEL_REASONS.has(args.reason)) {
+      throw new ConvexError("Invalid cancellation reason");
+    }
 
     const slot = await ctx.db.get(args.slotId);
     if (!slot) throw new ConvexError("Slot not found");
@@ -444,6 +492,10 @@ export const logSession = mutation({
       .query("teachers")
       .withIndex("by_clerk_user", (q) => q.eq("clerkUserId", identity.subject))
       .first();
+
+    // Reason only persists on cancelled rows. Held rows clear any leftover
+    // reason from a prior cancel→uncancel cycle.
+    const reasonToWrite = args.status === "cancelled_by_tutor" ? args.reason : undefined;
 
     // Upsert the log row.
     const existingLog = await ctx.db
@@ -455,6 +507,7 @@ export const logSession = mutation({
     if (existingLog) {
       await ctx.db.patch(existingLog._id, {
         status: args.status,
+        reason: reasonToWrite,
         note: args.note,
         loggedByTeacherId: teacher?._id ?? existingLog.loggedByTeacherId,
         loggedAt: Date.now(),
@@ -464,6 +517,7 @@ export const logSession = mutation({
         slotId: args.slotId,
         date: args.date,
         status: args.status,
+        reason: reasonToWrite,
         note: args.note,
         loggedByTeacherId: teacher?._id,
         loggedAt: Date.now(),
@@ -612,6 +666,18 @@ export const attendanceInsights = query({
     const groupById = new Map(groups.map((g) => [g._id, g]));
     const slotById = new Map(allSlots.map((s) => [s._id, s]));
 
+    // Pre-tracking filter: every (slot, date) whose owning group has a
+    // loggingStartDate strictly after that date is invisible to analytics.
+    // We compose this once and reuse for sessionLogs / attendance / unlogged
+    // walks so every counter agrees.
+    const isPreTrackingForSlot = (slotId: Id<"scheduleSlots">, dateStr: string): boolean => {
+      const slot = slotById.get(slotId);
+      if (!slot || !slot.groupId) return false;
+      const g = groupById.get(slot.groupId);
+      if (!g || !g.loggingStartDate) return false;
+      return dateStr < g.loggingStartDate;
+    };
+
     // Resolve every referenced student once.
     const studentIds = new Set<Id<"students">>();
     for (const m of allMembers) studentIds.add(m.studentId);
@@ -649,7 +715,14 @@ export const attendanceInsights = query({
     }
 
     // ── Meta counts within the window ───────────────────────────────────
-    const logsInRange = allLogs.filter((l) => l.date >= startYmd && l.date <= todayYmd);
+    // Drop any log on a pre-tracking date — keeps analytics consistent with
+    // the Day view which renders those sessions as out-of-scope.
+    const logsInRange = allLogs.filter(
+      (l) =>
+        l.date >= startYmd &&
+        l.date <= todayYmd &&
+        !isPreTrackingForSlot(l.slotId, l.date),
+    );
     const sessionsHeld = logsInRange.filter((l) => l.status === "held").length;
     const sessionsCancelled = logsInRange.filter((l) => l.status === "cancelled_by_tutor").length;
 
@@ -670,6 +743,7 @@ export const attendanceInsights = query({
       for (const slot of slotsToday) {
         const g = groupById.get(slot.groupId!);
         if (!g) continue;
+        if (g.loggingStartDate && dateStr < g.loggingStartDate) continue;
         if (loggedKey.has(`${slot._id}|${dateStr}`)) continue;
         // Past start time?
         const [h, m] = slot.startTime.split(":").map(Number);
@@ -680,7 +754,10 @@ export const attendanceInsights = query({
     }
 
     const attendanceInRange = allAttendance.filter(
-      (a) => a.date >= startYmd && a.date <= todayYmd,
+      (a) =>
+        a.date >= startYmd &&
+        a.date <= todayYmd &&
+        !isPreTrackingForSlot(a.slotId, a.date),
     );
     const studentPresences = attendanceInRange.filter((a) => a.status === "present").length;
     const studentAbsences = attendanceInRange.filter((a) => a.status === "absent").length;
@@ -766,6 +843,7 @@ export const attendanceInsights = query({
     const allTimeCollected = new Map<string, number>();
     for (const a of allAttendance) {
       if (a.status !== "present") continue;
+      if (isPreTrackingForSlot(a.slotId, a.date)) continue;
       const slot = slotById.get(a.slotId);
       if (!slot || !slot.groupId) continue;
       const rate =
@@ -848,6 +926,7 @@ export const attendanceInsights = query({
       for (const slot of slotsToday) {
         const g = groupById.get(slot.groupId!);
         if (!g) continue;
+        if (g.loggingStartDate && dateStr < g.loggingStartDate) continue;
         if (loggedKey.has(`${slot._id}|${dateStr}`)) continue;
         const [h, m] = slot.startTime.split(":").map(Number);
         const sessionStart = new Date(d);
@@ -885,6 +964,7 @@ export const attendanceInsights = query({
     // All-time credit per group (walk full attendance).
     for (const a of allAttendance) {
       if (a.status !== "present") continue;
+      if (isPreTrackingForSlot(a.slotId, a.date)) continue;
       const slot = slotById.get(a.slotId);
       if (!slot || !slot.groupId) continue;
       const g = groupById.get(slot.groupId);
@@ -916,5 +996,244 @@ export const attendanceInsights = query({
         (a, b) => b.totalCredit - a.totalCredit || b.sessionsHeld - a.sessionsHeld,
       ),
     };
+  },
+});
+
+// ── Bulk cancel / uncancel ────────────────────────────────────────────────
+//
+// The Day-view cancel sheet calls these with either a single date or a
+// (from, to) range and an optional group filter. Used for whole-day events
+// the tutor can't make: poya, festival weeks, illness, students unavailable.
+//
+// Both mutations operate on every group session whose dayOfWeek matches the
+// target date(s). They write/patch one sessionLogs row per (slot, date),
+// wiping attendance + payments for cancelled occurrences (same semantics as
+// the per-session logSession path with status=cancelled_by_tutor).
+//
+// scope.groupIds restricts the set; omitting it cancels every group's
+// session that day. Sessions whose group has `loggingStartDate` strictly
+// after the target date are skipped — you can't cancel something that
+// wasn't being tracked yet.
+
+function appDowForYmdString(s: string): number {
+  const d = new Date(s + "T00:00:00");
+  const js = d.getDay();
+  return js === 0 ? 7 : js;
+}
+
+export const cancelDay = mutation({
+  args: {
+    date: v.string(),
+    reason: v.string(),
+    note: v.optional(v.string()),
+    // Omit → every group on this day; provide → restrict to these groups.
+    groupIds: v.optional(v.array(v.id("groups"))),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    if (!CANCEL_REASONS.has(args.reason)) {
+      throw new ConvexError("Invalid cancellation reason");
+    }
+
+    const teacher = await ctx.db
+      .query("teachers")
+      .withIndex("by_clerk_user", (q) => q.eq("clerkUserId", identity.subject))
+      .first();
+
+    const dow = appDowForYmdString(args.date);
+    const slots = await ctx.db
+      .query("scheduleSlots")
+      .withIndex("by_day", (q) => q.eq("dayOfWeek", dow))
+      .collect();
+
+    const groupFilter = args.groupIds ? new Set(args.groupIds) : null;
+    let cancelledCount = 0;
+
+    for (const slot of slots) {
+      if (!slot.groupId) continue;
+      if (groupFilter && !groupFilter.has(slot.groupId)) continue;
+      const group = await ctx.db.get(slot.groupId);
+      if (!group) continue;
+      // Skip if the date is before this group's tracking start.
+      if (group.loggingStartDate && args.date < group.loggingStartDate) continue;
+
+      const existing = await ctx.db
+        .query("sessionLogs")
+        .withIndex("by_slot_date", (q) =>
+          q.eq("slotId", slot._id).eq("date", args.date),
+        )
+        .first();
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          status: "cancelled_by_tutor",
+          reason: args.reason,
+          note: args.note,
+          loggedByTeacherId: teacher?._id ?? existing.loggedByTeacherId,
+          loggedAt: Date.now(),
+        });
+      } else {
+        await ctx.db.insert("sessionLogs", {
+          slotId: slot._id,
+          date: args.date,
+          status: "cancelled_by_tutor",
+          reason: args.reason,
+          note: args.note,
+          loggedByTeacherId: teacher?._id,
+          loggedAt: Date.now(),
+        });
+      }
+
+      // Wipe any attendance/payments that were already recorded for this
+      // (slot, date) — they no longer make sense once the session is off.
+      const att = await ctx.db
+        .query("attendance")
+        .withIndex("by_slot_date", (q) =>
+          q.eq("slotId", slot._id).eq("date", args.date),
+        )
+        .collect();
+      for (const a of att) await ctx.db.delete(a._id);
+      const pays = await ctx.db
+        .query("sessionPayments")
+        .withIndex("by_slot_date", (q) =>
+          q.eq("slotId", slot._id).eq("date", args.date),
+        )
+        .collect();
+      for (const p of pays) await ctx.db.delete(p._id);
+
+      cancelledCount += 1;
+    }
+
+    return { cancelledCount };
+  },
+});
+
+export const cancelRange = mutation({
+  args: {
+    from: v.string(),
+    to: v.string(),
+    reason: v.string(),
+    note: v.optional(v.string()),
+    groupIds: v.optional(v.array(v.id("groups"))),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    if (!CANCEL_REASONS.has(args.reason)) {
+      throw new ConvexError("Invalid cancellation reason");
+    }
+    if (args.to < args.from) throw new ConvexError("Range end before start");
+
+    const teacher = await ctx.db
+      .query("teachers")
+      .withIndex("by_clerk_user", (q) => q.eq("clerkUserId", identity.subject))
+      .first();
+
+    const groupFilter = args.groupIds ? new Set(args.groupIds) : null;
+    let cancelledCount = 0;
+
+    // Walk each date in the inclusive range. Range max-span is enforced
+    // soft-cap below to avoid runaway scans.
+    const dStart = new Date(args.from + "T00:00:00");
+    const dEnd = new Date(args.to + "T00:00:00");
+    const dayDiff = Math.round((dEnd.getTime() - dStart.getTime()) / 86_400_000);
+    if (dayDiff > 60) throw new ConvexError("Range too large (max 60 days)");
+
+    for (let i = 0; i <= dayDiff; i++) {
+      const cur = new Date(dStart);
+      cur.setDate(cur.getDate() + i);
+      const dateStr = ymd(cur);
+      const dow = cur.getDay() === 0 ? 7 : cur.getDay();
+
+      const slots = await ctx.db
+        .query("scheduleSlots")
+        .withIndex("by_day", (q) => q.eq("dayOfWeek", dow))
+        .collect();
+
+      for (const slot of slots) {
+        if (!slot.groupId) continue;
+        if (groupFilter && !groupFilter.has(slot.groupId)) continue;
+        const group = await ctx.db.get(slot.groupId);
+        if (!group) continue;
+        if (group.loggingStartDate && dateStr < group.loggingStartDate) continue;
+
+        const existing = await ctx.db
+          .query("sessionLogs")
+          .withIndex("by_slot_date", (q) =>
+            q.eq("slotId", slot._id).eq("date", dateStr),
+          )
+          .first();
+        if (existing) {
+          await ctx.db.patch(existing._id, {
+            status: "cancelled_by_tutor",
+            reason: args.reason,
+            note: args.note,
+            loggedByTeacherId: teacher?._id ?? existing.loggedByTeacherId,
+            loggedAt: Date.now(),
+          });
+        } else {
+          await ctx.db.insert("sessionLogs", {
+            slotId: slot._id,
+            date: dateStr,
+            status: "cancelled_by_tutor",
+            reason: args.reason,
+            note: args.note,
+            loggedByTeacherId: teacher?._id,
+            loggedAt: Date.now(),
+          });
+        }
+
+        const att = await ctx.db
+          .query("attendance")
+          .withIndex("by_slot_date", (q) =>
+            q.eq("slotId", slot._id).eq("date", dateStr),
+          )
+          .collect();
+        for (const a of att) await ctx.db.delete(a._id);
+        const pays = await ctx.db
+          .query("sessionPayments")
+          .withIndex("by_slot_date", (q) =>
+            q.eq("slotId", slot._id).eq("date", dateStr),
+          )
+          .collect();
+        for (const p of pays) await ctx.db.delete(p._id);
+
+        cancelledCount += 1;
+      }
+    }
+
+    return { cancelledCount };
+  },
+});
+
+// Undo a cancel for one date. Deletes any sessionLogs rows whose status =
+// "cancelled_by_tutor" on that date, scoped to the optional groupIds.
+// Doesn't touch held logs.
+export const uncancelDay = mutation({
+  args: {
+    date: v.string(),
+    groupIds: v.optional(v.array(v.id("groups"))),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+
+    const logs = await ctx.db
+      .query("sessionLogs")
+      .withIndex("by_date", (q) => q.eq("date", args.date))
+      .collect();
+
+    const groupFilter = args.groupIds ? new Set(args.groupIds) : null;
+    let restoredCount = 0;
+    for (const l of logs) {
+      if (l.status !== "cancelled_by_tutor") continue;
+      if (groupFilter) {
+        const slot = await ctx.db.get(l.slotId);
+        if (!slot || !slot.groupId || !groupFilter.has(slot.groupId)) continue;
+      }
+      await ctx.db.delete(l._id);
+      restoredCount += 1;
+    }
+    return { restoredCount };
   },
 });

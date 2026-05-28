@@ -9,6 +9,7 @@
  */
 
 import type * as _assets_notoSansTamil from "../_assets/notoSansTamil.js";
+import type * as analytics from "../analytics.js";
 import type * as attendance from "../attendance.js";
 import type * as centers from "../centers.js";
 import type * as currentAssignments from "../currentAssignments.js";
@@ -67,6 +68,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "_assets/notoSansTamil": typeof _assets_notoSansTamil;
+  analytics: typeof analytics;
   attendance: typeof attendance;
   centers: typeof centers;
   currentAssignments: typeof currentAssignments;

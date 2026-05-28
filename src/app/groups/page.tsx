@@ -14,15 +14,16 @@ import {
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
+  MoreVertical,
   UserMinus,
   UserPlus,
   UserRoundX,
+  Users,
   XCircle,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
-import { groupColor } from '@/lib/groups/color';
 import {
   DAYS,
   fmtLKR,
@@ -31,6 +32,7 @@ import {
 } from '@/lib/groups/time-grid';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
+import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -86,10 +88,11 @@ export default function GroupsPage() {
   );
   const exceptions = useQuery(api.groups.overridesForDate, { date: today });
   // Only fetched when the Week view is up — Day view doesn't surface the pill.
-  const unassigned = useQuery(
-    api.groups.unassignedStudents,
+  const assignmentSummary = useQuery(
+    api.groups.studentAssignmentSummary,
     view === 'week' ? {} : 'skip',
   );
+  const unassigned = assignmentSummary?.unassigned ?? [];
 
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
@@ -182,17 +185,36 @@ export default function GroupsPage() {
           </button>
         </div>
 
-        {/* Unassigned-students pill — week view only, only when count > 0. */}
-        {view === 'week' && unassigned && unassigned.length > 0 && (
-          <button
-            onClick={() => setUnassignedOpen(true)}
-            className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-600 text-[10px] font-medium hover:bg-amber-500/15 transition-colors"
-            title="Students not in any active group"
-          >
-            <UserRoundX className="w-3 h-3" />
-            <span className="tabular-nums">{unassigned.length}</span>
-            <span className="hidden sm:inline">unassigned</span>
-          </button>
+        {/* Right-side roster strip — Week view only.
+              • "in groups" pill is always shown so the Lead has a constant
+                read on coverage (X of Y students placed).
+              • Amber alert appears next to it when ≥ 1 student is in no
+                group; tap to see who. */}
+        {view === 'week' && assignmentSummary && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <span
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums"
+              title="Unique students in at least one group"
+            >
+              <Users className="w-3 h-3" />
+              <span>
+                <span className="text-foreground">{assignmentSummary.assignedCount}</span>
+                <span className="opacity-60"> / {assignmentSummary.totalCount}</span>
+              </span>
+              <span className="hidden sm:inline">in groups</span>
+            </span>
+            {assignmentSummary.unassigned.length > 0 && (
+              <button
+                onClick={() => setUnassignedOpen(true)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-600 text-[10px] font-medium hover:bg-amber-500/15 transition-colors"
+                title="Students not in any group"
+              >
+                <UserRoundX className="w-3 h-3" />
+                <span className="tabular-nums">{assignmentSummary.unassigned.length}</span>
+                <span className="hidden sm:inline">unassigned</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -357,13 +379,24 @@ type SessionEntry = {
   startTime: string;
   endTime: string;
   hours: number;
-  logStatus: 'unlogged' | 'held' | 'cancelled';
+  logStatus: 'unlogged' | 'held' | 'cancelled' | 'pre-tracking';
+  cancelReason?: string;
   rosterCount: number;
   presentCount: number;
   absentCount: number;
   expected: number;
   collected: number;
   credit: number;
+};
+
+// Human-readable label for the cancel-reason enum stored on sessionLogs.
+const CANCEL_REASON_LABELS: Record<string, string> = {
+  sick: 'Sick',
+  poya: 'Poya',
+  festival: 'Festival',
+  students_unavailable: 'Students away',
+  personal: 'Personal',
+  other: 'Other',
 };
 
 function ymdLocal(d: Date): string {
@@ -377,6 +410,15 @@ function isSessionPast(date: string, startTime: string, now: Date): boolean {
   const sessionStart = new Date(date + 'T00:00:00');
   sessionStart.setHours(h, m, 0, 0);
   return now > sessionStart;
+}
+
+// Hours elapsed since the session started. Negative for future sessions.
+// Used to add a subtle pulse to cards left unlogged for more than 24h.
+function hoursSinceStart(date: string, startTime: string, now: Date): number {
+  const [h, m] = startTime.split(':').map(Number);
+  const sessionStart = new Date(date + 'T00:00:00');
+  sessionStart.setHours(h, m, 0, 0);
+  return (now.getTime() - sessionStart.getTime()) / 3_600_000;
 }
 
 function DayList({
@@ -396,6 +438,7 @@ function DayList({
 }) {
   const now = new Date();
   const todayStr = ymdLocal(now);
+  const [cancelSheetOpen, setCancelSheetOpen] = useState(false);
 
   // Seven dates of the visible week — Mon..Sun, paired with their dow label.
   const weekDates = useMemo(() => {
@@ -418,16 +461,32 @@ function DayList({
     return list.sort((a, b) => a.startTime.localeCompare(b.startTime));
   }, [data, selectedDate]);
 
-  // Does any day in the visible week have a past-time unlogged session?
-  // Used to red-ring the day pill itself.
-  const dayHasMissing = useMemo(() => {
-    const set = new Set<string>();
+  // Per-date status counts powering the date-pill status dots. logged =
+  // green, needsEntry (past + unlogged) = red, cancelled = grey. Upcoming
+  // sessions (future + unlogged) deliberately don't get a dot — that would
+  // be visual noise; future days are evident from the date itself.
+  const dayCounts = useMemo(() => {
+    const map = new Map<
+      string,
+      { logged: number; needsEntry: number; cancelled: number; upcoming: number; preTracking: number }
+    >();
     for (const s of data?.sessions ?? []) {
-      if (s.logStatus === 'unlogged' && isSessionPast(s.date, s.startTime, now)) {
-        set.add(s.date);
-      }
+      const cur =
+        map.get(s.date) ?? {
+          logged: 0,
+          needsEntry: 0,
+          cancelled: 0,
+          upcoming: 0,
+          preTracking: 0,
+        };
+      if (s.logStatus === 'pre-tracking') cur.preTracking += 1;
+      else if (s.logStatus === 'cancelled') cur.cancelled += 1;
+      else if (s.logStatus === 'held') cur.logged += 1;
+      else if (isSessionPast(s.date, s.startTime, now)) cur.needsEntry += 1;
+      else cur.upcoming += 1;
+      map.set(s.date, cur);
     }
-    return set;
+    return map;
     // now is recreated every render — that's fine, we don't need millisecond
     // precision on the ring state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -473,27 +532,49 @@ function DayList({
             </button>
           )}
         </div>
-        <button
-          onClick={() => shiftWeek(7)}
-          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
-          aria-label="Next week"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={() => shiftWeek(7)}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+            aria-label="Next week"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          {/* Bulk-cancel entry. Opens a bottom sheet scoped to selectedDate;
+              the sheet can switch to a date range or filter to specific
+              groups before submitting. */}
+          <button
+            onClick={() => setCancelSheetOpen(true)}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+            aria-label="Cancel day"
+            title="Cancel day"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Date pills */}
+      {/* Date pills — each shows weekday label, day number, and a row of
+          status dots so the user can scan the week at a glance. The pill
+          border still flags red/primary on today vs missing-entry days. */}
       <div className="shrink-0 flex gap-1 mb-3 overflow-x-auto">
         {weekDates.map(({ date, label, dayNum }) => {
           const isSelected = date === selectedDate;
           const isToday = date === todayStr;
-          const missing = dayHasMissing.has(date);
+          const counts = dayCounts.get(date) ?? {
+            logged: 0,
+            needsEntry: 0,
+            cancelled: 0,
+            upcoming: 0,
+            preTracking: 0,
+          };
+          const missing = counts.needsEntry > 0;
           return (
             <button
               key={date}
               onClick={() => setSelectedDate(date)}
               className={cn(
-                'shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex flex-col items-center gap-0 leading-tight border-2',
+                'shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex flex-col items-center gap-0.5 leading-tight border-2',
                 isSelected
                   ? 'bg-primary text-primary-foreground border-primary'
                   : 'bg-muted text-muted-foreground border-transparent',
@@ -503,6 +584,7 @@ function DayList({
             >
               <span className="text-[10px] opacity-80">{label}</span>
               <span className="text-sm font-bold tabular-nums">{dayNum}</span>
+              <DayStatusDots counts={counts} selected={isSelected} />
             </button>
           );
         })}
@@ -545,49 +627,329 @@ function DayList({
               <div key={i} className="h-16 rounded-xl bg-muted/30" />
             ))}
           </div>
-        ) : todaysSessions.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6">No sessions this day.</p>
         ) : (
-          <div className="space-y-2">
-            {todaysSessions.map((s) => (
+          <DaySessionsBody
+            sessions={todaysSessions}
+            now={now}
+            onOpenSession={onOpenSession}
+            selectedDate={selectedDate}
+            todayStr={todayStr}
+          />
+        )}
+      </div>
+
+      <CancelDaySheet
+        open={cancelSheetOpen}
+        onClose={() => setCancelSheetOpen(false)}
+        date={selectedDate}
+      />
+    </div>
+  );
+}
+
+// Decides the empty / full-cancelled / grouped-sections layout for the
+// session list on the selected date.
+//
+//  • full-cancelled — every non-pre-tracking session is cancelled. Shows
+//    one hero banner with the reason chip (when consistent across cards)
+//    so the day reads as "Day off — Poya" at a glance instead of as a
+//    wall of identical cancelled cards.
+//  • empty — no sessions at all. Friendly off-day messaging.
+//  • grouped — the default. Sections (Needs entry → Coming up → Done →
+//    Cancelled → Before tracking) so urgency clusters at the top.
+function DaySessionsBody({
+  sessions,
+  now,
+  onOpenSession,
+  selectedDate,
+  todayStr,
+}: {
+  sessions: SessionEntry[];
+  now: Date;
+  onOpenSession: (slotId: Id<'scheduleSlots'>, date: string) => void;
+  selectedDate: string;
+  todayStr: string;
+}) {
+  // Empty-day path. We split "off-day" (Sunday or holiday) from "no groups
+  // run today" so the message lines up with the user's mental model.
+  if (sessions.length === 0) {
+    const d = new Date(selectedDate + 'T00:00:00');
+    const isSunday = d.getDay() === 0;
+    return (
+      <div className="rounded-xl border border-dashed border-border/40 bg-muted/10 py-8 text-center">
+        <p className="text-sm text-muted-foreground mb-1">
+          {isSunday ? 'Sunday off' : 'No sessions this day'}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          {isSunday
+            ? 'No classes scheduled on Sundays.'
+            : selectedDate === todayStr
+              ? 'Quiet day. Plan something on the Week view.'
+              : 'Nothing scheduled here.'}
+        </p>
+      </div>
+    );
+  }
+
+  // Partition by status. Pre-tracking is shown last so it never competes
+  // with live items.
+  const live = sessions.filter((s) => s.logStatus !== 'pre-tracking');
+  const preTracking = sessions.filter((s) => s.logStatus === 'pre-tracking');
+
+  // Full-day cancellation banner — only when EVERY live session is
+  // cancelled (and there's at least one). Picks the dominant reason for
+  // the headline.
+  const allCancelled = live.length > 0 && live.every((s) => s.logStatus === 'cancelled');
+  if (allCancelled) {
+    const reasonCount = new Map<string, number>();
+    for (const s of live) {
+      const k = s.cancelReason ?? 'other';
+      reasonCount.set(k, (reasonCount.get(k) ?? 0) + 1);
+    }
+    let dominantReason: string | null = null;
+    let max = 0;
+    for (const [k, v] of Array.from(reasonCount.entries())) {
+      if (v > max) {
+        max = v;
+        dominantReason = k;
+      }
+    }
+    const reasonLabel = dominantReason
+      ? (CANCEL_REASON_LABELS[dominantReason] ?? dominantReason)
+      : null;
+
+    return (
+      <div className="space-y-3">
+        <div className="rounded-xl border border-muted-foreground/30 bg-muted/30 px-4 py-5 text-center">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+            Day off
+          </p>
+          <p className="text-lg font-bold text-foreground mb-1">
+            {reasonLabel ?? 'Cancelled'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {live.length} session{live.length === 1 ? '' : 's'} cancelled
+          </p>
+        </div>
+        {preTracking.length > 0 && (
+          <Section title="Before tracking" count={preTracking.length}>
+            {preTracking.map((s) => (
               <SessionCard
                 key={s.slotId}
                 session={s}
-                isPastNow={isSessionPast(s.date, s.startTime, now)}
-                onOpen={() => onOpenSession(s.slotId, s.date)}
+                isPastNow={false}
+                isStale={false}
+                onOpen={() => {
+                  /* pre-tracking is read-only */
+                }}
               />
             ))}
-          </div>
+          </Section>
         )}
       </div>
+    );
+  }
+
+  // Status-grouped sections. Order by urgency: needs-entry first, then
+  // upcoming (so the next class is easy to spot on today), done, cancelled,
+  // pre-tracking last.
+  const needsEntry: SessionEntry[] = [];
+  const upcoming: SessionEntry[] = [];
+  const done: SessionEntry[] = [];
+  const cancelled: SessionEntry[] = [];
+  for (const s of live) {
+    if (s.logStatus === 'held') done.push(s);
+    else if (s.logStatus === 'cancelled') cancelled.push(s);
+    else if (isSessionPast(s.date, s.startTime, now)) needsEntry.push(s);
+    else upcoming.push(s);
+  }
+
+  const renderCard = (s: SessionEntry) => (
+    <SessionCard
+      key={s.slotId}
+      session={s}
+      isPastNow={isSessionPast(s.date, s.startTime, now)}
+      isStale={
+        s.logStatus === 'unlogged' &&
+        hoursSinceStart(s.date, s.startTime, now) > 24
+      }
+      onOpen={
+        s.logStatus === 'pre-tracking'
+          ? () => {
+              /* pre-tracking cards are read-only */
+            }
+          : () => onOpenSession(s.slotId, s.date)
+      }
+    />
+  );
+
+  return (
+    <div className="space-y-4">
+      {needsEntry.length > 0 && (
+        <Section title="Needs entry" count={needsEntry.length} tone="destructive">
+          {needsEntry.map(renderCard)}
+        </Section>
+      )}
+      {upcoming.length > 0 && (
+        <Section title="Coming up" count={upcoming.length} tone="primary">
+          {upcoming.map(renderCard)}
+        </Section>
+      )}
+      {done.length > 0 && (
+        <Section title="Done" count={done.length} tone="emerald">
+          {done.map(renderCard)}
+        </Section>
+      )}
+      {cancelled.length > 0 && (
+        <Section title="Cancelled" count={cancelled.length} tone="muted">
+          {cancelled.map(renderCard)}
+        </Section>
+      )}
+      {preTracking.length > 0 && (
+        <Section title="Before tracking" count={preTracking.length} tone="muted">
+          {preTracking.map(renderCard)}
+        </Section>
+      )}
     </div>
+  );
+}
+
+function Section({
+  title,
+  count,
+  tone = 'muted',
+  children,
+}: {
+  title: string;
+  count: number;
+  tone?: 'destructive' | 'primary' | 'emerald' | 'muted';
+  children: React.ReactNode;
+}) {
+  const dot =
+    tone === 'destructive'
+      ? 'bg-destructive'
+      : tone === 'primary'
+        ? 'bg-primary'
+        : tone === 'emerald'
+          ? 'bg-emerald-500'
+          : 'bg-muted-foreground/40';
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5 px-1">
+        <span className={cn('w-1.5 h-1.5 rounded-full', dot)} />
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </h4>
+        <span className="text-[10px] font-medium text-muted-foreground tabular-nums">
+          {count}
+        </span>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+// Three small dots under the date number summarising the day's session
+// states: emerald = logged, destructive = needs entry (past + unlogged),
+// muted = cancelled. We omit "upcoming" deliberately — future sessions
+// shouldn't pull attention the way overdue ones should. When the pill is
+// selected (primary fill) the dots become high-contrast so they remain
+// visible against the dark background.
+function DayStatusDots({
+  counts,
+  selected,
+}: {
+  counts: { logged: number; needsEntry: number; cancelled: number; upcoming: number; preTracking: number };
+  selected: boolean;
+}) {
+  const dots: Array<{ key: string; cls: string }> = [];
+  if (counts.logged > 0)
+    dots.push({
+      key: 'logged',
+      cls: selected ? 'bg-emerald-300' : 'bg-emerald-500',
+    });
+  if (counts.needsEntry > 0)
+    dots.push({
+      key: 'needs',
+      cls: selected ? 'bg-red-300' : 'bg-destructive',
+    });
+  if (counts.cancelled > 0)
+    dots.push({
+      key: 'cancelled',
+      cls: selected ? 'bg-white/60' : 'bg-muted-foreground/60',
+    });
+  if (dots.length === 0) {
+    // Render a placeholder so the pill heights stay aligned across the week.
+    return <span className="h-1" />;
+  }
+  return (
+    <span className="flex items-center gap-0.5 mt-0.5">
+      {dots.map((d) => (
+        <span key={d.key} className={cn('w-1 h-1 rounded-full', d.cls)} />
+      ))}
+    </span>
   );
 }
 
 function SessionCard({
   session,
   isPastNow,
+  isStale,
   onOpen,
 }: {
   session: SessionEntry;
   isPastNow: boolean;
+  isStale: boolean;
   onOpen: () => void;
 }) {
-  const color = groupColor(session.groupId);
+  // Day view is single-day so per-group colour adds noise — every card sits
+  // on the same date. The accent stripe is now status-driven (cancelled =
+  // muted, held = emerald, unlogged-past = destructive, future = subtle).
+  // Per-group colour is retained in Week view because it helps the eye link
+  // a group's many sessions across the timetable.
 
-  // Ring state: cancelled = grey, held = green, unlogged + past = red,
-  // unlogged + future = none (no urgency yet).
+  // Pre-tracking: the group existed before this app started logging. Show
+  // it muted with no urgency, so the user understands the slot existed but
+  // doesn't feel pulled to log it.
+  if (session.logStatus === 'pre-tracking') {
+    return (
+      <div className="w-full flex items-center gap-3 p-3 rounded-xl border border-dashed border-border/40 bg-muted/20 opacity-70 cursor-not-allowed">
+        <span className="w-1.5 h-10 rounded-full shrink-0 bg-muted-foreground/20" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-semibold text-muted-foreground truncate">
+              {session.groupName}
+            </p>
+            <span className="shrink-0 inline-flex items-center px-1.5 py-px rounded text-[9px] font-bold uppercase tracking-wide bg-muted-foreground/10 text-muted-foreground">
+              Before tracking
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {fmtTime12(session.startTime)} – {fmtTime12(session.endTime)}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   let ringClass = '';
+  let accentClass = 'bg-muted-foreground/20';
   let badge: { label: string; tone: 'green' | 'red' | 'grey' | 'none' } = { label: '', tone: 'none' };
   if (session.logStatus === 'cancelled') {
     ringClass = 'ring-2 ring-muted-foreground/30';
+    accentClass = 'bg-muted-foreground/40';
     badge = { label: 'Cancelled', tone: 'grey' };
   } else if (session.logStatus === 'held') {
     ringClass = 'ring-2 ring-emerald-500/60';
+    accentClass = 'bg-emerald-500';
     badge = { label: 'Logged', tone: 'green' };
   } else if (isPastNow) {
     ringClass = 'ring-2 ring-destructive/70';
+    accentClass = 'bg-destructive';
     badge = { label: 'Needs entry', tone: 'red' };
+  } else {
+    // Future, unlogged — subtle primary accent so it still feels "live".
+    accentClass = 'bg-primary/40';
   }
 
   const isCancelled = session.logStatus === 'cancelled';
@@ -596,16 +958,15 @@ function SessionCard({
     <button
       onClick={onOpen}
       className={cn(
-        'w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-transform active:scale-[0.99] hover:bg-muted/30',
+        'w-full flex items-center gap-3 p-3 rounded-xl border border-border/60 text-left transition-transform active:scale-[0.99] hover:bg-muted/30',
         ringClass,
         isCancelled && 'opacity-70',
+        // Stale = past + unlogged for >24h. Pulse gently to flag chronic
+        // missing entries without nagging on day-of urgency.
+        isStale && 'animate-pulse',
       )}
-      style={{ borderColor: color.border }}
     >
-      <span
-        className="w-1.5 h-10 rounded-full shrink-0"
-        style={{ backgroundColor: color.solid }}
-      />
+      <span className={cn('w-1.5 h-10 rounded-full shrink-0', accentClass)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <p

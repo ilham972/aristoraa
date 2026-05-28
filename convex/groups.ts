@@ -646,6 +646,7 @@ export const update = mutation({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    loggingStartDate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -784,9 +785,45 @@ export const candidateStudents = query({
   },
 });
 
-// Students not a member of any group. Powers the "unassigned students"
-// pill in /groups week view so a Lead can spot who they've onboarded but
-// forgotten to slot into a class.
+// Roster-coverage snapshot for the /groups week view header strip:
+//   • assignedCount  — unique students who are in ≥ 1 group right now
+//   • totalCount     — every student in the system
+//   • unassigned     — student rows for any not in a group, grade-sorted
+// One query so the "X in groups" pill and the unassigned alert/dialog all
+// read from the same scan; the dialog uses the full list, the pills use
+// just the counts.
+export const studentAssignmentSummary = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return { assignedCount: 0, totalCount: 0, unassigned: [] };
+    }
+
+    const allGroups = await ctx.db.query("groups").collect();
+    const groupIds = new Set(allGroups.map((g) => g._id as string));
+
+    const allMembers = await ctx.db.query("groupMembers").collect();
+    const assigned = new Set<string>();
+    for (const m of allMembers) {
+      if (groupIds.has(m.groupId)) assigned.add(m.studentId);
+    }
+
+    const all = await ctx.db.query("students").collect();
+    const unassigned = all
+      .filter((s) => !assigned.has(s._id))
+      .sort((a, b) => a.schoolGrade - b.schoolGrade || a.name.localeCompare(b.name));
+
+    return {
+      assignedCount: assigned.size,
+      totalCount: all.length,
+      unassigned,
+    };
+  },
+});
+
+// Back-compat: same as `studentAssignmentSummary.unassigned`. Kept so an
+// older client bundle deployed before today still resolves the function.
 export const unassignedStudents = query({
   args: {},
   handler: async (ctx) => {
@@ -794,12 +831,12 @@ export const unassignedStudents = query({
     if (!identity) return [];
 
     const allGroups = await ctx.db.query("groups").collect();
-    const activeGroupIds = new Set(allGroups.map((g) => g._id as string));
+    const groupIds = new Set(allGroups.map((g) => g._id as string));
 
     const allMembers = await ctx.db.query("groupMembers").collect();
     const assigned = new Set<string>();
     for (const m of allMembers) {
-      if (activeGroupIds.has(m.groupId)) assigned.add(m.studentId);
+      if (groupIds.has(m.groupId)) assigned.add(m.studentId);
     }
 
     const all = await ctx.db.query("students").collect();
@@ -1145,10 +1182,23 @@ export const revenueInsights = query({
     const cutoffYmd = ymd(cutoff);
 
     const attendance = await ctx.db.query("attendance").collect();
-    const recent = attendance.filter((a) => a.status === "present" && a.date >= cutoffYmd);
-
     // Cache slot rows so we don't refetch.
     const slotById = new Map(allSlots.map((s) => [s._id, s]));
+    // Drop attendance rows on pre-tracking dates so realized revenue lines up
+    // with the Day view + Attendance tab (which both hide pre-tracking).
+    const isPreTracking = (slotId: Id<"scheduleSlots">, date: string): boolean => {
+      const slot = slotById.get(slotId);
+      if (!slot || !slot.groupId) return false;
+      const g = groupById.get(slot.groupId);
+      if (!g || !g.loggingStartDate) return false;
+      return date < g.loggingStartDate;
+    };
+    const recent = attendance.filter(
+      (a) =>
+        a.status === "present" &&
+        a.date >= cutoffYmd &&
+        !isPreTracking(a.slotId, a.date),
+    );
     const realizedByDay = new Map<string, number>();
     let realizedTotal = 0;
 
