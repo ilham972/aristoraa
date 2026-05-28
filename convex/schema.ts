@@ -193,6 +193,12 @@ export default defineSchema({
     clerkUserId: v.string(),
     name: v.string(),
     role: v.string(),
+    // ─── Phase W: forward target for inbound parent replies ─────────────────
+    // Lead's (or mentor's) personal WhatsApp number in E.164. When set,
+    // convex/messaging/inbound.ts pushes a "forward" outbound onto the queue
+    // so this person sees the parent message on their own phone too. If
+    // unset, only the in-app Parent Inbox notification fires.
+    personalWhatsappPhone: v.optional(v.string()),
   }).index("by_clerk_user", ["clerkUserId"]),
 
   slotTeachers: defineTable({
@@ -660,4 +666,174 @@ export default defineSchema({
     reason: v.optional(v.string()),
     at: v.number(),
   }).index("by_sheet", ["sheetId"]),
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Phase W — WhatsApp integration (Open-WA provider, swappable to Meta API)
+  // Full spec: whatsapp_integration_plan.md (gitignored). All outbound goes
+  // through convex/messaging/provider.ts. NO cron jobs — every batch is
+  // human-initiated. Inside a batch, sender self-chains with
+  // ctx.scheduler.runAfter to enforce human-mimic spacing.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // One row per parent phone. Stores language preference + opt-out switch
+  // independent of any student record, so siblings sharing a phone resolve
+  // cleanly. The phone string IS the identity (UNIQUE enforced in the
+  // upsertParentContact mutation, not via a DB constraint). students.parentPhone
+  // remains the canonical phone column on the student side; both stores
+  // hold the same E.164 string and writes normalize via src/lib/phone.ts.
+  parentContacts: defineTable({
+    phoneE164: v.string(),               // "+9477xxxxxxx"
+    displayName: v.optional(v.string()), // "Mr. Sharma" — what the Lead types
+    language: v.string(),                // "ta" | "en" — defaults to "ta"
+    optedOut: v.boolean(),               // hard switch; sender always honours
+    optedOutAt: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone", ["phoneE164"]),
+
+  // Per-student override of which parentContact represents them. When unset,
+  // the resolver falls back to lookup-by-students.parentPhone. Used for the
+  // (rare) case where a student's "primary parent" is a different person to
+  // whoever happens to be on the phone column.
+  studentParents: defineTable({
+    studentId: v.id("students"),
+    parentContactId: v.id("parentContacts"),
+    relationship: v.optional(v.string()), // "father" | "mother" | "guardian"
+  })
+    .index("by_student", ["studentId"])
+    .index("by_parent", ["parentContactId"]),
+
+  // WhatsApp groups the bot is a member of. groupScope lets the Broadcast UI
+  // resolve "send to all Grade 8 Colombo groups" → matching rows. Bot must
+  // already be a member of the WA group to post; sync action pulls from the
+  // Open-WA REST groups endpoint.
+  whatsappGroups: defineTable({
+    whatsappGroupId: v.string(),          // Open-WA group id, e.g. "120363xxxxxxx@g.us"
+    displayName: v.string(),
+    scope: v.optional(v.object({
+      grade: v.optional(v.number()),
+      centerId: v.optional(v.id("centers")),
+      moduleId: v.optional(v.string()),    // "M1".."M6"
+      groupId: v.optional(v.id("groups")), // links a WA group to an internal teaching group
+    })),
+    syncedAt: v.optional(v.number()),
+    active: v.boolean(),                   // false = soft-removed, hidden in pickers
+    createdAt: v.number(),
+  })
+    .index("by_wa_id", ["whatsappGroupId"])
+    .index("by_active", ["active"]),
+
+  // Editable message templates. body uses {{var}} placeholders; the variable
+  // contract per key lives in convex/messaging/templates.ts (in code, not DB)
+  // so the renderer can fail loudly on missing vars. Seeded idempotently in
+  // W.1; Lead edits body text from the /messaging/templates UI without a deploy.
+  messageTemplates: defineTable({
+    key: v.string(),                       // "absence_alert" | "weekly_card" | ...
+    language: v.string(),                  // "ta" | "en"
+    body: v.string(),
+    active: v.boolean(),
+    updatedByTeacherId: v.optional(v.id("teachers")),
+    updatedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_key_lang", ["key", "language"])
+    .index("by_active", ["active"]),
+
+  // The outbox. Sender mutates `status` field-by-field; never deletes. One
+  // row per message attempt (text or media), regardless of which batch
+  // spawned it. Inbound forwarding to Lead/mentor also goes through here so
+  // pacing rules apply uniformly.
+  messageQueue: defineTable({
+    // Routing
+    templateKey: v.optional(v.string()),
+    language: v.optional(v.string()),                // "ta" | "en"
+    toType: v.string(),                              // "contact" | "group"
+    toPhone: v.optional(v.string()),                 // E.164 when toType === "contact"
+    toWhatsappGroupId: v.optional(v.string()),       // when toType === "group"
+    // Context
+    studentId: v.optional(v.id("students")),         // primary student this message is about
+    conversationId: v.optional(v.id("conversations")),
+    // Payload
+    body: v.string(),                                // final rendered text (templates resolved)
+    mediaStorageId: v.optional(v.id("_storage")),    // for image/PDF attachments
+    mediaType: v.optional(v.string()),               // "image" | "document"
+    mediaCaption: v.optional(v.string()),
+    // Scheduling + state
+    status: v.string(),                              // "draft" | "queued" | "sending" | "sent" | "failed" | "cancelled"
+    priority: v.string(),                            // "low" | "normal" | "high"
+    scheduledNotBefore: v.number(),                  // ms epoch; sender ignores until past
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    providerMessageId: v.optional(v.string()),       // returned by Open-WA on success
+    // Provenance
+    batchId: v.optional(v.string()),                 // shared by all msgs in one Lead-approved batch
+    createdByTeacherId: v.optional(v.id("teachers")),
+    approvedByTeacherId: v.optional(v.id("teachers")),
+    approvedAt: v.optional(v.number()),
+    sentAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_status_priority", ["status", "priority", "scheduledNotBefore"])
+    .index("by_batch", ["batchId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_student", ["studentId"])
+    .index("by_status", ["status"]),
+
+  // Append-only audit. Outbound writes here after each send attempt (success
+  // or fail); inbound writes here on webhook ingest. Never mutated after
+  // insert. Archival/truncation deferred until ~100k rows.
+  messageLog: defineTable({
+    direction: v.string(),                           // "in" | "out"
+    phoneE164: v.optional(v.string()),               // counterparty phone
+    whatsappGroupId: v.optional(v.string()),         // counterparty group
+    studentId: v.optional(v.id("students")),
+    queueId: v.optional(v.id("messageQueue")),       // outbound: source queue row
+    conversationId: v.optional(v.id("conversations")),
+    body: v.string(),
+    mediaUrls: v.optional(v.array(v.string())),
+    providerMessageId: v.optional(v.string()),
+    status: v.string(),                              // out: "sent" | "failed"; in: "received"
+    errorMessage: v.optional(v.string()),
+    occurredAt: v.number(),
+  })
+    .index("by_phone_time", ["phoneE164", "occurredAt"])
+    .index("by_student_time", ["studentId", "occurredAt"])
+    .index("by_conversation_time", ["conversationId", "occurredAt"])
+    .index("by_direction_time", ["direction", "occurredAt"]),
+
+  // One row per (phoneE164) conversation thread. Inbox lists these sorted by
+  // lastInboundAt. unreadCount is decremented when Lead opens the thread.
+  conversations: defineTable({
+    phoneE164: v.string(),
+    parentContactId: v.optional(v.id("parentContacts")),
+    primaryStudentId: v.optional(v.id("students")),  // resolved at create; siblings reachable via studentParents
+    lastInboundAt: v.optional(v.number()),
+    lastOutboundAt: v.optional(v.number()),
+    unreadCount: v.number(),
+    archived: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_phone", ["phoneE164"])
+    .index("by_lastInbound", ["lastInboundAt"])
+    .index("by_archived_lastInbound", ["archived", "lastInboundAt"]),
+
+  // In-app notifications. Polled by the bell-icon component via useQuery; no
+  // push, no service worker. Per-user via Clerk id. For Phase W: Lead gets
+  // everything, mentors get whatsapp_parent_reply for matched students in
+  // their groups (per W.1 brainstorm decision Q4).
+  notifications: defineTable({
+    userClerkId: v.string(),                         // recipient (Lead or mentor)
+    type: v.string(),
+    title: v.string(),
+    body: v.optional(v.string()),
+    priority: v.string(),                            // "low" | "normal" | "high" | "critical"
+    actionUrl: v.optional(v.string()),
+    payload: v.optional(v.any()),                    // freeform context
+    seenAt: v.optional(v.number()),
+    actionedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_user_seen_created", ["userClerkId", "seenAt", "createdAt"])
+    .index("by_user_created", ["userClerkId", "createdAt"]),
 });
