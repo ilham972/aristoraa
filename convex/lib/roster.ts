@@ -66,7 +66,6 @@ export async function slotIdsForTeacher(
     .withIndex("by_mentor", (q) => q.eq("mentorId", teacherId))
     .collect();
   for (const g of mentorGroups) {
-    if (g.archived) continue;
     const slots = await ctx.db
       .query("scheduleSlots")
       .withIndex("by_group", (q) => q.eq("groupId", g._id))

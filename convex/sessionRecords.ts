@@ -176,7 +176,7 @@ export const weekSessions = query({
       for (const slot of slots) {
         if (!slot.groupId) continue;
         const group = await ctx.db.get(slot.groupId);
-        if (!group || group.archived) continue;
+        if (!group) continue;
 
         const [log, attendance, payments, roster] = await Promise.all([
           ctx.db
@@ -642,7 +642,7 @@ export const attendanceInsights = query({
     const groupNamesByStudent = new Map<string, string[]>();
     for (const m of allMembers) {
       const g = groupById.get(m.groupId);
-      if (!g || g.archived) continue;
+      if (!g) continue;
       const list = groupNamesByStudent.get(m.studentId) ?? [];
       if (!list.includes(g.name)) list.push(g.name);
       groupNamesByStudent.set(m.studentId, list);
@@ -669,7 +669,7 @@ export const attendanceInsights = query({
       const slotsToday = allSlots.filter((s) => s.dayOfWeek === dow && s.groupId);
       for (const slot of slotsToday) {
         const g = groupById.get(slot.groupId!);
-        if (!g || g.archived) continue;
+        if (!g) continue;
         if (loggedKey.has(`${slot._id}|${dateStr}`)) continue;
         // Past start time?
         const [h, m] = slot.startTime.split(":").map(Number);
@@ -832,7 +832,7 @@ export const attendanceInsights = query({
       const slot = slotById.get(l.slotId);
       if (!slot || !slot.groupId) continue;
       const g = groupById.get(slot.groupId);
-      if (!g || g.archived) continue;
+      if (!g) continue;
       const row = groupRowFor(slot.groupId);
       if (l.status === "held") row.sessionsHeld += 1;
       else if (l.status === "cancelled_by_tutor") row.sessionsCancelled += 1;
@@ -847,7 +847,7 @@ export const attendanceInsights = query({
       const slotsToday = allSlots.filter((s) => s.dayOfWeek === dow && s.groupId);
       for (const slot of slotsToday) {
         const g = groupById.get(slot.groupId!);
-        if (!g || g.archived) continue;
+        if (!g) continue;
         if (loggedKey.has(`${slot._id}|${dateStr}`)) continue;
         const [h, m] = slot.startTime.split(":").map(Number);
         const sessionStart = new Date(d);
@@ -863,7 +863,7 @@ export const attendanceInsights = query({
       const slot = slotById.get(a.slotId);
       if (!slot || !slot.groupId) continue;
       const g = groupById.get(slot.groupId);
-      if (!g || g.archived) continue;
+      if (!g) continue;
       const row = groupRowFor(slot.groupId);
       if (a.status === "present") row.presentCount += 1;
       else if (a.status === "absent") row.absentCount += 1;
@@ -888,7 +888,7 @@ export const attendanceInsights = query({
       const slot = slotById.get(a.slotId);
       if (!slot || !slot.groupId) continue;
       const g = groupById.get(slot.groupId);
-      if (!g || g.archived) continue;
+      if (!g) continue;
       const row = groupRowFor(slot.groupId);
       const rate =
         rateByGroupStudent.get(`${slot.groupId}|${a.studentId}`) ??

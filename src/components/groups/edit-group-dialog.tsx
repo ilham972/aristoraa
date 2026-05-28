@@ -23,7 +23,7 @@ import { useMutation, useQuery } from 'convex/react';
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import { toast } from 'sonner';
-import { Plus, Search, Trash2, X, Archive, ArchiveRestore, AlertTriangle, Eye, EyeOff, ChevronDown, Check } from 'lucide-react';
+import { Plus, Search, Trash2, X, AlertTriangle, Eye, EyeOff, ChevronDown, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -112,7 +112,6 @@ function EditGroupBody({
   );
 
   const update = useMutation(api.groups.update);
-  const archive = useMutation(api.groups.archive);
   const remove = useMutation(api.groups.remove);
   const addMember = useMutation(api.groups.addMember);
   const removeMember = useMutation(api.groups.removeMember);
@@ -127,10 +126,7 @@ function EditGroupBody({
     setNameSeededFor(group._id);
   }
 
-  const color = useMemo(
-    () => groupColor(groupId, group?.archived),
-    [groupId, group?.archived],
-  );
+  const color = useMemo(() => groupColor(groupId), [groupId]);
 
   const selectedCells: SessionCell[] = useMemo(
     () =>
@@ -564,21 +560,6 @@ function EditGroupBody({
 
       {/* Footer */}
       <div className="flex items-center gap-2 pt-2 pb-2 border-t border-border/50 shrink-0">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs gap-1"
-          disabled={!groupReady}
-          onClick={async () => {
-            if (!group) return;
-            await archive({ id: group._id, archived: !group.archived });
-            toast.success(group.archived ? 'Unarchived' : 'Archived');
-            if (!group.archived) onClose();
-          }}
-        >
-          {group?.archived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
-          {group?.archived ? 'Unarchive' : 'Archive'}
-        </Button>
         <Button
           variant="ghost"
           size="sm"

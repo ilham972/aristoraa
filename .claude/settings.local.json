@@ -68,7 +68,13 @@
       "PowerShell(Get-Process *)",
       "PowerShell(\\(Get-Item convex/_generated/api.d.ts\\).LastWriteTime; \\(Get-Item convex/learningEngine/sheets.ts\\).LastWriteTime; git log -1 --format='%ai' 28c7dc8)",
       "Bash(wmic process *)",
-      "Bash(CONVEX_DEPLOYMENT=prod:rapid-loris-309 npx convex data scheduleSlots --limit 100 --prod)"
+      "Bash(CONVEX_DEPLOYMENT=prod:rapid-loris-309 npx convex data scheduleSlots --limit 100 --prod)",
+      "Bash(awk 'NR>2')",
+      "Bash(awk '$1==1')",
+      "Bash(awk '$1>=2')",
+      "Bash(awk -F'|' '{ gsub\\(/^ +| +$/, \"\", $4\\); if \\($4==\"true\"\\) print $1, \"ARCHIVED\", $11 }' /tmp/all_groups.txt)",
+      "Bash(awk -F'|' '{ gsub\\(/^ +| +$/, \"\", $4\\); if \\($4==\"true\"\\) print $1 }' /tmp/all_groups.txt)",
+      "Bash(python -c ' *)"
     ]
   }
 }

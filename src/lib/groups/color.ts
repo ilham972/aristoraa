@@ -49,15 +49,6 @@ const PALETTE: GroupColor[] = [
   { solid: "#5BA86F", onSolid: "#FFFFFF", soft: "rgba(91,168,111,0.16)", border: "rgba(91,168,111,0.40)", text: "#A6D6B2" },
 ];
 
-// Neutral gray for archived groups — visually recedes from the active set.
-export const ARCHIVED_COLOR: GroupColor = {
-  solid: "#5A6573",
-  onSolid: "#E5E9EF",
-  soft: "rgba(90,101,115,0.14)",
-  border: "rgba(90,101,115,0.35)",
-  text: "#94A0AE",
-};
-
 function fnv1a(str: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
@@ -68,8 +59,7 @@ function fnv1a(str: string): number {
 }
 
 /** Stable color for a group id (or any string seed). */
-export function groupColor(seed: string, archived = false): GroupColor {
-  if (archived) return ARCHIVED_COLOR;
+export function groupColor(seed: string): GroupColor {
   return PALETTE[fnv1a(seed) % PALETTE.length];
 }
 

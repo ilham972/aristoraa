@@ -134,12 +134,14 @@ export default defineSchema({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    // Legacy: pre-removal of the archive feature. Kept in the schema as
+    // optional so existing rows still validate; new code never sets or
+    // reads it. Hard delete is the only "remove" path now.
     archived: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_center", ["centerId"])
-    .index("by_archived", ["archived"])
     .index("by_mentor", ["mentorId"]),
 
   // Many-to-many between groups and students. A student typically belongs to

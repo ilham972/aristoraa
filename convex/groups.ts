@@ -46,12 +46,11 @@ function resolveRate(memberRate: number | undefined, studentRate: number | undef
 // ── Queries ───────────────────────────────────────────────────────────────
 
 export const list = query({
-  args: { includeArchived: v.optional(v.boolean()) },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const all = await ctx.db.query("groups").collect();
-    return args.includeArchived ? all : all.filter((g) => !g.archived);
+    return await ctx.db.query("groups").collect();
   },
 });
 
@@ -133,7 +132,7 @@ export const dayView = query({
     for (const slot of slots) {
       if (!slot.groupId) continue;
       const group = await ctx.db.get(slot.groupId);
-      if (!group || group.archived) continue;
+      if (!group) continue;
 
       const memberRows = await ctx.db
         .query("groupMembers")
@@ -205,7 +204,7 @@ export const weekGrid = query({
     if (!identity) return { cells: [], groups: [] };
 
     const groups = await ctx.db.query("groups").collect();
-    const activeGroups = groups.filter((g) => !g.archived);
+    const activeGroups = groups;
 
     const cells: Array<{
       slotId: Id<"scheduleSlots">;
@@ -295,7 +294,7 @@ export const mentorBusyAt = query({
       if (!slot.groupId) continue;
       if (!rangesOverlap(slot.startTime, slot.endTime, args.startTime, args.endTime)) continue;
       const g = await ctx.db.get(slot.groupId);
-      if (!g || g.archived) continue;
+      if (!g) continue;
       if (g.mentorId !== args.mentorId) continue;
       if (args.excludeGroupId && g._id === args.excludeGroupId) continue;
       return { groupId: g._id, groupName: g.name, slotId: slot._id };
@@ -328,7 +327,7 @@ export const studentsBusyAt = query({
       if (!rangesOverlap(slot.startTime, slot.endTime, args.startTime, args.endTime)) continue;
       if (args.excludeGroupId && slot.groupId === args.excludeGroupId) continue;
       const g = await ctx.db.get(slot.groupId);
-      if (!g || g.archived) continue;
+      if (!g) continue;
       const members = await ctx.db
         .query("groupMembers")
         .withIndex("by_group", (q) => q.eq("groupId", g._id))
@@ -372,7 +371,7 @@ export const sessionConflicts = query({
     for (const slot of allSlots) {
       if (!slot.groupId || slot.groupId === args.groupId) continue;
       const other = await ctx.db.get(slot.groupId);
-      if (!other || other.archived) continue;
+      if (!other) continue;
 
       if (group.mentorId && other.mentorId === group.mentorId) {
         mentorBusy.push({
@@ -485,7 +484,6 @@ export const dayRevenue = query({
     const groups = await ctx.db.query("groups").collect();
     let total = 0;
     for (const g of groups) {
-      if (g.archived) continue;
       // Reuse the per-group calc inline so we don't fan out N+1 queries.
       const slots = await ctx.db
         .query("scheduleSlots")
@@ -549,7 +547,6 @@ export const weekRevenue = query({
     const groups = await ctx.db.query("groups").collect();
     let total = 0;
     for (const g of groups) {
-      if (g.archived) continue;
       const slots = await ctx.db
         .query("scheduleSlots")
         .withIndex("by_group", (q) => q.eq("groupId", g._id))
@@ -629,7 +626,6 @@ export const create = mutation({
       defaultRoomId,
       type: args.type,
       maxSize: args.maxSize,
-      archived: false,
       createdAt: now,
       updatedAt: now,
     });
@@ -659,17 +655,9 @@ export const update = mutation({
   },
 });
 
-export const archive = mutation({
-  args: { id: v.id("groups"), archived: v.boolean() },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthenticated");
-    await ctx.db.patch(args.id, { archived: args.archived, updatedAt: Date.now() });
-  },
-});
-
 // Hard delete a group: detaches any owned slots (groupId cleared, slots stay
-// for history) and deletes all groupMembers rows. Use archive() for soft.
+// as orphans available for reuse) and deletes all groupMembers rows. This is
+// the only "remove from system" path — there is no soft-archive concept.
 export const remove = mutation({
   args: { id: v.id("groups") },
   handler: async (ctx, args) => {
@@ -780,7 +768,7 @@ export const candidateStudents = query({
       const activeGroupIds = new Set<string>();
       const allGroups = await ctx.db.query("groups").collect();
       for (const g of allGroups) {
-        if (!g.archived && g._id !== args.groupId) activeGroupIds.add(g._id);
+        if (g._id !== args.groupId) activeGroupIds.add(g._id);
       }
       for (const m of allMembers) {
         if (activeGroupIds.has(m.groupId)) inOtherActive.add(m.studentId);
@@ -796,11 +784,9 @@ export const candidateStudents = query({
   },
 });
 
-// Students not a member of any ACTIVE (non-archived) group. Powers the
-// "unassigned students" pill in /groups week view so a Lead can spot who
-// they've onboarded but forgotten to slot into a class. Archived groups
-// don't count — once a group is archived, its members are effectively
-// free agents until placed elsewhere.
+// Students not a member of any group. Powers the "unassigned students"
+// pill in /groups week view so a Lead can spot who they've onboarded but
+// forgotten to slot into a class.
 export const unassignedStudents = query({
   args: {},
   handler: async (ctx) => {
@@ -808,9 +794,7 @@ export const unassignedStudents = query({
     if (!identity) return [];
 
     const allGroups = await ctx.db.query("groups").collect();
-    const activeGroupIds = new Set(
-      allGroups.filter((g) => !g.archived).map((g) => g._id as string),
-    );
+    const activeGroupIds = new Set(allGroups.map((g) => g._id as string));
 
     const allMembers = await ctx.db.query("groupMembers").collect();
     const assigned = new Set<string>();
@@ -909,9 +893,8 @@ export const toggleSession = mutation({
     }
 
     // Hard block: another LIVE group already in that exact (day, time, room).
-    // archive() doesn't detach its group's slots, so a row whose groupId points
-    // at an archived (or deleted) group is effectively an orphan — treat it as
-    // free, otherwise an archived class permanently blocks that time/room.
+    // A row whose groupId points at a deleted group is an orphan — treat it
+    // as free, otherwise a stale ownership would permanently block the slot.
     const roomSlots = await ctx.db
       .query("scheduleSlots")
       .withIndex("by_room", (q) => q.eq("roomId", roomId))
@@ -920,7 +903,7 @@ export const toggleSession = mutation({
     for (const s of roomSlots) {
       if (!s.groupId || s.groupId === args.groupId) continue;
       const owner = await ctx.db.get(s.groupId);
-      if (!owner || owner.archived) {
+      if (!owner) {
         orphanSlotIds.add(s._id);
         continue;
       }
@@ -933,7 +916,7 @@ export const toggleSession = mutation({
     }
 
     // Reuse an exact-time slot if one happens to match — either a true empty
-    // (groupId=undefined) or an orphan claimed from an archived/deleted group.
+    // (groupId=undefined) or an orphan claimed from a deleted group.
     const reusable = roomSlots.find(
       (s) =>
         s.dayOfWeek === args.dayOfWeek &&
@@ -1088,8 +1071,7 @@ export const revenueInsights = query({
     // owned-slot rows for the per-day forecast loop.
     const ownedSlots = allSlots.filter((s) => {
       if (!s.groupId) return false;
-      const g = groupById.get(s.groupId);
-      return !!g && !g.archived;
+      return groupById.has(s.groupId);
     });
 
     // ── Forecast aggregates ─────────────────────────────────────────────
