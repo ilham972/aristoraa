@@ -1,5 +1,6 @@
 import { mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { tryNormalizeToE164SL } from "./lib/phone";
 
 // Day-of-week to moduleId mapping (the default timetable)
 const DAY_TO_MODULE: Record<string, string> = {
@@ -70,5 +71,59 @@ export const backfillLoggingStartDate = mutation({
       updated += 1;
     }
     return `Migration complete: ${updated} groups stamped with ${today}, ${skipped} already had a loggingStartDate`;
+  },
+});
+
+/**
+ * Phase W.1.1: normalize every students.parentPhone to Sri Lankan E.164.
+ *
+ * Reads every students row. For each:
+ *   - Already-E.164 and valid → skip (counted under `alreadyNormalized`).
+ *   - Local "0XXXXXXXXX" or international "94XXXXXXXXX" → normalize and patch.
+ *   - Unparseable (foreign / garbage / missing digits) → leave the field as-is
+ *     and add the row to `rejected` so the founder can fix by hand.
+ *
+ * Run from the project root:
+ *   npx convex run migrations:normalizeParentPhones
+ *
+ * Add `'{"dryRun":true}'` to see the diff without writing.
+ *
+ * Per the W.1 brainstorm decision (Q-a), the Settings page in W.1.4 will
+ * invoke this with a "Normalize phones" button so the founder reviews the
+ * `rejected` list before any WhatsApp send goes out.
+ */
+export const normalizeParentPhones = mutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? false;
+    const students = await ctx.db.query("students").collect();
+    let normalized = 0;
+    let alreadyNormalized = 0;
+    const rejected: Array<{ id: string; name: string; parentPhone: string }> = [];
+    for (const s of students) {
+      const result = tryNormalizeToE164SL(s.parentPhone);
+      if (result === null) {
+        rejected.push({ id: s._id, name: s.name, parentPhone: s.parentPhone });
+        continue;
+      }
+      if (result === s.parentPhone) {
+        alreadyNormalized += 1;
+        continue;
+      }
+      if (!dryRun) {
+        await ctx.db.patch(s._id, { parentPhone: result });
+      }
+      normalized += 1;
+    }
+    return {
+      dryRun,
+      total: students.length,
+      normalized,
+      alreadyNormalized,
+      rejectedCount: rejected.length,
+      rejected,
+    };
   },
 });
