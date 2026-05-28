@@ -25,7 +25,7 @@
 //   6. Self-chain at random gap.
 
 import { v } from "convex/values";
-import { internalAction, internalMutation } from "../_generated/server";
+import { internalAction, internalMutation, internalQuery } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { getProvider } from "./provider";
@@ -278,7 +278,22 @@ export const queueAndKick = internalMutation({
   },
 });
 
-// Used by retry-failed UI. Casts to message-queue Id for typing.
-export const _outboxMessageQueueId = (): Id<"messageQueue"> => {
-  throw new Error("type-only export");
-};
+// Internal-only inspection helpers for debug + CLI dry-runs (npx convex run
+// has no Clerk identity, so the auth-gated listOutbox / getQueueRow return
+// null). Not auth-gated; do not surface in any UI.
+export const inspectQueueRow = internalQuery({
+  args: { id: v.id("messageQueue") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});
+
+export const inspectRecentLog = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("messageLog")
+      .order("desc")
+      .take(args.limit ?? 20);
+  },
+});
