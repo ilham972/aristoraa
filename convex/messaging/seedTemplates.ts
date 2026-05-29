@@ -33,20 +33,20 @@ const SEEDS: Seed[] = [
       "({{date}}). Please contact us if there is a concern. — Aristora",
   },
 
-  // ─── tomorrow_reminder ─────────────────────────────────────────────────
+  // ─── tomorrow_reminder (W.4 sibling-aware contract) ────────────────────
   {
     key: "tomorrow_reminder",
     language: "ta",
     body:
-      "{{parent_name}}, நினைவூட்டல்: நாளை {{student_name}}க்கு {{module}} " +
-      "வகுப்பு {{start_time}} மணிக்கு உள்ளது. {{bring_text}} — Aristora",
+      "{{parent_name}}, நாளை ({{date}}) நினைவூட்டல்:\n{{student_lines}}.\n" +
+      "வகுப்பில் கலந்துகொள்ள உறுதி செய்யவும். — Aristora",
   },
   {
     key: "tomorrow_reminder",
     language: "en",
     body:
-      "{{parent_name}}, reminder: {{student_name}} has {{module}} tomorrow at " +
-      "{{start_time}}. {{bring_text}} — Aristora",
+      "{{parent_name}}, reminder for tomorrow ({{date}}):\n{{student_lines}}.\n" +
+      "Please make sure they attend. — Aristora",
   },
 
   // ─── weekly_card ───────────────────────────────────────────────────────
@@ -282,5 +282,89 @@ export const ensureScheduleChangeOnProd = mutation({
 export const ensureScheduleChangeOnProdInternal = internalMutation({
   handler: async (ctx) => {
     return await ensureScheduleChange(ctx);
+  },
+});
+
+// ── W.4 tomorrow_reminder contract migration ──────────────────────────────
+//
+// W.1 seeded tomorrow_reminder with the singular {{student_name}} + {{module}}
+// + {{start_time}} + {{bring_text}} vars. W.4 switched the contract to the
+// sibling-aware {{student_lines}} block and dropped the others (see
+// templates.ts). The renderer fails loudly on unknown body vars, so the stored
+// bodies MUST be updated to the new contract before any tomorrow draft can
+// render — otherwise previewTomorrow throws inside the query and the page errors
+// out. This is insert-or-heal: inserts ta+en if absent (prod likely never had
+// them — same finding as W.2/W.3), patches a row still on the OLD vars, and
+// leaves a row already on the new contract (or Lead-edited) untouched.
+//
+// Guard: rewrites only a body that still references any OLD var
+// ({{student_name}}, {{module}}, {{start_time}}, or {{bring_text}}). Safe to
+// re-run. Run once per deployment before the first tomorrow send:
+//   npx convex run messaging/seedTemplates:ensureTomorrowReminderV2
+//   npx convex run --prod messaging/seedTemplates:ensureTomorrowReminderV2
+const TOMORROW_V2: Record<"ta" | "en", string> = {
+  ta:
+    "{{parent_name}}, நாளை ({{date}}) நினைவூட்டல்:\n{{student_lines}}.\n" +
+    "வகுப்பில் கலந்துகொள்ள உறுதி செய்யவும். — Aristora",
+  en:
+    "{{parent_name}}, reminder for tomorrow ({{date}}):\n{{student_lines}}.\n" +
+    "Please make sure they attend. — Aristora",
+};
+
+async function ensureTomorrowV2(ctx: {
+  db: { query: any; insert: any; patch: any };
+}): Promise<{ patched: number; inserted: number; unchanged: number }> {
+  let patched = 0;
+  let inserted = 0;
+  let unchanged = 0;
+  const now = Date.now();
+  for (const language of ["ta", "en"] as const) {
+    const existing = await ctx.db
+      .query("messageTemplates")
+      .withIndex("by_key_lang", (q: any) =>
+        q.eq("key", "tomorrow_reminder").eq("language", language),
+      )
+      .first();
+    const v2 = TOMORROW_V2[language];
+    if (!existing) {
+      await ctx.db.insert("messageTemplates", {
+        key: "tomorrow_reminder",
+        language,
+        body: v2,
+        active: true,
+        updatedAt: now,
+        createdAt: now,
+      });
+      inserted += 1;
+      continue;
+    }
+    const usesOldVars =
+      existing.body.includes("{{student_name}}") ||
+      existing.body.includes("{{module}}") ||
+      existing.body.includes("{{start_time}}") ||
+      existing.body.includes("{{bring_text}}");
+    if (usesOldVars) {
+      await ctx.db.patch(existing._id, { body: v2, updatedAt: now });
+      patched += 1;
+    } else {
+      unchanged += 1;
+    }
+  }
+  return { patched, inserted, unchanged };
+}
+
+export const ensureTomorrowReminderV2 = internalMutation({
+  handler: async (ctx) => {
+    return await ensureTomorrowV2(ctx);
+  },
+});
+
+// Auth'd wrapper, in case the Lead wants to trigger the heal from a future
+// settings button (mirrors ensureAbsenceTemplateV2 / ensureScheduleChangeOnProd).
+export const ensureTomorrowReminderV2Auth = mutation({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return await ensureTomorrowV2(ctx);
   },
 });

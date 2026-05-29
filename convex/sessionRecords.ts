@@ -65,7 +65,7 @@ function appDowForYmd(s: string): number {
 // − remove overrides. Returns student docs alongside their per-(group,
 // student) rate, so the caller can compute expected revenue without
 // re-fetching anything.
-async function effectiveRosterFor(
+export async function effectiveRosterFor(
   ctx: QueryCtx,
   slot: Doc<"scheduleSlots">,
   date: string,

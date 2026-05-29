@@ -33,13 +33,14 @@ export const TEMPLATE_VARS: Record<TemplateKey, readonly string[]> = {
   // — it was dropped. The DB bodies are migrated by
   // seedTemplates:ensureAbsenceTemplateV2.
   absence_alert: ["parent_name", "student_names", "date"],
-  tomorrow_reminder: [
-    "parent_name",
-    "student_name",
-    "module",
-    "start_time",
-    "bring_text",
-  ],
+  // W.4: switched from singular student_name + module + start_time + bring_text
+  // to a sibling-aware {{student_lines}} (a pre-rendered list like
+  // "Rahul - M3, 4.00pm;\nPriya - M2, 3.00pm"). One reminder per parent per day
+  // can span two children in two modules at two times, so per-child vars were
+  // collapsed into one rendered block. {{bring_text}} was dropped (no per-class
+  // materials data source). DB bodies are migrated by
+  // seedTemplates:ensureTomorrowReminderV2.
+  tomorrow_reminder: ["parent_name", "student_lines", "date"],
   weekly_card: [
     "parent_name",
     "student_name",

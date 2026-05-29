@@ -45,12 +45,11 @@ const SECTIONS: Section[] = [
     available: true,
   },
   {
-    href: '/messaging',
+    href: '/messaging/tomorrow',
     label: 'Tomorrow',
     desc: 'Class reminders for tomorrow\'s slots',
     icon: MessageSquare,
-    available: false,
-    available_in: 'W.4',
+    available: true,
   },
   {
     href: '/messaging',
