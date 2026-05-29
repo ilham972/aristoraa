@@ -49,28 +49,20 @@ const SEEDS: Seed[] = [
       "Please make sure they attend. — Aristora",
   },
 
-  // ─── weekly_card ───────────────────────────────────────────────────────
+  // ─── weekly_card (W.5.D sibling-aware attendance card) ──────────────────
   {
     key: "weekly_card",
     language: "ta",
     body:
-      "{{student_name}} இன் வாராந்திர அறிக்கை ({{week_label}}):\n" +
-      "வருகை: {{attended}}/{{total_sessions}}\n" +
-      "புள்ளிகள்: {{points}} — {{rank_label}}\n" +
-      "வலிமை: {{strong_module}}\n" +
-      "மேம்படுத்த: {{weak_module}}\n" +
-      "— Aristora",
+      "{{parent_name}}, இந்த வார ({{week_label}}) வருகை அறிக்கை:\n" +
+      "{{student_lines}}\nஆதரவுக்கு நன்றி. — Aristora",
   },
   {
     key: "weekly_card",
     language: "en",
     body:
-      "Weekly report for {{student_name}} ({{week_label}}):\n" +
-      "Attendance: {{attended}}/{{total_sessions}}\n" +
-      "Points: {{points}} — {{rank_label}}\n" +
-      "Strong: {{strong_module}}\n" +
-      "Needs work: {{weak_module}}\n" +
-      "— Aristora",
+      "{{parent_name}}, weekly attendance report ({{week_label}}):\n" +
+      "{{student_lines}}\nThank you for your support. — Aristora",
   },
 
   // ─── schedule_change ───────────────────────────────────────────────────
@@ -366,5 +358,84 @@ export const ensureTomorrowReminderV2Auth = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     return await ensureTomorrowV2(ctx);
+  },
+});
+
+// ── W.5.D weekly_card contract migration ──────────────────────────────────
+//
+// W.1 seeded weekly_card with singular per-student stat vars (student_name,
+// attended, total_sessions, points, rank_label, strong_module, weak_module).
+// W.5.D collapsed it to a sibling-aware attendance card: {{parent_name}},
+// {{week_label}}, {{student_lines}} (points + rank have no data source; module
+// strength is empty for nearly all students — see templates.ts). Renderer is
+// fail-loud, so heal before any weekly card renders. Insert-or-heal (prod likely
+// never had it — W.2/W.3/W.4 pattern). Run once per deployment:
+//   npx convex run messaging/seedTemplates:ensureWeeklyCardV2
+//   npx convex run --prod messaging/seedTemplates:ensureWeeklyCardV2
+const WEEKLY_V2: Record<"ta" | "en", string> = {
+  ta:
+    "{{parent_name}}, இந்த வார ({{week_label}}) வருகை அறிக்கை:\n" +
+    "{{student_lines}}\nஆதரவுக்கு நன்றி. — Aristora",
+  en:
+    "{{parent_name}}, weekly attendance report ({{week_label}}):\n" +
+    "{{student_lines}}\nThank you for your support. — Aristora",
+};
+
+async function ensureWeeklyV2(ctx: {
+  db: { query: any; insert: any; patch: any };
+}): Promise<{ patched: number; inserted: number; unchanged: number }> {
+  let patched = 0;
+  let inserted = 0;
+  let unchanged = 0;
+  const now = Date.now();
+  for (const language of ["ta", "en"] as const) {
+    const existing = await ctx.db
+      .query("messageTemplates")
+      .withIndex("by_key_lang", (q: any) =>
+        q.eq("key", "weekly_card").eq("language", language),
+      )
+      .first();
+    const v2 = WEEKLY_V2[language];
+    if (!existing) {
+      await ctx.db.insert("messageTemplates", {
+        key: "weekly_card",
+        language,
+        body: v2,
+        active: true,
+        updatedAt: now,
+        createdAt: now,
+      });
+      inserted += 1;
+      continue;
+    }
+    const usesOldVars =
+      existing.body.includes("{{student_name}}") ||
+      existing.body.includes("{{attended}}") ||
+      existing.body.includes("{{total_sessions}}") ||
+      existing.body.includes("{{points}}") ||
+      existing.body.includes("{{rank_label}}") ||
+      existing.body.includes("{{strong_module}}") ||
+      existing.body.includes("{{weak_module}}");
+    if (usesOldVars) {
+      await ctx.db.patch(existing._id, { body: v2, updatedAt: now });
+      patched += 1;
+    } else {
+      unchanged += 1;
+    }
+  }
+  return { patched, inserted, unchanged };
+}
+
+export const ensureWeeklyCardV2 = internalMutation({
+  handler: async (ctx) => {
+    return await ensureWeeklyV2(ctx);
+  },
+});
+
+export const ensureWeeklyCardV2Auth = mutation({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return await ensureWeeklyV2(ctx);
   },
 });

@@ -67,12 +67,11 @@ const SECTIONS: Section[] = [
     available: true,
   },
   {
-    href: '/messaging',
+    href: '/messaging/weekly-cards',
     label: 'Weekly Cards',
-    desc: 'Per-student weekly performance reports',
+    desc: 'Per-student weekly attendance reports',
     icon: FileText,
-    available: false,
-    available_in: 'W.5',
+    available: true,
   },
 ];
 

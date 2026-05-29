@@ -41,17 +41,13 @@ export const TEMPLATE_VARS: Record<TemplateKey, readonly string[]> = {
   // materials data source). DB bodies are migrated by
   // seedTemplates:ensureTomorrowReminderV2.
   tomorrow_reminder: ["parent_name", "student_lines", "date"],
-  weekly_card: [
-    "parent_name",
-    "student_name",
-    "week_label",
-    "attended",
-    "total_sessions",
-    "points",
-    "rank_label",
-    "strong_module",
-    "weak_module",
-  ],
+  // W.5.D: collapsed to a sibling-aware attendance card. The original singular
+  // vars (student_name/attended/total_sessions/points/rank_label/strong_module/
+  // weak_module) were dropped: points + rank have NO data source in the app, and
+  // module strength (learning-engine mastery) is empty for nearly all students.
+  // The honest, populated weekly metric is attendance, pre-rendered per child
+  // into {{student_lines}}. DB bodies migrated by seedTemplates:ensureWeeklyCardV2.
+  weekly_card: ["parent_name", "week_label", "student_lines"],
   schedule_change: ["body_text"],
   auto_ack_parent: ["parent_name"],
   homework_pdf_parent: ["parent_name", "student_name", "date"],
