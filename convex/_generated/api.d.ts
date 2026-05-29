@@ -39,6 +39,7 @@ import type * as learningEngine_studentDashboard from "../learningEngine/student
 import type * as lib_naming from "../lib/naming.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_roster from "../lib/roster.js";
+import type * as messaging_connectWebhook from "../messaging/connectWebhook.js";
 import type * as messaging_contacts from "../messaging/contacts.js";
 import type * as messaging_inbound from "../messaging/inbound.js";
 import type * as messaging_outbox from "../messaging/outbox.js";
@@ -47,6 +48,9 @@ import type * as messaging_provider from "../messaging/provider.js";
 import type * as messaging_queue from "../messaging/queue.js";
 import type * as messaging_recipients from "../messaging/recipients.js";
 import type * as messaging_seedTemplates from "../messaging/seedTemplates.js";
+import type * as messaging_sendTest from "../messaging/sendTest.js";
+import type * as messaging_sessionStatus from "../messaging/sessionStatus.js";
+import type * as messaging_settings from "../messaging/settings.js";
 import type * as messaging_templates from "../messaging/templates.js";
 import type * as messaging_testSend from "../messaging/testSend.js";
 import type * as migrations from "../migrations.js";
@@ -111,6 +115,7 @@ declare const fullApi: ApiFromModules<{
   "lib/naming": typeof lib_naming;
   "lib/phone": typeof lib_phone;
   "lib/roster": typeof lib_roster;
+  "messaging/connectWebhook": typeof messaging_connectWebhook;
   "messaging/contacts": typeof messaging_contacts;
   "messaging/inbound": typeof messaging_inbound;
   "messaging/outbox": typeof messaging_outbox;
@@ -119,6 +124,9 @@ declare const fullApi: ApiFromModules<{
   "messaging/queue": typeof messaging_queue;
   "messaging/recipients": typeof messaging_recipients;
   "messaging/seedTemplates": typeof messaging_seedTemplates;
+  "messaging/sendTest": typeof messaging_sendTest;
+  "messaging/sessionStatus": typeof messaging_sessionStatus;
+  "messaging/settings": typeof messaging_settings;
   "messaging/templates": typeof messaging_templates;
   "messaging/testSend": typeof messaging_testSend;
   migrations: typeof migrations;

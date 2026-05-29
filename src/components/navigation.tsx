@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart } from 'lucide-react';
+import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
@@ -13,6 +13,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/groups', label: 'Groups', icon: CalendarRange },
   { href: '/analytics', label: 'Analytics', icon: LineChart, leadOnly: true },
   { href: '/algorithm', label: 'Insights', icon: BarChart3, leadOnly: true },
+  { href: '/messaging', label: 'Messages', icon: MessageSquare, leadOnly: true },
   { href: '/leaderboard', label: 'Board', icon: Trophy },
   { href: '/students', label: 'Students', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },

@@ -4,6 +4,7 @@ import { Show } from '@clerk/nextjs';
 import { useAuth } from '@clerk/nextjs';
 import { BottomNav } from '@/components/navigation';
 import { NavVisibilityProvider } from '@/contexts/nav-visibility';
+import { NotificationBell } from '@/components/messaging/NotificationBell';
 import { ReactNode, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
@@ -31,6 +32,9 @@ export function AuthLayout({ children }: { children: ReactNode }) {
     <>
       <Show when="signed-in">
         <NavVisibilityProvider>
+          <div className="fixed top-3 right-3 z-40 pt-[env(safe-area-inset-top)]">
+            <NotificationBell />
+          </div>
           <main className="pb-20 min-h-screen">
             {children}
           </main>

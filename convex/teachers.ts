@@ -5,6 +5,7 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
+import { normalizeToE164SL } from "./lib/phone";
 
 export const list = query({
   handler: async (ctx) => {
@@ -286,6 +287,30 @@ export const update = mutation({
 
     const { id, ...data } = args;
     await ctx.db.patch(id, data);
+  },
+});
+
+// Phase W.1.4: set the current user's own personalWhatsappPhone. No admin
+// check — every teacher owns their own forward target. Accepts any input
+// the SL phone normalizer can parse; clears the field when phone is empty.
+export const setMyPersonalWhatsappPhone = mutation({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacher = await ctx.db
+      .query("teachers")
+      .withIndex("by_clerk_user", (q) => q.eq("clerkUserId", identity.subject))
+      .first();
+    if (!teacher) throw new Error("No teachers row for current user");
+    const trimmed = args.phone.trim();
+    if (trimmed === "") {
+      await ctx.db.patch(teacher._id, { personalWhatsappPhone: undefined });
+      return { phone: null };
+    }
+    const normalized = normalizeToE164SL(trimmed);
+    await ctx.db.patch(teacher._id, { personalWhatsappPhone: normalized });
+    return { phone: normalized };
   },
 });
 
