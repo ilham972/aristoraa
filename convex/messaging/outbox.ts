@@ -38,6 +38,7 @@ import {
   randomGapMs,
   backoffMs,
 } from "./policy";
+import { getLeadTeachers } from "./recipients";
 
 type LockResult =
   | { kind: "empty" }
@@ -198,8 +199,22 @@ export const markFailedOrRetry = internalMutation({
       errorMessage: args.error,
       occurredAt: now,
     });
-    // whatsapp_send_failed notification is posted in W.1.3 when the
-    // notifications helper lands and the Lead-clerkId resolver exists.
+    // whatsapp_send_failed → bell icon. Lead only (mentors don't own
+    // outbound failures even when their student is on the message).
+    const leads = await getLeadTeachers(ctx.db);
+    const recipientLabel = msg.toPhone ?? msg.toWhatsappGroupId ?? "?";
+    for (const lead of leads) {
+      await ctx.db.insert("notifications", {
+        userClerkId: lead.clerkUserId,
+        type: "whatsapp_send_failed",
+        title: `❌ Send failed: ${recipientLabel}`,
+        body: args.error.slice(0, 200),
+        priority: "high",
+        actionUrl: "/messaging/outbox?status=failed",
+        payload: { queueId: args.id, error: args.error, recipient: recipientLabel },
+        createdAt: now,
+      });
+    }
   },
 });
 

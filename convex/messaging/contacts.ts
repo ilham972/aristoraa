@@ -4,7 +4,7 @@
 // inside the upsertParentContact mutation (no DB constraint). All callers
 // must pass normalized E.164 — see convex/lib/phone.ts.
 
-import { mutation, query, internalMutation } from "../_generated/server";
+import { mutation, query, internalMutation, internalQuery } from "../_generated/server";
 import { v } from "convex/values";
 import { normalizeToE164SL } from "../lib/phone";
 
@@ -134,6 +134,38 @@ export const internalOptOutByPhone = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+// Internal-only inspector for CLI dry-runs (auth-gated queries return null
+// from `npx convex run`). Not surfaced in any UI.
+export const inspectByPhone = internalQuery({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    let phoneE164: string;
+    try {
+      phoneE164 = normalizeToE164SL(args.phone);
+    } catch {
+      return null;
+    }
+    const contact = await ctx.db
+      .query("parentContacts")
+      .withIndex("by_phone", (q) => q.eq("phoneE164", phoneE164))
+      .first();
+    const conversation = await ctx.db
+      .query("conversations")
+      .withIndex("by_phone", (q) => q.eq("phoneE164", phoneE164))
+      .first();
+    const recentQueue = conversation
+      ? await ctx.db
+          .query("messageQueue")
+          .withIndex("by_conversation", (q) =>
+            q.eq("conversationId", conversation._id),
+          )
+          .order("desc")
+          .take(5)
+      : [];
+    return { phoneE164, contact, conversation, recentQueue };
   },
 });
 
