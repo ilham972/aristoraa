@@ -31,12 +31,11 @@ const SECTIONS: Section[] = [
     available_in: 'W.1.4+',
   },
   {
-    href: '/messaging',
+    href: '/messaging/today',
     label: 'Today',
     desc: 'Absence alerts · "things to send today"',
     icon: CalendarDays,
-    available: false,
-    available_in: 'W.2',
+    available: true,
   },
   {
     href: '/messaging',

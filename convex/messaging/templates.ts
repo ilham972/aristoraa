@@ -27,7 +27,12 @@ export type TemplateKey = (typeof TEMPLATE_KEYS)[number];
 // Required variable names per template. Language-agnostic — every language
 // variant of the same key shares the same contract.
 export const TEMPLATE_VARS: Record<TemplateKey, readonly string[]> = {
-  absence_alert: ["parent_name", "student_name", "module", "date"],
+  // W.2: switched from singular student_name + module to a sibling-aware
+  // student_names list. One absence message per parent per day can span two
+  // children in two different modules, so a single {{module}} would be wrong
+  // — it was dropped. The DB bodies are migrated by
+  // seedTemplates:ensureAbsenceTemplateV2.
+  absence_alert: ["parent_name", "student_names", "date"],
   tomorrow_reminder: [
     "parent_name",
     "student_name",

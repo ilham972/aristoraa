@@ -22,14 +22,14 @@ const SEEDS: Seed[] = [
     key: "absence_alert",
     language: "ta",
     body:
-      "{{parent_name}}, இன்று ({{date}}) {{student_name}} {{module}} வகுப்பை " +
+      "{{parent_name}}, இன்று ({{date}}) {{student_names}} வகுப்பை " +
       "தவறவிட்டார்கள். ஏதேனும் கவலை இருந்தால் எங்களைத் தொடர்பு கொள்ளவும். — Aristora",
   },
   {
     key: "absence_alert",
     language: "en",
     body:
-      "{{parent_name}}, {{student_name}} missed today's {{module}} class " +
+      "{{parent_name}}, {{student_names}} missed today's class " +
       "({{date}}). Please contact us if there is a concern. — Aristora",
   },
 
@@ -146,5 +146,84 @@ export const run = mutation({
 export const runInternal = internalMutation({
   handler: async (ctx) => {
     return await seed(ctx);
+  },
+});
+
+// ── W.2 absence_alert contract migration ─────────────────────────────────
+//
+// W.1 seeded absence_alert with the singular {{student_name}} + {{module}}
+// vars. W.2 switched the contract to sibling-aware {{student_names}} and
+// dropped {{module}} (see templates.ts). The renderer fails loudly on
+// unknown body vars, so the stored bodies MUST be updated before any absence
+// draft can render. This heals the existing rows.
+//
+// Guard: only rewrites a row whose body still references the OLD vars
+// ({{student_name}} or {{module}}). A body already on the new contract — or
+// one the Lead has hand-edited to use {{student_names}} — is left untouched.
+// Safe to re-run. Run once per deployment:
+//   npx convex run messaging/seedTemplates:ensureAbsenceTemplateV2
+//   npx convex run --prod messaging/seedTemplates:ensureAbsenceTemplateV2
+const ABSENCE_V2: Record<"ta" | "en", string> = {
+  ta:
+    "{{parent_name}}, இன்று ({{date}}) {{student_names}} வகுப்பை " +
+    "தவறவிட்டார்கள். ஏதேனும் கவலை இருந்தால் எங்களைத் தொடர்பு கொள்ளவும். — Aristora",
+  en:
+    "{{parent_name}}, {{student_names}} missed today's class " +
+    "({{date}}). Please contact us if there is a concern. — Aristora",
+};
+
+async function ensureAbsenceV2(ctx: { db: { query: any; insert: any; patch: any } }): Promise<{
+  patched: number;
+  inserted: number;
+  unchanged: number;
+}> {
+  let patched = 0;
+  let inserted = 0;
+  let unchanged = 0;
+  const now = Date.now();
+  for (const language of ["ta", "en"] as const) {
+    const existing = await ctx.db
+      .query("messageTemplates")
+      .withIndex("by_key_lang", (q: any) =>
+        q.eq("key", "absence_alert").eq("language", language),
+      )
+      .first();
+    const v2 = ABSENCE_V2[language];
+    if (!existing) {
+      await ctx.db.insert("messageTemplates", {
+        key: "absence_alert",
+        language,
+        body: v2,
+        active: true,
+        updatedAt: now,
+        createdAt: now,
+      });
+      inserted += 1;
+      continue;
+    }
+    const usesOldVars =
+      existing.body.includes("{{student_name}}") ||
+      existing.body.includes("{{module}}");
+    if (usesOldVars) {
+      await ctx.db.patch(existing._id, { body: v2, updatedAt: now });
+      patched += 1;
+    } else {
+      unchanged += 1;
+    }
+  }
+  return { patched, inserted, unchanged };
+}
+
+export const ensureAbsenceTemplateV2 = mutation({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return await ensureAbsenceV2(ctx);
+  },
+});
+
+export const ensureAbsenceTemplateV2Internal = internalMutation({
+  handler: async (ctx) => {
+    return await ensureAbsenceV2(ctx);
   },
 });

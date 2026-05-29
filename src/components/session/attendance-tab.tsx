@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { fmtLKR } from '@/lib/groups/time-grid';
+import { AbsenceAlertNudge } from '@/components/messaging/AbsenceAlertNudge';
 
 type AttendedState = 'present' | 'absent' | 'unset';
 
@@ -83,6 +84,15 @@ export function AttendanceTab({
   }
 
   const cancelled = detail?.logStatus === 'cancelled';
+
+  // Students whose SAVED attendance is "absent" — only these get the inline
+  // absence-alert nudge. Keys off persisted server state (detail.members),
+  // NOT the in-flight local draft, so the nudge appears after "Save session".
+  const persistedAbsent = new Set(
+    (detail?.members ?? [])
+      .filter((m) => m.attended === 'absent')
+      .map((m) => String(m.studentId)),
+  );
 
   const totals = useMemo(() => {
     if (!draft) return { expected: 0, collected: 0, credit: 0, present: 0, absent: 0 };
@@ -224,6 +234,9 @@ export function AttendanceTab({
               <SessionRow
                 key={r.studentId}
                 row={r}
+                slotId={slotId}
+                date={date}
+                showNudge={persistedAbsent.has(String(r.studentId))}
                 onAttended={(a) => setAttended(r.studentId, a)}
                 onAmount={(amt) => updateRow(r.studentId, { amountPaid: amt })}
               />
@@ -315,10 +328,16 @@ function Stat({
 
 function SessionRow({
   row,
+  slotId,
+  date,
+  showNudge,
   onAttended,
   onAmount,
 }: {
   row: DraftRow;
+  slotId: Id<'scheduleSlots'>;
+  date: string;
+  showNudge: boolean;
   onAttended: (a: AttendedState) => void;
   onAmount: (amt: number) => void;
 }) {
@@ -402,6 +421,10 @@ function SessionRow({
           <AlertCircle className="w-3 h-3" />
           {fmtLKR(credit)} credit today
         </p>
+      )}
+
+      {showNudge && (
+        <AbsenceAlertNudge studentId={row.studentId} slotId={slotId} date={date} />
       )}
     </li>
   );

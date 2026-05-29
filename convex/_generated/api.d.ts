@@ -39,6 +39,7 @@ import type * as learningEngine_studentDashboard from "../learningEngine/student
 import type * as lib_naming from "../lib/naming.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_roster from "../lib/roster.js";
+import type * as messaging_absenceAlerts from "../messaging/absenceAlerts.js";
 import type * as messaging_connectWebhook from "../messaging/connectWebhook.js";
 import type * as messaging_contacts from "../messaging/contacts.js";
 import type * as messaging_inbound from "../messaging/inbound.js";
@@ -115,6 +116,7 @@ declare const fullApi: ApiFromModules<{
   "lib/naming": typeof lib_naming;
   "lib/phone": typeof lib_phone;
   "lib/roster": typeof lib_roster;
+  "messaging/absenceAlerts": typeof messaging_absenceAlerts;
   "messaging/connectWebhook": typeof messaging_connectWebhook;
   "messaging/contacts": typeof messaging_contacts;
   "messaging/inbound": typeof messaging_inbound;
