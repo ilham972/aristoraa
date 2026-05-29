@@ -45,6 +45,7 @@ import type * as messaging_connectWebhook from "../messaging/connectWebhook.js";
 import type * as messaging_contacts from "../messaging/contacts.js";
 import type * as messaging_groupsWa from "../messaging/groupsWa.js";
 import type * as messaging_inbound from "../messaging/inbound.js";
+import type * as messaging_inbox from "../messaging/inbox.js";
 import type * as messaging_outbox from "../messaging/outbox.js";
 import type * as messaging_policy from "../messaging/policy.js";
 import type * as messaging_provider from "../messaging/provider.js";
@@ -125,6 +126,7 @@ declare const fullApi: ApiFromModules<{
   "messaging/contacts": typeof messaging_contacts;
   "messaging/groupsWa": typeof messaging_groupsWa;
   "messaging/inbound": typeof messaging_inbound;
+  "messaging/inbox": typeof messaging_inbox;
   "messaging/outbox": typeof messaging_outbox;
   "messaging/policy": typeof messaging_policy;
   "messaging/provider": typeof messaging_provider;

@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { useQuery } from 'convex/react';
 import { Settings as SettingsIcon, Inbox, CalendarDays, Megaphone, MessageSquare, FileText } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { api } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 
 type Section = {
@@ -23,12 +25,11 @@ const SECTIONS: Section[] = [
     available: true,
   },
   {
-    href: '/messaging',
+    href: '/messaging/inbox',
     label: 'Inbox',
     desc: 'Parent replies · forwarded conversations',
     icon: Inbox,
-    available: false,
-    available_in: 'W.1.4+',
+    available: true,
   },
   {
     href: '/messaging/today',
@@ -62,6 +63,8 @@ const SECTIONS: Section[] = [
 ];
 
 export default function MessagingHubPage() {
+  const conversations = useQuery(api.messaging.inbox.listConversations, {});
+  const unread = (conversations ?? []).reduce((n, c) => n + (c.unreadCount > 0 ? 1 : 0), 0);
   return (
     <div className="px-4 pt-6 pb-8 max-w-2xl mx-auto">
       <header className="mb-5">
@@ -93,6 +96,11 @@ export default function MessagingHubPage() {
                     {!s.available && s.available_in && (
                       <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                         {s.available_in}
+                      </span>
+                    )}
+                    {s.label === 'Inbox' && unread > 0 && (
+                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-teal-500 text-white text-[10px] font-bold inline-flex items-center justify-center">
+                        {unread}
                       </span>
                     )}
                   </div>
