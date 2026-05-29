@@ -150,29 +150,87 @@ export const listOutbox = query({
   args: {
     status: v.optional(v.string()),
     batchId: v.optional(v.string()),
+    templateKey: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
     const limit = Math.min(args.limit ?? 100, 500);
+
+    // Pick the most selective available index, then JS-filter the rest. Take a
+    // wider window when post-filtering so the limit still fills after filtering.
+    const window = args.templateKey ? Math.min(limit * 4, 500) : limit;
+    let rows;
     if (args.batchId) {
-      const rows = await ctx.db
+      rows = await ctx.db
         .query("messageQueue")
         .withIndex("by_batch", (q) => q.eq("batchId", args.batchId!))
         .order("desc")
-        .take(limit);
-      return rows;
-    }
-    if (args.status) {
-      const rows = await ctx.db
+        .take(window);
+    } else if (args.status) {
+      rows = await ctx.db
         .query("messageQueue")
         .withIndex("by_status", (q) => q.eq("status", args.status!))
         .order("desc")
-        .take(limit);
-      return rows;
+        .take(window);
+    } else {
+      rows = await ctx.db.query("messageQueue").order("desc").take(window);
     }
-    return await ctx.db.query("messageQueue").order("desc").take(limit);
+    if (args.templateKey) {
+      rows = rows.filter((r) => (r.templateKey ?? "__freeform") === args.templateKey);
+    }
+    rows = rows.slice(0, limit);
+
+    // Enrich each row with a human target label (group display name needs a
+    // lookup; contact is just the phone, masked to the last 4 by the UI).
+    const groupNameCache = new Map<string, string>();
+    const out = [];
+    for (const r of rows) {
+      let targetLabel: string;
+      if (r.toType === "group" && r.toWhatsappGroupId) {
+        let name = groupNameCache.get(r.toWhatsappGroupId);
+        if (name === undefined) {
+          const g = await ctx.db
+            .query("whatsappGroups")
+            .withIndex("by_wa_id", (q) => q.eq("whatsappGroupId", r.toWhatsappGroupId!))
+            .first();
+          name = g?.displayName ?? r.toWhatsappGroupId;
+          groupNameCache.set(r.toWhatsappGroupId, name);
+        }
+        targetLabel = name;
+      } else {
+        targetLabel = r.toPhone ?? "—";
+      }
+      out.push({ ...r, targetLabel });
+    }
+    return out;
+  },
+});
+
+// Per-batch status tally for the Outbox batch view.
+export const batchSummary = query({
+  args: { batchId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const rows = await ctx.db
+      .query("messageQueue")
+      .withIndex("by_batch", (q) => q.eq("batchId", args.batchId))
+      .collect();
+    const counts = {
+      total: rows.length,
+      draft: 0,
+      queued: 0,
+      sending: 0,
+      sent: 0,
+      failed: 0,
+      cancelled: 0,
+    };
+    for (const r of rows) {
+      if (r.status in counts) (counts as Record<string, number>)[r.status] += 1;
+    }
+    return counts;
   },
 });
 

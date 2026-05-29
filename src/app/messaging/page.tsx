@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useQuery } from 'convex/react';
-import { Settings as SettingsIcon, Inbox, CalendarDays, Megaphone, MessageSquare, FileText } from 'lucide-react';
+import { Settings as SettingsIcon, Inbox, CalendarDays, Megaphone, MessageSquare, FileText, Send } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { api } from '@/lib/convex';
 import { cn } from '@/lib/utils';
@@ -43,6 +43,13 @@ const SECTIONS: Section[] = [
     label: 'Broadcasts',
     desc: 'Schedule-change announcements to parent groups',
     icon: Megaphone,
+    available: true,
+  },
+  {
+    href: '/messaging/outbox',
+    label: 'Outbox',
+    desc: 'Queued · sent · failed · cancel & retry',
+    icon: Send,
     available: true,
   },
   {
