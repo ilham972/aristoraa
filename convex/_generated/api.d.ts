@@ -56,6 +56,7 @@ import type * as messaging_sendTest from "../messaging/sendTest.js";
 import type * as messaging_sessionStatus from "../messaging/sessionStatus.js";
 import type * as messaging_settings from "../messaging/settings.js";
 import type * as messaging_templates from "../messaging/templates.js";
+import type * as messaging_templatesAdmin from "../messaging/templatesAdmin.js";
 import type * as messaging_testSend from "../messaging/testSend.js";
 import type * as messaging_tomorrowReminders from "../messaging/tomorrowReminders.js";
 import type * as migrations from "../migrations.js";
@@ -137,6 +138,7 @@ declare const fullApi: ApiFromModules<{
   "messaging/sessionStatus": typeof messaging_sessionStatus;
   "messaging/settings": typeof messaging_settings;
   "messaging/templates": typeof messaging_templates;
+  "messaging/templatesAdmin": typeof messaging_templatesAdmin;
   "messaging/testSend": typeof messaging_testSend;
   "messaging/tomorrowReminders": typeof messaging_tomorrowReminders;
   migrations: typeof migrations;

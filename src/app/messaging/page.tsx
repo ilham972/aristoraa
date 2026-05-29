@@ -53,6 +53,13 @@ const SECTIONS: Section[] = [
     available: true,
   },
   {
+    href: '/messaging/templates',
+    label: 'Templates',
+    desc: 'Edit message wording · Tamil + English',
+    icon: FileText,
+    available: true,
+  },
+  {
     href: '/messaging/tomorrow',
     label: 'Tomorrow',
     desc: 'Class reminders for tomorrow\'s slots',

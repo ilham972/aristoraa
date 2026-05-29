@@ -67,6 +67,19 @@ export const TEMPLATE_VARS: Record<TemplateKey, readonly string[]> = {
 
 const VAR_PATTERN = /\{\{\s*(\w+)\s*\}\}/g;
 
+// Distinct {{var}} names referenced in a body, in first-seen order. Used by the
+// templates editor (W.5.C) to validate an edited body against the contract.
+export function extractTemplateVars(body: string): string[] {
+  const seen: string[] = [];
+  const re = new RegExp(VAR_PATTERN.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const name = m[1];
+    if (!seen.includes(name)) seen.push(name);
+  }
+  return seen;
+}
+
 export function renderTemplate(
   key: TemplateKey,
   body: string,
