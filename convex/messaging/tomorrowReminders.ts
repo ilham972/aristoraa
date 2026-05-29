@@ -21,7 +21,13 @@
 // every Sunday slot, so we convert (0 → 7).
 
 import { v } from "convex/values";
-import { mutation, query, MutationCtx, QueryCtx } from "../_generated/server";
+import {
+  mutation,
+  query,
+  internalQuery,
+  MutationCtx,
+  QueryCtx,
+} from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { tryNormalizeToE164SL } from "../lib/phone";
@@ -528,6 +534,32 @@ export const previewTomorrow = query({
       },
       groups,
       noPhone: computed.noPhone,
+    };
+  },
+});
+
+// CLI smoke-test twin (no Clerk identity). Exercises the full roster-resolve →
+// group → render path on a deployment without a browser, so a renderTemplate
+// throw or empty roster is caught before the Lead's first click. `date` can be
+// overridden to target a weekday known to have classes (real tomorrow may be a
+// quiet Sunday). Not used by the UI.
+export const previewTomorrowInternal = internalQuery({
+  args: { date: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const date = args.date ?? tomorrowDateInColombo(Date.now());
+    const computed = await computeTomorrowGroups(ctx, date, {});
+    const sample = computed.groups.find((g) => !g.optedOut) ?? null;
+    return {
+      date,
+      dayNum: dayNumForYmd(date),
+      counts: {
+        parents: computed.groups.length,
+        sessions: computed.sessionsTomorrow,
+        noPhone: computed.noPhone.length,
+        offDay: computed.skippedOffDay,
+        cancelled: computed.skippedCancelledSlots,
+      },
+      sampleBody: sample ? await renderTomorrowBody(ctx, sample, date) : null,
     };
   },
 });
