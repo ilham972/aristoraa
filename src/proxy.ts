@@ -1,7 +1,12 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 
-const isPublicRoute = createRouteMatcher(['/sign-in(.*)']);
+// `/manifest.json` must be publicly fetchable: Chrome requests the PWA
+// manifest without auth cookies, so if Clerk protects it the request is
+// redirected to /sign-in, Chrome can't parse the HTML as JSON ("Manifest
+// Line 1, column 1, Syntax error"), and the app becomes non-installable.
+// (The matcher excludes `.js`/`.png` but not `.json`, so this is needed.)
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/manifest.json']);
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {

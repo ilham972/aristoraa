@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aristora-v10';
+const CACHE_NAME = 'aristora-v11';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/icon-192x192.png',
@@ -37,6 +37,20 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(async () => {
+        // Network failed. Try the cache, then fall back to a real
+        // Response. NEVER resolve with `undefined` — caches.match
+        // returns undefined on a miss, and respondWith(undefined)
+        // throws "Failed to convert value to 'Response'" and turns
+        // the request (including page navigations) into a hard
+        // network error.
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return new Response('Offline', {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      })
   );
 });
