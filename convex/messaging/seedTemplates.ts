@@ -227,3 +227,60 @@ export const ensureAbsenceTemplateV2Internal = internalMutation({
     return await ensureAbsenceV2(ctx);
   },
 });
+
+// ── W.3 schedule_change defensive seed ───────────────────────────────────
+//
+// W.1 seeded schedule_change, but W.2 found absence_alert was never seeded on
+// prod — so don't assume. This inserts the schedule_change ta+en rows only if
+// absent; never patches an existing (possibly Lead-edited) body. Run once per
+// deployment before the first broadcast:
+//   npx convex run messaging/seedTemplates:ensureScheduleChangeOnProdInternal
+//   npx convex run --prod messaging/seedTemplates:ensureScheduleChangeOnProdInternal
+const SCHEDULE_CHANGE: Record<"ta" | "en", string> = {
+  ta: "📢 {{body_text}} — Aristora",
+  en: "📢 {{body_text}} — Aristora",
+};
+
+async function ensureScheduleChange(ctx: {
+  db: { query: any; insert: any };
+}): Promise<{ inserted: number; unchanged: number }> {
+  let inserted = 0;
+  let unchanged = 0;
+  const now = Date.now();
+  for (const language of ["ta", "en"] as const) {
+    const existing = await ctx.db
+      .query("messageTemplates")
+      .withIndex("by_key_lang", (q: any) =>
+        q.eq("key", "schedule_change").eq("language", language),
+      )
+      .first();
+    if (existing) {
+      unchanged += 1;
+      continue;
+    }
+    await ctx.db.insert("messageTemplates", {
+      key: "schedule_change",
+      language,
+      body: SCHEDULE_CHANGE[language],
+      active: true,
+      updatedAt: now,
+      createdAt: now,
+    });
+    inserted += 1;
+  }
+  return { inserted, unchanged };
+}
+
+export const ensureScheduleChangeOnProd = mutation({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return await ensureScheduleChange(ctx);
+  },
+});
+
+export const ensureScheduleChangeOnProdInternal = internalMutation({
+  handler: async (ctx) => {
+    return await ensureScheduleChange(ctx);
+  },
+});

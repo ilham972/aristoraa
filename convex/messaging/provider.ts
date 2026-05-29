@@ -16,6 +16,13 @@
 // Runtime: this module is only safe to call from Convex actions — it uses
 // `fetch`. Mutations and queries cannot invoke the provider directly.
 
+// A WhatsApp group the bot is a member of, as returned by the provider's
+// groups endpoint (shape normalized inside the provider).
+export interface RawGroup {
+  whatsappGroupId: string; // full "120363xxx@g.us" form
+  displayName: string;
+}
+
 export interface MessagingProvider {
   sendText(args: { to: string; text: string }): Promise<{ providerMessageId: string }>;
   sendMedia(args: {
@@ -24,13 +31,21 @@ export interface MessagingProvider {
     caption?: string;
     type: "image" | "document";
   }): Promise<{ providerMessageId: string }>;
-  sendGroupText(args: { groupId: string; text: string }): Promise<{ providerMessageId: string }>;
+  // displayName is used only for the dev-mode redirect annotation; the real
+  // send targets `groupId`.
+  sendGroupText(args: {
+    groupId: string;
+    text: string;
+    displayName?: string;
+  }): Promise<{ providerMessageId: string }>;
   sendGroupMedia(args: {
     groupId: string;
     mediaUrl: string;
     caption?: string;
     type: "image" | "document";
   }): Promise<{ providerMessageId: string }>;
+  // Lists every group the bot is currently a member of (W.3 broadcasts sync).
+  listGroups(): Promise<RawGroup[]>;
 }
 
 interface OpenWAConfig {
@@ -47,6 +62,12 @@ class OpenWAProvider implements MessagingProvider {
   private contactChatId(toE164: string): string {
     // Open-WA expects "<digits>@c.us" with no plus sign.
     return `${toE164.replace(/^\+/, "")}@c.us`;
+  }
+
+  private groupChatId(groupId: string): string {
+    // whatsappGroups.whatsappGroupId is stored in the full "...@g.us" form, so
+    // it's used directly. Be defensive in case a bare id slips through.
+    return groupId.includes("@g.us") ? groupId : `${groupId}@g.us`;
   }
 
   private applyDevRedirect(to: string, body: string): { to: string; body: string } {
@@ -66,6 +87,19 @@ class OpenWAProvider implements MessagingProvider {
         "X-API-Key": this.cfg.apiKey,
       },
       body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "<unreadable>");
+      throw new Error(`OpenWA ${path} failed ${res.status}: ${errText.slice(0, 500)}`);
+    }
+    return res.json().catch(() => ({}));
+  }
+
+  private async get(path: string): Promise<unknown> {
+    const url = `${this.cfg.baseUrl}${path}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "X-API-Key": this.cfg.apiKey },
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => "<unreadable>");
@@ -109,12 +143,62 @@ class OpenWAProvider implements MessagingProvider {
     throw new Error("OpenWAProvider.sendMedia not yet wired (lands in Phase W.6)");
   }
 
-  async sendGroupText(_args: {
+  async sendGroupText(args: {
     groupId: string;
     text: string;
+    displayName?: string;
   }): Promise<{ providerMessageId: string }> {
-    // Wired in Phase W.3 (manual broadcasts).
-    throw new Error("OpenWAProvider.sendGroupText not yet wired (lands in Phase W.3)");
+    // Dev-mode safety for groups (§11 + W.3 req #4): a group id can't be
+    // rewritten to a phone, so we redirect the whole send to the founder's
+    // personal number and annotate which group it WOULD have hit. This is the
+    // guard that stops test broadcasts blasting real parent groups.
+    if (this.cfg.devMode) {
+      const label = args.displayName ?? args.groupId;
+      const resp = await this.post(`/sessions/${this.cfg.sessionId}/messages/send-text`, {
+        chatId: this.contactChatId(this.cfg.devNumber),
+        text: `[DEV → orig group "${label}"]\n${args.text}`,
+      });
+      return { providerMessageId: this.extractMessageId(resp) };
+    }
+    const resp = await this.post(`/sessions/${this.cfg.sessionId}/messages/send-text`, {
+      chatId: this.groupChatId(args.groupId),
+      text: args.text,
+    });
+    return { providerMessageId: this.extractMessageId(resp) };
+  }
+
+  async listGroups(): Promise<RawGroup[]> {
+    const resp = await this.get(`/sessions/${this.cfg.sessionId}/groups`);
+    // Log the raw envelope so a 0-result sync is diagnosable from
+    // `npx convex logs` (widen the candidate keys below from what's seen here)
+    // rather than needing a deploy round-trip.
+    console.log("OpenWA groups raw:", JSON.stringify(resp).slice(0, 1500));
+    // Open-WA's exact response shape isn't pinned across versions, so probe
+    // the common envelopes + field names rather than hard-coding one. If the
+    // first real sync returns 0 groups, inspect `npx convex logs` and widen
+    // the candidate keys here.
+    const r = resp as Record<string, unknown> | unknown[] | null;
+    const arr: unknown[] = Array.isArray(r)
+      ? r
+      : Array.isArray((r as Record<string, unknown>)?.data)
+        ? ((r as Record<string, unknown>).data as unknown[])
+        : Array.isArray((r as Record<string, unknown>)?.groups)
+          ? ((r as Record<string, unknown>).groups as unknown[])
+          : [];
+    const out: RawGroup[] = [];
+    for (const item of arr) {
+      const g = item as Record<string, unknown>;
+      const idRaw =
+        g.id ?? g.groupId ?? g.chatId ?? g._serialized ??
+        (g.id as Record<string, unknown> | undefined)?._serialized;
+      const id = typeof idRaw === "string" ? idRaw : undefined;
+      if (!id) continue;
+      const nameRaw = g.name ?? g.subject ?? g.displayName ?? g.title;
+      const displayName =
+        typeof nameRaw === "string" && nameRaw.length > 0 ? nameRaw : id;
+      out.push({ whatsappGroupId: id, displayName });
+    }
+    return out;
   }
 
   async sendGroupMedia(_args: {

@@ -38,12 +38,11 @@ const SECTIONS: Section[] = [
     available: true,
   },
   {
-    href: '/messaging',
+    href: '/messaging/broadcasts',
     label: 'Broadcasts',
     desc: 'Schedule-change announcements to parent groups',
     icon: Megaphone,
-    available: false,
-    available_in: 'W.3',
+    available: true,
   },
   {
     href: '/messaging',

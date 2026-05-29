@@ -251,9 +251,19 @@ export const processNext = internalAction({
         if (msg.mediaStorageId) {
           throw new Error("group media not yet wired (lands in W.3+)");
         }
+        // W.3: re-check the bot still belongs to the group at send time, and
+        // grab its display name for the dev-mode annotation. One read before
+        // the same send — pacing logic is untouched.
+        const group = await ctx.runQuery(internal.messaging.groupsWa.getByWaId, {
+          whatsappGroupId: msg.toWhatsappGroupId,
+        });
+        if (!group || !group.active) {
+          throw new Error("Group no longer accessible to the bot");
+        }
         const res = await provider.sendGroupText({
           groupId: msg.toWhatsappGroupId,
           text: msg.body,
+          displayName: group.displayName,
         });
         providerMessageId = res.providerMessageId;
       } else {
