@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Phase W: contains production VPS + Open-WA credentials; do not commit
+whatsapp_integration_plan.md
+
 # vercel
 .vercel
 

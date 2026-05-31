@@ -53,9 +53,16 @@ export default function AnalyticsPage() {
   };
 
   return (
-    <div className="h-[calc(100svh-5rem)] flex flex-col overflow-hidden max-w-3xl mx-auto px-3 pt-3">
-      {/* Tab strip — horizontally scrollable on mobile for the 5 tabs. */}
-      <div className="shrink-0 flex items-center gap-1 p-1 bg-muted rounded-xl overflow-x-auto mb-3 scrollbar-thin">
+    // Natural document scroll — no nested fixed-height/overflow container.
+    // The old `h-[calc(100svh-5rem)] overflow-hidden` + inner `overflow-y-auto`
+    // shell created a separate scroll/compositing layer that corrupted its top
+    // tiles on mobile (blank top ~25% on the tall Finance/Capacity tabs). Every
+    // other page in the app scrolls the document directly; this now matches.
+    <div className="min-h-[calc(100svh-5rem)] max-w-3xl mx-auto px-3 pt-3 pb-6">
+      {/* Tab strip — sticky (solid bg, no blur) so the 5 tabs stay reachable
+          while the page scrolls. Horizontally scrollable on narrow screens. */}
+      <div className="sticky top-0 z-20 -mx-3 mb-3 px-3 py-1 bg-background">
+        <div className="flex items-center gap-1 p-1 bg-muted rounded-xl overflow-x-auto scrollbar-thin">
         {TABS.map((t) => (
           <button
             key={t.value}
@@ -71,9 +78,10 @@ export default function AnalyticsPage() {
             {t.label}
           </button>
         ))}
+        </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto pb-3">
+      <div>
         {view === 'pulse' && <PulseTab />}
         {view === 'finance' && <FinanceTab onOpenGroup={openEditor} />}
         {view === 'operations' && <OperationsTab onOpenGroup={openEditor} />}
