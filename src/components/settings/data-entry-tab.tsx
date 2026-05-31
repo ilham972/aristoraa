@@ -1526,12 +1526,17 @@ function ExerciseCard({
                         }
                         return (
                           <span key={subKey} className="flex items-center gap-0.5">
-                            <CaptureDot
-                              kind="sub-stem"
-                              filled={!!cropsByKey.get(subKey)}
-                              onPress={() => tapKey(subKey)}
-                              labelKey={subKey}
-                            />
+                            {/* Sub-stem dot — hidden when the sub-part is
+                                marked noStem (its leaves borrow the main-Q
+                                stem, so there's nothing to crop here). */}
+                            {!ss!.noStem && (
+                              <CaptureDot
+                                kind="sub-stem"
+                                filled={!!cropsByKey.get(subKey)}
+                                onPress={() => tapKey(subKey)}
+                                labelKey={subKey}
+                              />
+                            )}
                             {Array.from({ length: ss!.count }, (_, t) => {
                               const ssLabel = getSubLabel(t, ss!.type);
                               const ssKey = `${q}.${subLabel}.${ssLabel}`;
@@ -1807,6 +1812,20 @@ function CaptureGrid({
                     <span className="text-[10px] text-muted-foreground/50">·</span>
                     {Array.from({ length: sub!.count }, (_, s) => {
                       const label = getSubLabel(s, sub!.type);
+                      const ss = sub!.subSub?.[String(s)];
+                      // A sub-part marked noStem has no crop target of its own
+                      // — its leaves (below) borrow the main-Q stem.
+                      if (ss && ss.count > 1 && ss.noStem) {
+                        return (
+                          <span
+                            key={`${q}.${label}`}
+                            className="min-w-[34px] h-7 px-2 rounded-md text-[10px] font-mono flex items-center text-muted-foreground/70 bg-muted/40 italic"
+                            title={`${q}.${label} borrows Q${q}'s stem`}
+                          >
+                            {label}↑
+                          </span>
+                        );
+                      }
                       return cell(`${q}.${label}`, label);
                     })}
                   </>

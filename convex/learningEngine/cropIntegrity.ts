@@ -44,12 +44,50 @@ function subLabel(index: number, type: "letter" | "roman"): string {
   return SUB_LETTERS[index] ?? String(index + 1);
 }
 
-type SubSubDef = { count: number; type: "letter" | "roman" };
+type SubSubDef = {
+  count: number;
+  type: "letter" | "roman";
+  // When true, the owning sub-part has no instruction of its own; its level-3
+  // leaves borrow the nearest real ancestor stem (the main-Q stem). Mirrors
+  // src/lib/sub-questions.ts SubSubDef.noStem.
+  noStem?: boolean;
+};
 type SubQuestionDef = {
   count: number;
   type: "letter" | "roman";
   subSub?: Record<string, SubSubDef>;
 };
+
+// Backend mirror of src/lib/sub-questions.ts isLeafKey (src/lib is not
+// importable from convex). Returns true when a crop key is an answerable LEAF
+// (whole-question / level-2 leaf / level-3 leaf) rather than a stem/sub-stem.
+// The sheet planner uses this to keep stems OUT of the candidate pool.
+export function isLeafCropKey(
+  key: string,
+  subQuestions: Record<string, SubQuestionDef> | undefined | null,
+): boolean {
+  const parts = key.split(".");
+  const mainQ = parts[0];
+  const subDef = subQuestions?.[mainQ];
+  const hasSubs = !!subDef && subDef.count > 1;
+
+  if (parts.length === 1) return !hasSubs;
+  if (!hasSubs) return false;
+
+  let subIndex = -1;
+  for (let i = 0; i < subDef!.count; i++) {
+    if (subLabel(i, subDef!.type) === parts[1]) {
+      subIndex = i;
+      break;
+    }
+  }
+  if (subIndex < 0) return false;
+  const ss = subDef!.subSub?.[String(subIndex)];
+  const hasSubSub = !!ss && ss.count > 1;
+
+  if (parts.length === 2) return !hasSubSub;
+  return hasSubSub;
+}
 
 export type CropIntegrity =
   // No textbook structure to check (past-paper, teacher-authored, or
@@ -342,9 +380,12 @@ export async function analyzeCropIntegrity(
   }
 
   // ── 3 parts: the crop is a level-3 leaf. ──────────────────────────
-  // Needs BOTH the main stem and the sub-stem for context.
+  // Needs the main stem always. The sub-stem is needed UNLESS the user
+  // marked this sub-part `noStem` — then the leaf borrows the nearest real
+  // ancestor stem (the main-Q stem) and no sub-stem crop is expected.
+  const subPartNoStem = !!subSubDef?.noStem;
   const missingMainStem = mainStemIds.length === 0;
-  const missingSubStem = subStemIds.length === 0;
+  const missingSubStem = !subPartNoStem && subStemIds.length === 0;
   if (missingMainStem || missingSubStem) {
     return decorate({
       kind: "block-leaf3-missing-stems",
@@ -358,9 +399,12 @@ export async function analyzeCropIntegrity(
     kind: "ok-leaf3-with-stems",
     mainQ,
     subLabel: subLabelStr,
-    // Print order: mainQ stem(s) first, then sub-stem(s). Both lists may
-    // contain >1 entry when multiple figures share the same stem key.
-    stemQuestionIds: [...mainStemIds, ...subStemIds],
+    // Print order: mainQ stem(s) first, then sub-stem(s). When the sub-part
+    // is `noStem`, there is no sub-stem — the leaf climbs to the main-Q stem
+    // only. Each list may contain >1 entry when figures share a stem key.
+    stemQuestionIds: subPartNoStem
+      ? [...mainStemIds]
+      : [...mainStemIds, ...subStemIds],
   });
 }
 

@@ -110,7 +110,9 @@
       "Bash(grep -rn \"export const list\" convex/centers.ts)",
       "Bash(sed -n '1,30p' src/lib/convex.ts)",
       "Bash(grep -n \"export const\\\\|export async\\\\|export function\" convex/messaging/queue.ts)",
-      "Bash(grep -n \"export const\\\\|export async\\\\|export function\" convex/messaging/outbox.ts)"
+      "Bash(grep -n \"export const\\\\|export async\\\\|export function\" convex/messaging/outbox.ts)",
+      "Bash(find .vtest -name '*.js')",
+      "Bash(rm -rf .vtest)"
     ]
   }
 }

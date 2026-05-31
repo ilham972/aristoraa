@@ -22,7 +22,16 @@
 // identically to the original 2-level implementation. Live data must keep
 // behaving exactly as before.
 
-export type SubSubDef = { count: number; type: 'letter' | 'roman' };
+export type SubSubDef = {
+  count: number;
+  type: 'letter' | 'roman';
+  // When true, the OWNING sub-part (e.g. "5.a") has no instruction line of
+  // its own — its level-3 leaves ("5.a.i", …) borrow the nearest real
+  // ancestor stem (climbing up to the main-Q stem). Set from the cropping
+  // page's "No sub-stem" toggle. When absent/false, a sub-stem crop is
+  // expected at the sub-part's own key.
+  noStem?: boolean;
+};
 export type SubQuestionDef = {
   count: number;
   type: 'letter' | 'roman';
@@ -121,6 +130,41 @@ export function generateQuestionKeys(questionCount: number, subQuestions?: SubQu
     }
   }
   return keys;
+}
+
+/**
+ * Is this crop key an answerable LEAF (a whole-question, a level-2 leaf, or a
+ * level-3 leaf) — as opposed to a stem / sub-stem (which only exist to be
+ * glued above a leaf at print time)?
+ *
+ * This is the inverse of "is a stem": exactly the keys generateQuestionKeys()
+ * emits. The sheet planner picks ONLY leaves; stems are never answerable on
+ * their own. `noStem` does not change leaf-ness — it only governs whether a
+ * sub-stem crop exists, handled in crop-keys + cropIntegrity.
+ */
+export function isLeafKey(key: string, subQuestions?: SubQuestionsMap | null): boolean {
+  const parts = key.split('.');
+  const mainQ = parts[0];
+  const subDef = subQuestions?.[mainQ];
+  const hasSubs = !!subDef && subDef.count > 1;
+
+  if (parts.length === 1) {
+    // "5" is a leaf only when Q5 has no sub-parts (a whole question).
+    return !hasSubs;
+  }
+  if (!hasSubs) return false; // "5.a" but Q5 has no sub-parts → malformed/stale.
+
+  const subIndex = getSubLabels(subDef!.count, subDef!.type).indexOf(parts[1]);
+  if (subIndex < 0) return false;
+  const ss = subDef!.subSub?.[String(subIndex)];
+  const hasSubSub = !!ss && ss.count > 1;
+
+  if (parts.length === 2) {
+    // "5.a" is a leaf only when it has NO level-3 parts (else it's a sub-stem).
+    return !hasSubSub;
+  }
+  // "5.a.i" (or deeper) is a leaf only when the sub-part really has level-3 parts.
+  return hasSubSub;
 }
 
 /**

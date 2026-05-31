@@ -19,7 +19,7 @@ import {
   resumeCropKey,
   nextCropKey,
 } from '@/lib/crop-keys';
-import type { SubQuestionsMap } from '@/lib/sub-questions';
+import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
 import { toast } from 'sonner';
 
 type CropBox = { x: number; y: number; w: number; h: number };
@@ -295,6 +295,45 @@ export default function UnitCropPage() {
   // at the same (exercise, key) on draw, so re-drawing a question simply
   // replaces the old box with no duplicates.
   const upsertForKeyMut = useMutation(api.questionBank.upsertForExerciseKey);
+  const setSubQuestionsMut = useMutation(api.exercises.setSubQuestions);
+
+  // "No sub-stem" toggle from the pill header. Marks the active sub-part as
+  // having no instruction of its own (its level-3 leaves borrow the main-Q
+  // stem). When turning ON, also delete any orphaned sub-stem crop so it
+  // doesn't linger as an unrenderable row.
+  const handleToggleNoSubStem = useCallback(
+    async (mainQ: number, subIndex: number, next: boolean) => {
+      if (!exercise) return;
+      const current = (exercise.subQuestions ?? {}) as SubQuestionsMap;
+      const qKey = String(mainQ);
+      const subDef = current[qKey];
+      const ss = subDef?.subSub?.[String(subIndex)];
+      if (!subDef || !ss) return;
+      const nextSubSub = { ...(subDef.subSub ?? {}) };
+      nextSubSub[String(subIndex)] = { ...ss, noStem: next ? true : undefined };
+      const nextMap: SubQuestionsMap = {
+        ...current,
+        [qKey]: { ...subDef, subSub: nextSubSub },
+      };
+      try {
+        await setSubQuestionsMut({ id: exercise._id, subQuestions: nextMap });
+        if (next) {
+          const subStemKey = `${mainQ}.${getSubLabel(subIndex, subDef.type)}`;
+          const orphan = (pageCrops || []).find(
+            (c) =>
+              c.linkedExerciseId === exerciseId &&
+              c.linkedQuestionKey === subStemKey,
+          );
+          if (orphan) await removeMut({ id: orphan._id });
+        }
+        toast.success(next ? 'Marked: no sub-stem' : 'Sub-stem re-enabled');
+      } catch (err) {
+        console.error('[setSubQuestions noStem]', err);
+        toast.error('Could not update sub-stem setting');
+      }
+    },
+    [exercise, exerciseId, pageCrops, setSubQuestionsMut, removeMut],
+  );
 
   // Most-recently-touched crop (drawn or tapped). Used so when the user
   // switches into Resize mode without explicitly tapping a rect, we can
@@ -579,6 +618,7 @@ export default function UnitCropPage() {
             existingKeys={existingKeysForExercise}
             onPickKey={handlePillTap}
             onCancelSelection={() => setSelectedCropId(null)}
+            onToggleNoSubStem={handleToggleNoSubStem}
           />
         )}
       </div>

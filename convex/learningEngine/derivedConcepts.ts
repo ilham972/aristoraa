@@ -7,6 +7,7 @@ import { query } from "../_generated/server";
 import { v } from "convex/values";
 import type { GenericQueryCtx } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
+import { isLeafCropKey } from "./cropIntegrity";
 
 type QueryCtx = GenericQueryCtx<DataModel>;
 
@@ -106,6 +107,8 @@ export async function questionsTaggedToConcept(
   const parentExId = await exerciseForConcept(ctx, conceptExerciseId);
   let inheritedIds: Id<"questionBank">[] = [];
   if (parentExId) {
+    const parentEx = await ctx.db.get(parentExId);
+    const subQuestions = parentEx?.subQuestions;
     const inherited = await ctx.db
       .query("questionBank")
       .withIndex("by_linked_exercise", (q) =>
@@ -114,8 +117,19 @@ export async function questionsTaggedToConcept(
       .collect();
     // Only textbook crops inherit. Past-paper crops never have linkedExerciseId
     // set, but guard anyway to prevent double-counting.
+    //
+    // LEAVES ONLY: a stem ("5") / sub-stem ("5.a") is not an answerable
+    // question — it only exists to be glued above a leaf at print time (see
+    // cropIntegrity.ts). Excluding stems here keeps them out of BOTH the sheet
+    // planner's candidate pool AND the coverage count in one place. Keyless
+    // textbook crops (malformed/legacy) are kept — they can't be classified.
     inheritedIds = inherited
       .filter((q) => q.source === "textbook")
+      .filter(
+        (q) =>
+          !q.linkedQuestionKey ||
+          isLeafCropKey(q.linkedQuestionKey, subQuestions),
+      )
       .map((q) => q._id);
   }
 

@@ -18,6 +18,10 @@ interface Props {
   existingKeys: string[];
   onPickKey: (key: string) => void;
   onCancelSelection: () => void;
+  // Toggle "this sub-part has no instruction of its own" for the active
+  // sub-question. `next` is the new noStem value. When omitted, the toggle
+  // is hidden (e.g. read-only contexts).
+  onToggleNoSubStem?: (mainQ: number, subIndex: number, next: boolean) => void;
 }
 
 // Three-row picker shown above the crop body.
@@ -35,6 +39,7 @@ export function CropPillHeader({
   existingKeys,
   onPickKey,
   onCancelSelection,
+  onToggleNoSubStem,
 }: Props) {
   const parsed = currentKey ? parseCropKey(currentKey) : null;
   const activeMainQ = parsed?.mainQ ?? 0;
@@ -57,6 +62,9 @@ export function CropPillHeader({
       ? subDef?.subSub?.[String(activeSubIndex)]
       : undefined;
   const hasSubSub = !!subSubDef && subSubDef.count > 1;
+  // When set, the active sub-part has no instruction of its own — its leaves
+  // borrow the main-Q stem and there is nothing to crop at the sub-stem key.
+  const noSubStem = !!subSubDef?.noStem;
 
   const existingSet = useMemo(() => new Set(existingKeys), [existingKeys]);
 
@@ -203,23 +211,47 @@ export function CropPillHeader({
           rest are leaves (e.g. "5.a.i", "5.a.ii"). */}
       {hasSubSub && subStemKey && (
         <div className="flex flex-wrap gap-1 items-center pl-4 border-l-2 border-primary/20 ml-1">
-          <button
-            onClick={() => onPickKey(subStemKey)}
-            className={`relative h-7 px-2 rounded-md text-[11px] font-semibold transition-all active:scale-95 ${
-              subStemActive
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'bg-muted text-foreground hover:bg-muted/70'
-            }`}
-          >
-            Sub-stem
-            {subStemDone && (
-              <span
-                className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
-                  subStemActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
-                }`}
-              />
-            )}
-          </button>
+          {noSubStem ? (
+            // No own instruction — the leaves borrow Q{main}'s stem.
+            <span className="h-7 px-2 rounded-md text-[11px] font-medium flex items-center text-muted-foreground bg-muted/40 italic">
+              borrows Q{activeMainQ} stem
+            </span>
+          ) : (
+            <button
+              onClick={() => onPickKey(subStemKey)}
+              className={`relative h-7 px-2 rounded-md text-[11px] font-semibold transition-all active:scale-95 ${
+                subStemActive
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'bg-muted text-foreground hover:bg-muted/70'
+              }`}
+            >
+              Sub-stem
+              {subStemDone && (
+                <span
+                  className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${
+                    subStemActive ? 'bg-primary-foreground/70' : 'bg-emerald-500'
+                  }`}
+                />
+              )}
+            </button>
+          )}
+          {/* "No sub-stem" toggle — declares the active sub-part has no
+              instruction of its own. */}
+          {onToggleNoSubStem && activeSubIndex >= 0 && (
+            <button
+              onClick={() =>
+                onToggleNoSubStem(activeMainQ, activeSubIndex, !noSubStem)
+              }
+              title="This sub-part has no instruction of its own — its parts borrow the main question's stem"
+              className={`h-7 px-2 rounded-md text-[11px] font-semibold transition-all active:scale-95 border ${
+                noSubStem
+                  ? 'bg-amber-500/15 text-amber-600 border-amber-500/40'
+                  : 'bg-transparent text-muted-foreground border-border hover:bg-muted/60'
+              }`}
+            >
+              No sub-stem
+            </button>
+          )}
           <span className="text-[10px] text-muted-foreground/60 mx-0.5">·</span>
           {Array.from({ length: subSubDef!.count }, (_, i) => {
             const label = getSubLabel(i, subSubDef!.type);

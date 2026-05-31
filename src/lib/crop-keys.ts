@@ -26,12 +26,19 @@ export function generateCropKeys(
     if (!sub || sub.count <= 1) continue;
     for (let s = 0; s < sub.count; s++) {
       const subLabel = getSubLabel(s, sub.type);
-      keys.push(`${q}.${subLabel}`);
       const ss = sub.subSub?.[String(s)];
       if (ss && ss.count > 1) {
+        // Sub-part with level-3 leaves. Emit the sub-stem target ("5.a") only
+        // when the sub-part actually has its own instruction — when the user
+        // marked it `noStem`, the leaves borrow the main-Q stem and there is
+        // nothing to crop at "5.a".
+        if (!ss.noStem) keys.push(`${q}.${subLabel}`);
         for (let t = 0; t < ss.count; t++) {
           keys.push(`${q}.${subLabel}.${getSubLabel(t, ss.type)}`);
         }
+      } else {
+        // Level-2 leaf — "5.a" IS the answerable crop.
+        keys.push(`${q}.${subLabel}`);
       }
     }
   }
