@@ -30,34 +30,21 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
-  ClipboardCheck,
-  ClipboardPen,
   Clock,
-  FileSpreadsheet,
   Loader2,
-  Radio,
   RotateCcw,
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
-import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
 import { fmtTime12 } from '@/lib/groups/time-grid';
-import { AttendanceTab } from '@/components/session/attendance-tab';
-import { SheetsTab } from '@/components/session/sheets-tab';
-import { ScoreTab } from '@/components/session/score-tab';
-import { LeadTab } from '@/components/session/lead-tab';
+import {
+  SessionWorkspace,
+  isSessionTab,
+  type SessionTab,
+} from '@/components/session/session-workspace';
 
-type Tab = 'score' | 'lead' | 'sheets' | 'attendance';
-const ALL_TABS: Tab[] = ['score', 'lead', 'sheets', 'attendance'];
-const DEFAULT_TAB: Tab = 'attendance';
-const STEPPER_TABS: Tab[] = ['score', 'sheets'];
-
-const TABS: Array<{ id: Tab; label: string; icon: typeof ClipboardPen }> = [
-  { id: 'score', label: 'Score', icon: ClipboardPen },
-  { id: 'lead', label: 'Lead', icon: Radio },
-  { id: 'sheets', label: 'Sheets', icon: FileSpreadsheet },
-  { id: 'attendance', label: 'Attendance', icon: ClipboardCheck },
-];
+const DEFAULT_TAB: SessionTab = 'attendance';
+const STEPPER_TABS: SessionTab[] = ['score', 'sheets'];
 
 function fmtDateLong(ymd: string): string {
   const d = new Date(ymd + 'T00:00:00');
@@ -130,10 +117,6 @@ function findAdjacentSession(
   return null;
 }
 
-function isTab(v: string | null): v is Tab {
-  return v !== null && (ALL_TABS as string[]).includes(v);
-}
-
 export default function SessionPage() {
   return (
     <Suspense
@@ -157,7 +140,7 @@ function SessionPageInner() {
   const searchParams = useSearchParams();
 
   const tabParam = searchParams.get('tab');
-  const tab: Tab = isTab(tabParam) ? tabParam : DEFAULT_TAB;
+  const tab: SessionTab = isSessionTab(tabParam) ? tabParam : DEFAULT_TAB;
   const originParam = searchParams.get('origin');
 
   // First-visit seed: stamp the URL with the entry session as origin so the
@@ -203,7 +186,7 @@ function SessionPageInner() {
   const color = useMemo(() => (detail ? groupColor(detail.groupId) : null), [detail]);
 
   const setTab = useCallback(
-    (next: Tab) => {
+    (next: SessionTab) => {
       const p = new URLSearchParams(searchParams.toString());
       p.set('tab', next);
       router.replace(`?${p.toString()}`, { scroll: false });
@@ -232,7 +215,6 @@ function SessionPageInner() {
       groupSlots,
       -1,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, groupSlots, slotId, date, currentDow]);
   const next = useMemo(() => {
     if (!detail || groupSlots.length === 0) return null;
@@ -241,7 +223,6 @@ function SessionPageInner() {
       groupSlots,
       +1,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, groupSlots, slotId, date, currentDow]);
 
   return (
@@ -293,47 +274,10 @@ function SessionPageInner() {
         </div>
       </div>
 
-      {/* Tab strip. Underline-style so it sits below the page header without
-          feeling like a second navigation bar. */}
-      <div className="shrink-0 border-b border-border/60 mb-3">
-        <div className="flex items-center gap-1 -mb-px overflow-x-auto">
-          {TABS.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={cn(
-                  'shrink-0 inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors',
-                  active
-                    ? 'border-primary text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <t.icon className="w-3.5 h-3.5" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Active tab body. Each tab manages its own internal scroll. */}
-      <div className="flex-1 min-h-0">
-        {!detail ? (
-          <div className="h-full flex items-center justify-center">
-            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : tab === 'attendance' ? (
-          <AttendanceTab slotId={slotId} date={date} />
-        ) : tab === 'sheets' ? (
-          <SheetsTab slotId={slotId} sessionDate={date} />
-        ) : tab === 'score' ? (
-          <ScoreTab lockedSlotId={slotId} lockedDate={date} />
-        ) : tab === 'lead' ? (
-          <LeadTab lockedSlotId={slotId} lockedDate={date} />
-        ) : null}
-      </div>
+      {/* Shared 4-tab workspace. The bodies own their own loading states,
+          so we no longer gate them on `detail` — the header above shows the
+          loading placeholder for the group name. */}
+      <SessionWorkspace slotId={slotId} date={date} tab={tab} onTabChange={setTab} />
     </div>
   );
 }

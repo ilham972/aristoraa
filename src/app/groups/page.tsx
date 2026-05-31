@@ -13,6 +13,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Clock,
   LayoutGrid,
   MoreVertical,
   UserMinus,
@@ -33,6 +34,7 @@ import {
 import { WeekGrid } from '@/components/groups/week-grid';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
+import { SessionLauncher } from '@/components/groups/session-launcher';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -60,7 +62,7 @@ function addDays(dateYmd: string, n: number): string {
 
 export default function GroupsPage() {
   const router = useRouter();
-  const [view, setView] = useState<'week' | 'day'>('day');
+  const [view, setView] = useState<'week' | 'day' | 'session'>('day');
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [unassignedOpen, setUnassignedOpen] = useState(false);
@@ -183,6 +185,15 @@ export default function GroupsPage() {
           >
             <LayoutGrid className="w-3.5 h-3.5" /> Week
           </button>
+          <button
+            onClick={() => setView('session')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'session' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            <Clock className="w-3.5 h-3.5" /> Session
+          </button>
         </div>
 
         {/* Right-side roster strip — Week view only.
@@ -220,7 +231,11 @@ export default function GroupsPage() {
 
       {/* Body fills the remaining height; each view manages its own scroll. */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {loading && (
+        {/* Session view owns its own loading + empty states (its own
+            time-aware queries), so it sits outside the week/day gating. */}
+        {view === 'session' && <SessionLauncher />}
+
+        {view !== 'session' && loading && (
           <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -231,7 +246,7 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {!loading && !hasGroups && (
+        {view !== 'session' && !loading && !hasGroups && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
               <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
