@@ -44,7 +44,11 @@ export function NotificationBell() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="relative inline-flex items-center justify-center h-10 w-10 rounded-full bg-card/80 backdrop-blur-md border border-border/60 hover:bg-card transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // NOTE: solid bg (no backdrop-blur). A position:fixed element with
+        // backdrop-filter forces Android Chrome to re-sample the backdrop every
+        // scroll frame, which smears/ghosts content on some GPUs (the analytics
+        // scroll-trail bug). Solid background keeps the floating look safely.
+        className="relative inline-flex items-center justify-center h-10 w-10 rounded-full bg-card border border-border/60 hover:bg-secondary transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`${count} unseen notification${count === 1 ? '' : 's'}`}
       >
         {hasUnseen ? (

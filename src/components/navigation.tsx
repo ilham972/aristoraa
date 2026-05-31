@@ -33,7 +33,10 @@ export function BottomNav() {
   const items = NAV_ITEMS.filter((i) => !i.leadOnly || canSeeLeadOnly);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">
+    // Solid bg (no backdrop-blur): a fixed element with backdrop-filter makes
+    // Android Chrome re-sample the backdrop every scroll frame, smearing the
+    // page content on some mobile GPUs.
+    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1">
         {items.map(item => {
           const isActive = item.href === '/'

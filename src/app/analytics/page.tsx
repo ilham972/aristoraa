@@ -53,15 +53,17 @@ export default function AnalyticsPage() {
   };
 
   return (
-    // Natural document scroll — no nested fixed-height/overflow container.
-    // The old `h-[calc(100svh-5rem)] overflow-hidden` + inner `overflow-y-auto`
-    // shell created a separate scroll/compositing layer that corrupted its top
-    // tiles on mobile (blank top ~25% on the tall Finance/Capacity tabs). Every
-    // other page in the app scrolls the document directly; this now matches.
-    <div className="min-h-[calc(100svh-5rem)] max-w-3xl mx-auto px-3 pt-3 pb-6">
-      {/* Tab strip — sticky (solid bg, no blur) so the 5 tabs stay reachable
-          while the page scrolls. Horizontally scrollable on narrow screens. */}
-      <div className="sticky top-0 z-20 -mx-3 mb-3 px-3 py-1 bg-background">
+    // Natural document scroll — no nested fixed-height/overflow container, no
+    // sticky header, no viewport-unit sizing. Earlier versions used a fixed
+    // `100svh` shell with an inner `overflow-y-auto` (and briefly a sticky tab
+    // strip); both created compositing layers that Android Chrome mis-painted
+    // on the tall Finance/Capacity tabs — first a blank top ~25%, then repaint
+    // trails while scrolling. This is now a plain flowing block that scrolls
+    // with the document, exactly like every other page in the app.
+    <div className="max-w-3xl mx-auto px-3 pt-3 pb-6">
+      {/* Tab strip — scrolls with the page (not sticky). Horizontally
+          scrollable on narrow screens for the 5 tabs. */}
+      <div className="mb-3">
         <div className="flex items-center gap-1 p-1 bg-muted rounded-xl overflow-x-auto scrollbar-thin">
         {TABS.map((t) => (
           <button
