@@ -1,11 +1,26 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from 'convex/react';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { useQuery, useMutation } from 'convex/react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, Book, FileText } from 'lucide-react';
+import {
+  AlertTriangle,
+  Book,
+  FileText,
+  Minus,
+  Plus,
+  RotateCw,
+  ImageOff,
+  CheckCircle2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { findUnit } from '@/lib/curriculum-data';
 import { MODULE_COLORS } from '@/lib/types';
@@ -19,66 +34,185 @@ interface Props {
   onClose: () => void;
 }
 
-const DIFFICULTY_LABELS: Array<{ key: 1 | 2 | 3 | 4 | 5 | 'unset'; label: string; color: string }> = [
-  { key: 1, label: '1', color: 'bg-emerald-500' },
-  { key: 2, label: '2', color: 'bg-emerald-400' },
-  { key: 3, label: '3', color: 'bg-amber-400' },
-  { key: 4, label: '4', color: 'bg-orange-500' },
-  { key: 5, label: '5', color: 'bg-red-500' },
-  { key: 'unset', label: '?', color: 'bg-zinc-500' },
-];
+const DIFFICULTY_META: Record<
+  string,
+  { label: string; cls: string }
+> = {
+  '1': { label: 'D1', cls: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
+  '2': { label: 'D2', cls: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
+  '3': { label: 'D3', cls: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
+  '4': { label: 'D4', cls: 'bg-orange-500/15 text-orange-600 border-orange-500/30' },
+  '5': { label: 'D5', cls: 'bg-red-500/15 text-red-600 border-red-500/30' },
+  unset: { label: 'D?', cls: 'bg-zinc-500/15 text-zinc-500 border-zinc-500/30' },
+};
+
+// Cropped-image thumbnail. Renders only the cropBox region of the source page
+// image using the normalized-crop background technique, with the container's
+// aspect ratio corrected from the image's natural pixel dimensions once it
+// loads (so the crop is never distorted).
+function CropThumb({
+  url,
+  cropBox,
+}: {
+  url: string | null;
+  cropBox: { x: number; y: number; w: number; h: number } | null;
+}) {
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+
+  if (!url || !cropBox) {
+    return (
+      <div className="w-full aspect-[3/1] rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
+        <ImageOff className="w-5 h-5" />
+      </div>
+    );
+  }
+
+  const w = Math.max(0.001, Math.min(1, cropBox.w));
+  const h = Math.max(0.001, Math.min(1, cropBox.h));
+  const x = Math.max(0, Math.min(1, cropBox.x));
+  const y = Math.max(0, Math.min(1, cropBox.y));
+  const aspect = nat ? (w * nat.w) / (h * nat.h) : w / h;
+  const posX = w >= 1 ? 0 : (x / (1 - w)) * 100;
+  const posY = h >= 1 ? 0 : (y / (1 - h)) * 100;
+
+  return (
+    <div
+      className="w-full rounded-lg bg-white overflow-hidden ring-1 ring-border"
+      style={{ aspectRatio: String(aspect || 3) }}
+    >
+      <div
+        className="w-full h-full"
+        style={{
+          backgroundImage: `url("${url}")`,
+          backgroundRepeat: 'no-repeat',
+          backgroundSize: `${100 / w}% ${100 / h}%`,
+          backgroundPosition: `${posX}% ${posY}%`,
+        }}
+      />
+      {/* Hidden probe to read natural dimensions for the aspect ratio. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt=""
+        className="hidden"
+        onLoad={(e) =>
+          setNat({
+            w: e.currentTarget.naturalWidth,
+            h: e.currentTarget.naturalHeight,
+          })
+        }
+      />
+    </div>
+  );
+}
+
+function RepeatStepper({
+  questionId,
+  value,
+}: {
+  questionId: Id<'questionBank'>;
+  value: number;
+}) {
+  const setRepeat = useMutation(api.questionBank.setRepeatCount);
+  const [pending, setPending] = useState(false);
+
+  const change = async (next: number) => {
+    if (next < 1 || next > 20 || pending) return;
+    setPending(true);
+    try {
+      await setRepeat({ id: questionId, repeatCount: next });
+    } catch (err) {
+      console.error('[setRepeatCount]', err);
+      toast.error('Could not update repeat count');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const active = value > 1;
+
+  return (
+    <div
+      className={`flex items-center rounded-lg border ${
+        active ? 'border-sky-500/40 bg-sky-500/10' : 'border-border bg-muted/40'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => change(value - 1)}
+        disabled={value <= 1 || pending}
+        className="h-9 w-9 flex items-center justify-center rounded-l-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent transition-colors active:scale-95"
+        aria-label="Decrease repeats"
+      >
+        <Minus className="w-4 h-4" />
+      </button>
+      <div className="w-12 text-center select-none">
+        <span
+          className={`text-sm font-bold tabular-nums ${
+            active ? 'text-sky-600' : 'text-foreground'
+          }`}
+        >
+          {value}×
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => change(value + 1)}
+        disabled={value >= 20 || pending}
+        className="h-9 w-9 flex items-center justify-center rounded-r-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent transition-colors active:scale-95"
+        aria-label="Increase repeats"
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
 
 export function ConceptDetailPanel({ row, threshold, onClose }: Props) {
   const router = useRouter();
 
-  // Resolve the parent exercise for the "Crop from textbook" deep-link.
-  // Skipped when the panel is closed.
   const parentExId = useQuery(
     api.learningEngine.derivedConcepts.getUnitMapping,
     row ? { unitId: row.unitId } : 'skip',
   );
-
-  // Past papers whose grade has slot-tags linking to this concept's unit —
-  // used by the "Crop more from past papers" deep-link. Empty array means
-  // there are no topic-tag → slot relationships configured for this unit,
-  // in which case we fall back to /settings with a toast.
   const relevantPapers = useQuery(
     api.learningEngine.coverage.papersRelevantToConcept,
+    row ? { conceptExerciseId: row.conceptId } : 'skip',
+  );
+  const detail = useQuery(
+    api.learningEngine.coverage.conceptQuestionsForReview,
     row ? { conceptExerciseId: row.conceptId } : 'skip',
   );
 
   if (!row) {
     return (
-      <Sheet open={false} onOpenChange={onClose}>
-        <SheetContent side="bottom" className="rounded-t-2xl" />
-      </Sheet>
+      <Dialog open={false} onOpenChange={(o) => !o && onClose()}>
+        <DialogContent />
+      </Dialog>
     );
   }
 
   const meta = findUnit(row.unitId);
   const moduleId = row.unitId.split('-')[0];
   const moduleColor = MODULE_COLORS[moduleId] ?? '#0D9488';
-  const needsMore = row.isGated ? threshold - row.total : 0;
-  const maxBar = Math.max(
-    row.byDifficulty[1],
-    row.byDifficulty[2],
-    row.byDifficulty[3],
-    row.byDifficulty[4],
-    row.byDifficulty[5],
-    row.byDifficulty.unset,
-    1,
-  );
 
-  // The parent exercise of the concept, used for the textbook deep-link.
+  // Prefer live numbers from the per-question query (reflect repeat edits
+  // instantly); fall back to the coverage row before it loads.
+  const total = detail?.total ?? row.total;
+  const effectiveTotal = detail?.effectiveTotal ?? row.effectiveTotal;
+  const repeatBonus = effectiveTotal - total;
+  const cleared = effectiveTotal >= threshold;
+  const needsMore = Math.max(0, threshold - effectiveTotal);
+  const progressPct = Math.min(100, (effectiveTotal / threshold) * 100);
+
   const parentExerciseId =
     parentExId?.exerciseToConcepts.find((e) =>
       e.conceptIds.some((cid) => cid === row.conceptId),
     )?.exerciseId ?? null;
 
   function goTextbook() {
-    const eid = parentExerciseId;
-    if (eid) {
-      router.push(`/settings/crop/${row!.unitId}?exerciseId=${eid}`);
+    if (parentExerciseId) {
+      router.push(`/settings/crop/${row!.unitId}?exerciseId=${parentExerciseId}`);
     } else {
       router.push(`/settings/crop/${row!.unitId}`);
     }
@@ -103,116 +237,167 @@ export function ConceptDetailPanel({ row, threshold, onClose }: Props) {
   }
 
   return (
-    <Sheet open={true} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="bottom" className="rounded-t-2xl max-h-[85vh] overflow-y-auto">
-        <SheetHeader className="text-left pb-3">
-          <div className="flex items-start gap-3">
+    <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        showCloseButton
+        className="inset-0 top-0 left-0 h-full max-h-full w-full max-w-full translate-x-0 translate-y-0 rounded-none border-0 p-0 gap-0 grid-rows-[auto_1fr_auto] sm:max-w-full"
+      >
+        {/* ── Header ── */}
+        <DialogHeader className="px-4 pt-4 pb-3 border-b border-border bg-card/60 backdrop-blur">
+          <div className="flex items-start gap-3 pr-10">
             <div
-              className="w-1.5 self-stretch rounded-full shrink-0 mt-1"
+              className="w-1.5 self-stretch rounded-full shrink-0"
               style={{ backgroundColor: moduleColor }}
             />
             <div className="flex-1 min-w-0">
-              <SheetTitle className="text-sm font-semibold text-foreground leading-tight">
+              <DialogTitle className="text-base font-semibold text-foreground leading-tight">
                 {row.conceptName}
-              </SheetTitle>
+              </DialogTitle>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {meta ? `${meta.module.id} · G${meta.grade} T${meta.term} · ${meta.unit.name}` : row.unitId}
+                {meta
+                  ? `${meta.module.id} · G${meta.grade} T${meta.term} · ${meta.unit.name}`
+                  : row.unitId}
               </p>
             </div>
           </div>
-        </SheetHeader>
 
-        <div className="space-y-4 pb-4">
-          {/* Summary numbers */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge
-              variant={row.isGated ? 'destructive' : 'secondary'}
-              className="text-xs"
-            >
-              {row.total} question{row.total === 1 ? '' : 's'}
-            </Badge>
-            {row.isGated && (
-              <Badge variant="destructive" className="text-xs">
-                Needs {needsMore} more
-              </Badge>
-            )}
-            {row.hasNoHardQuestions && (
-              <Badge className="bg-amber-500/20 text-amber-500 border border-amber-500/40 text-xs">
-                <AlertTriangle className="w-3 h-3 mr-1" />
-                No hard questions
-              </Badge>
-            )}
+          {/* Coverage progress */}
+          <div className="mt-3 rounded-xl border border-border bg-background p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                {cleared ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-red-500" />
+                )}
+                <span
+                  className={`text-sm font-semibold ${
+                    cleared ? 'text-emerald-600' : 'text-red-600'
+                  }`}
+                >
+                  {effectiveTotal} / {threshold}
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  effective
+                </span>
+              </div>
+              {cleared ? (
+                <Badge className="bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 text-[10px]">
+                  Gate cleared
+                </Badge>
+              ) : (
+                <Badge variant="destructive" className="text-[10px]">
+                  Needs {needsMore} more
+                </Badge>
+              )}
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  cleared ? 'bg-emerald-500' : 'bg-red-500'
+                }`}
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
+              <span>{total} real</span>
+              {repeatBonus > 0 && (
+                <span className="flex items-center gap-1 text-sky-600 font-medium">
+                  <RotateCw className="w-3 h-3" />+{repeatBonus} repeat
+                </span>
+              )}
+              {row.hasNoHardQuestions && (
+                <span className="flex items-center gap-1 text-amber-600">
+                  <AlertTriangle className="w-3 h-3" />
+                  no D4–5
+                </span>
+              )}
+            </div>
+          </div>
+        </DialogHeader>
+
+        {/* ── Scrollable questions list ── */}
+        <div className="overflow-y-auto px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Questions
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Repeat is a temporary stand-in until real questions are added
+            </p>
           </div>
 
-          {/* Difficulty histogram */}
-          <div>
-            <p className="text-[11px] font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-              By difficulty
-            </p>
-            <div className="flex items-end gap-2 h-20">
-              {DIFFICULTY_LABELS.map(({ key, label, color }) => {
-                const count = row.byDifficulty[key];
-                const heightPct = (count / maxBar) * 100;
-                return (
-                  <div key={key} className="flex-1 flex flex-col items-center gap-1">
-                    <div className="w-full flex-1 flex items-end">
-                      <div
-                        className={`w-full ${color} rounded-t-sm transition-all`}
-                        style={{ height: `${heightPct}%`, minHeight: count > 0 ? 4 : 0 }}
-                      />
+          {detail === undefined && (
+            <div className="space-y-3 animate-pulse">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-28 rounded-xl bg-muted" />
+              ))}
+            </div>
+          )}
+
+          {detail && detail.questions.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border p-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                No questions cropped for this concept yet.
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Crop some from the textbook or a past paper below — repeats need
+                at least one real question to stand on.
+              </p>
+            </div>
+          )}
+
+          {detail?.questions.map((q, i) => {
+            const dKey = q.difficulty == null ? 'unset' : String(q.difficulty);
+            const dMeta = DIFFICULTY_META[dKey] ?? DIFFICULTY_META.unset;
+            return (
+              <div
+                key={q._id}
+                className="rounded-xl border border-border bg-card overflow-hidden"
+              >
+                <div className="p-3 space-y-3">
+                  <CropThumb url={q.pageImageUrl} cropBox={q.cropBox} />
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[11px] font-mono font-bold text-muted-foreground shrink-0">
+                        {q.linkedQuestionKey ??
+                          q.questionNumberInPaper ??
+                          `#${i + 1}`}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] border ${dMeta.cls}`}
+                      >
+                        {dMeta.label}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {q.source === 'past-paper'
+                          ? 'past paper'
+                          : q.source === 'teacher-authored'
+                            ? 'authored'
+                            : 'textbook'}
+                      </span>
                     </div>
-                    <span className="text-[10px] text-muted-foreground">{label}</span>
-                    <span className="text-[10px] font-semibold text-foreground">{count}</span>
+                    <RepeatStepper questionId={q._id} value={q.repeatCount} />
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Source breakdown */}
-          <div>
-            <p className="text-[11px] font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-              By source
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg bg-muted/50 p-2 text-center">
-                <p className="text-base font-bold text-foreground">{row.bySource.textbook}</p>
-                <p className="text-[10px] text-muted-foreground">Textbook</p>
+                </div>
               </div>
-              <div className="rounded-lg bg-muted/50 p-2 text-center">
-                <p className="text-base font-bold text-foreground">{row.bySource.past_paper}</p>
-                <p className="text-[10px] text-muted-foreground">Past paper</p>
-              </div>
-              <div className="rounded-lg bg-muted/50 p-2 text-center">
-                <p className="text-base font-bold text-foreground">{row.bySource.teacher_authored}</p>
-                <p className="text-[10px] text-muted-foreground">Authored</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Deep-link actions */}
-          <div className="flex flex-col gap-2 pt-2">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={goTextbook}
-              className="justify-start"
-            >
-              <Book className="w-4 h-4 mr-2" />
-              Crop more from textbook
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={goPastPaper}
-              className="justify-start"
-            >
-              <FileText className="w-4 h-4 mr-2" />
-              Crop more from past papers
-            </Button>
-          </div>
+            );
+          })}
         </div>
-      </SheetContent>
-    </Sheet>
+
+        {/* ── Footer actions ── */}
+        <div className="border-t border-border bg-card/60 backdrop-blur px-4 py-3 grid grid-cols-2 gap-2">
+          <Button variant="default" size="sm" onClick={goTextbook}>
+            <Book className="w-4 h-4 mr-2" />
+            Textbook
+          </Button>
+          <Button variant="secondary" size="sm" onClick={goPastPaper}>
+            <FileText className="w-4 h-4 mr-2" />
+            Past papers
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

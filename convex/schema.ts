@@ -384,6 +384,13 @@ export default defineSchema({
     difficulty: v.optional(v.number()), // 1-5
     answerKey: v.optional(v.string()), // added later
     expectedTimeMin: v.optional(v.number()),
+    // TEMPORARY-REMEDY repeat multiplier (Coverage drawer). Default 1 (== unset).
+    // A pure scheduling/coverage construct — does NOT touch FSRS/mastery/
+    // importance/calibration. Coverage gate reads effective count = Σ repeatCount
+    // across a concept's leaves; the planner lets a question recirculate up to
+    // repeatCount times within the novelty window before it rests. Reset to 1
+    // once real questions are cropped to replace the stopgap.
+    repeatCount: v.optional(v.number()),
     // Back-link to the legacy exercise/question identity. Keeps the existing
     // score-entry flow working while the question-bank flow is built alongside.
     // linkedQuestionKey matches entries.questions keys ("1", "3.a", "5.iii").

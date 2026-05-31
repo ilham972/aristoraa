@@ -47,7 +47,9 @@ export const coverageByGradeTerm = query({
       conceptName: string;
       unitId: string;
       order: number;
-      total: number;
+      total: number;          // real distinct questions
+      effectiveTotal: number; // Σ repeatCount — what the gate reads
+      repeatBonus: number;    // effectiveTotal - total (extra from repeats)
       byDifficulty: { 1: number; 2: number; 3: number; 4: number; 5: number; unset: number };
       bySource: { textbook: number; past_paper: number; teacher_authored: number };
       isGated: boolean;
@@ -59,6 +61,7 @@ export const coverageByGradeTerm = query({
       const qIds = await questionsTaggedToConcept(ctx, c._id);
       const byDifficulty = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unset: 0 };
       const bySource = { textbook: 0, past_paper: 0, teacher_authored: 0 };
+      let effectiveTotal = 0;
       for (const qId of qIds) {
         const q = await ctx.db.get(qId);
         if (!q) continue;
@@ -71,6 +74,8 @@ export const coverageByGradeTerm = query({
         if (q.source === "textbook") bySource.textbook += 1;
         else if (q.source === "past-paper") bySource.past_paper += 1;
         else if (q.source === "teacher-authored") bySource.teacher_authored += 1;
+        // Effective count folds the temporary-remedy repeat multiplier in.
+        effectiveTotal += Math.max(1, q.repeatCount ?? 1);
       }
       const total = qIds.length;
       rows.push({
@@ -79,11 +84,15 @@ export const coverageByGradeTerm = query({
         unitId: c.unitId,
         order: c.order,
         total,
+        effectiveTotal,
+        repeatBonus: effectiveTotal - total,
         byDifficulty,
         bySource,
-        isGated: total < MIN_QUESTIONS_PER_CONCEPT,
+        // Gate on the EFFECTIVE count so per-question repeats can clear the
+        // gate without touching the threshold.
+        isGated: effectiveTotal < MIN_QUESTIONS_PER_CONCEPT,
         hasNoHardQuestions:
-          total >= MIN_QUESTIONS_PER_CONCEPT &&
+          effectiveTotal >= MIN_QUESTIONS_PER_CONCEPT &&
           byDifficulty[4] + byDifficulty[5] === 0,
       });
     }
@@ -212,6 +221,75 @@ export const papersRelevantToConcept = query({
       return b.uploadedAt - a.uploadedAt;
     });
     return papers;
+  },
+});
+
+// Concept's questions with rendered-crop metadata, for the Coverage drawer's
+// per-question repeat UI. Returns one row per leaf question tagged to the
+// concept (same source-of-truth helper the gate uses), joined with its
+// cropBox + source-page image URL so the drawer can show the actual crop and
+// let the Lead bump its repeat count.
+export const conceptQuestionsForReview = query({
+  args: { conceptExerciseId: v.id("exercises") },
+  handler: async (ctx, { conceptExerciseId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const qIds = await questionsTaggedToConcept(ctx, conceptExerciseId);
+
+    const pageUrlFor = async (q: {
+      textbookPageId?: Id<"textbookPages">;
+      pastPaperPageId?: Id<"pastPaperPages">;
+    }): Promise<string | null> => {
+      if (q.textbookPageId) {
+        const p = await ctx.db.get(q.textbookPageId);
+        if (p) return await ctx.storage.getUrl(p.storageId);
+      } else if (q.pastPaperPageId) {
+        const p = await ctx.db.get(q.pastPaperPageId);
+        if (p) return await ctx.storage.getUrl(p.storageId);
+      }
+      return null;
+    };
+
+    const out: Array<{
+      _id: Id<"questionBank">;
+      source: string;
+      difficulty: number | null;
+      repeatCount: number;
+      cropBox: { x: number; y: number; w: number; h: number } | null;
+      pageImageUrl: string | null;
+      linkedQuestionKey: string | null;
+      questionNumberInPaper: string | null;
+    }> = [];
+
+    for (const qId of qIds) {
+      const q = await ctx.db.get(qId);
+      if (!q) continue;
+      out.push({
+        _id: q._id,
+        source: q.source,
+        difficulty: q.difficulty ?? null,
+        repeatCount: Math.max(1, q.repeatCount ?? 1),
+        cropBox: q.cropBox ?? null,
+        pageImageUrl: await pageUrlFor(q),
+        linkedQuestionKey: q.linkedQuestionKey ?? null,
+        questionNumberInPaper: q.questionNumberInPaper ?? null,
+      });
+    }
+
+    // Stable display order: by question key / paper number when present.
+    out.sort((a, b) => {
+      const ka = a.linkedQuestionKey ?? a.questionNumberInPaper ?? "";
+      const kb = b.linkedQuestionKey ?? b.questionNumberInPaper ?? "";
+      return ka.localeCompare(kb, undefined, { numeric: true });
+    });
+
+    return {
+      threshold: MIN_QUESTIONS_PER_CONCEPT,
+      questions: out,
+      total: out.length,
+      effectiveTotal: out.reduce((s, q) => s + q.repeatCount, 0),
+    };
   },
 });
 

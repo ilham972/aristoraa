@@ -245,22 +245,29 @@ async function buildCandidatePool(
         .lt("date", args.dateStr),
     )
     .collect();
-  const recentlyUsedQuestionIds = new Set<string>();
+  // Count-based novelty window: how many times each question was used across
+  // recent sheets. Original behaviour was a binary "used → excluded"; we now
+  // exclude a question only once usage reaches its repeatCount (default 1, so
+  // unflagged questions behave exactly as before). repeatCount is a
+  // temporary-remedy scheduling lever — see questionBank schema note. It does
+  // NOT touch the memory/mastery model.
+  const usageCountByQuestion = new Map<string, number>();
+  const bumpUsage = (qId: unknown) => {
+    const k = qId as string;
+    usageCountByQuestion.set(k, (usageCountByQuestion.get(k) ?? 0) + 1);
+  };
   for (const s of recentSheets) {
-    for (const qId of s.warmupQuestionIds) {
-      recentlyUsedQuestionIds.add(qId as unknown as string);
-    }
-    for (const qId of s.mainQuestionIds) {
-      recentlyUsedQuestionIds.add(qId as unknown as string);
-    }
-    for (const qId of s.examPrepQuestionIds) {
-      recentlyUsedQuestionIds.add(qId as unknown as string);
-    }
+    for (const qId of s.warmupQuestionIds) bumpUsage(qId);
+    for (const qId of s.mainQuestionIds) bumpUsage(qId);
+    for (const qId of s.examPrepQuestionIds) bumpUsage(qId);
   }
 
   const conceptByQuestion = new Map<string, ProfileRow[]>();
   const uniqueQuestionIds = new Set<string>();
   const plannerGaps: PlannerGap[] = [];
+  // Concepts with ≥1 tagged question. "all-in-cooldown" is detected AFTER the
+  // count-based filter below, because repeat-flagged questions may survive.
+  const taggedConcepts: ProfileRow[] = [];
 
   let consideredConcepts = 0;
   let prereqGappedSkipped = 0;
@@ -290,12 +297,10 @@ async function buildCandidatePool(
       });
       continue;
     }
+    taggedConcepts.push(concept);
 
-    let availableForConcept = 0;
     for (const qId of taggedQuestionIds) {
       const qKey = qId as unknown as string;
-      if (recentlyUsedQuestionIds.has(qKey)) continue;
-      availableForConcept += 1;
       uniqueQuestionIds.add(qKey);
       const list = conceptByQuestion.get(qKey);
       if (list) {
@@ -303,13 +308,6 @@ async function buildCandidatePool(
       } else {
         conceptByQuestion.set(qKey, [concept]);
       }
-    }
-    if (availableForConcept === 0) {
-      plannerGaps.push({
-        conceptId: concept.conceptId,
-        conceptName: concept.name,
-        reason: "all-in-cooldown",
-      });
     }
   }
 
@@ -320,11 +318,17 @@ async function buildCandidatePool(
   );
 
   const candidates: RawCandidate[] = [];
+  const conceptsWithCandidate = new Set<string>();
   for (const q of questionDocs) {
     if (!q) continue;
     const qKey = q._id as unknown as string;
     const concepts = conceptByQuestion.get(qKey);
     if (!concepts || concepts.length === 0) continue;
+    // Count-based cooldown: a question rests once used repeatCount times in
+    // the window. repeatCount === 1 (default) == the original binary rule.
+    const used = usageCountByQuestion.get(qKey) ?? 0;
+    const cap = Math.max(1, q.repeatCount ?? 1);
+    if (used >= cap) continue;
     const candidateQ: CandidateQuestion = {
       _id: q._id,
       source: q.source,
@@ -343,6 +347,18 @@ async function buildCandidatePool(
     // under two different concepts.
     for (const concept of concepts) {
       candidates.push({ question: candidateQ, concept });
+      conceptsWithCandidate.add(concept.conceptId as unknown as string);
+    }
+  }
+
+  // all-in-cooldown: concept had tags but every question rested this window.
+  for (const concept of taggedConcepts) {
+    if (!conceptsWithCandidate.has(concept.conceptId as unknown as string)) {
+      plannerGaps.push({
+        conceptId: concept.conceptId,
+        conceptName: concept.name,
+        reason: "all-in-cooldown",
+      });
     }
   }
 
@@ -354,7 +370,7 @@ async function buildCandidatePool(
       cooldownStartYmd,
       cooldownDays: NOVELTY_COOLDOWN_DAYS,
       recentSheetCount: recentSheets.length,
-      recentlyUsedQuestionCount: recentlyUsedQuestionIds.size,
+      recentlyUsedQuestionCount: usageCountByQuestion.size,
       uniqueQuestionsConsidered: uniqueQuestionIds.size,
       candidateCount: candidates.length,
       consideredConcepts,

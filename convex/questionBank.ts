@@ -550,6 +550,29 @@ export const update = mutation({
   },
 });
 
+// Set a crop's TEMPORARY-REMEDY repeat multiplier (Coverage drawer). Clamped
+// to [1, REPEAT_MAX]; 1 stores undefined so the field stays clean for the
+// common case. Pure scheduling/coverage construct — see schema note.
+const REPEAT_MAX = 20;
+export const setRepeatCount = mutation({
+  args: {
+    id: v.id("questionBank"),
+    repeatCount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    if (!Number.isInteger(args.repeatCount) || args.repeatCount < 1) {
+      throw new Error("repeatCount must be an integer ≥ 1");
+    }
+    const n = Math.min(REPEAT_MAX, args.repeatCount);
+    await ctx.db.patch(args.id, {
+      repeatCount: n <= 1 ? undefined : n,
+    });
+    return { id: args.id, repeatCount: n };
+  },
+});
+
 // Patch a single crop's difficulty. Phase 0.6b: used by the Difficulty subtab
 // to bulk-rate already-cropped questions.
 export const setDifficulty = mutation({
