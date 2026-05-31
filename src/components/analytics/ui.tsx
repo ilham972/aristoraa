@@ -43,7 +43,9 @@ export function Kpi({
   return (
     <div
       className={cn(
-        'rounded-xl border px-3 py-2.5',
+        // translateZ(0): force own GPU layer so Android Chrome reliably
+        // rasterizes this card's contents (fixes blank/unpainted cards).
+        'rounded-xl border px-3 py-2.5 [transform:translateZ(0)]',
         accent
           ? 'bg-primary/10 border-primary/30'
           : tone === 'warn'
@@ -109,7 +111,7 @@ export function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl bg-card border border-border/60 p-3">
+    <div className="rounded-xl bg-card border border-border/60 p-3 [transform:translateZ(0)]">
       <div className="flex items-center justify-between mb-2 gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           {icon && <span className="text-muted-foreground shrink-0">{icon}</span>}

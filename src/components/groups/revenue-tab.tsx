@@ -186,7 +186,8 @@ function Kpi({
   return (
     <div
       className={cn(
-        'rounded-xl border px-3 py-2.5',
+        // translateZ(0): own GPU layer so mobile Chrome paints contents.
+        'rounded-xl border px-3 py-2.5 [transform:translateZ(0)]',
         accent
           ? 'bg-primary/10 border-primary/30'
           : 'bg-card border-border/60',
@@ -216,7 +217,7 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl bg-card border border-border/60 p-3">
+    <div className="rounded-xl bg-card border border-border/60 p-3 [transform:translateZ(0)]">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">
           {title}
@@ -446,7 +447,7 @@ function BreakdownCard({
   if (rows.length === 0) return null;
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (
-    <div className="rounded-xl bg-card border border-border/60 p-3">
+    <div className="rounded-xl bg-card border border-border/60 p-3 [transform:translateZ(0)]">
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-muted-foreground">{icon}</span>
         <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">
