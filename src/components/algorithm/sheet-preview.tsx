@@ -45,7 +45,7 @@ import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
-type SlotName = 'warmup' | 'main' | 'examPrep';
+type SlotName = 'warmup' | 'main' | 'revision' | 'examPrep';
 
 type CropBox = { x: number; y: number; w: number; h: number };
 
@@ -78,6 +78,7 @@ const MODULE_IDS = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6'] as const;
 const SECTION_TITLES: Record<SlotName, string> = {
   warmup: 'Warm-up · cross-module review',
   main: 'Main block · today’s module',
+  revision: 'Revision · spaced repetition',
   examPrep: 'Exam prep · past papers',
 };
 
@@ -166,6 +167,7 @@ export function SheetPreviewDrawer({
     return [
       ...data.warmup.map((q) => q.questionId),
       ...data.main.map((q) => q.questionId),
+      ...data.revision.map((q) => q.questionId),
       ...data.examPrep.map((q) => q.questionId),
     ];
   }, [data]);
@@ -286,6 +288,26 @@ export function SheetPreviewDrawer({
                 onAdd={() => setPicker({ mode: 'add', slot: 'main' })}
               />
               <Section
+                title={SECTION_TITLES.revision}
+                slot="revision"
+                qs={data.revision}
+                pendingQ={pendingQ}
+                isLocked={isCompleted}
+                onWhyToggle={undefined}
+                onSwap={(qid) =>
+                  setPicker({ mode: 'swap', slot: 'revision', questionIdBefore: qid })
+                }
+                onRemove={(qid) =>
+                  runOverride({
+                    slot: 'revision',
+                    action: 'remove',
+                    questionIdBefore: qid,
+                    mark: qid,
+                  })
+                }
+                onAdd={() => setPicker({ mode: 'add', slot: 'revision' })}
+              />
+              <Section
                 title={SECTION_TITLES.examPrep}
                 slot="examPrep"
                 qs={data.examPrep}
@@ -354,7 +376,7 @@ export function SheetPreviewDrawer({
 // not in src/lib's import scope at runtime, only at type-check).
 type IntegrityRow = {
   questionId: Id<'questionBank'>;
-  slot: 'warmup' | 'main' | 'examPrep';
+  slot: 'warmup' | 'main' | 'revision' | 'examPrep';
   integrity: {
     kind: string;
     message: string;

@@ -107,6 +107,7 @@ async function buildRowsForSlotDate(
     const qCount =
       (sheet?.warmupQuestionIds.length ?? 0) +
       (sheet?.mainQuestionIds.length ?? 0) +
+      (sheet?.revisionQuestionIds?.length ?? 0) +
       (sheet?.examPrepQuestionIds.length ?? 0);
     const alertCount = Array.isArray(sheet?.alerts) ? sheet!.alerts.length : 0;
 
@@ -195,6 +196,7 @@ export const listSavedSheetHeadersForStudentIds = query({
       const qCount =
         (sheet?.warmupQuestionIds.length ?? 0) +
         (sheet?.mainQuestionIds.length ?? 0) +
+        (sheet?.revisionQuestionIds?.length ?? 0) +
         (sheet?.examPrepQuestionIds.length ?? 0);
       const alertCount = Array.isArray(sheet?.alerts)
         ? sheet!.alerts.length
@@ -289,6 +291,7 @@ export type SheetPreviewData = {
   };
   warmup: SheetPreviewQuestion[];
   main: SheetPreviewQuestion[];
+  revision: SheetPreviewQuestion[];
   examPrep: SheetPreviewQuestion[];
   // Per-question crop-integrity status. The Edit drawer renders a banner
   // listing every blocking issue + a soft warning for non-blocking ones.
@@ -298,7 +301,7 @@ export type SheetPreviewData = {
     perQuestion: Array<{
       questionId: Id<"questionBank">;
       integrity: CropIntegrityWithMessage;
-      slot: "warmup" | "main" | "examPrep";
+      slot: "warmup" | "main" | "revision" | "examPrep";
     }>;
   };
 };
@@ -413,6 +416,10 @@ export const getSheetWithCrops = query({
     for (const qid of sheet.mainQuestionIds) {
       main.push(await enrichOneQuestion(ctx, qid, snap));
     }
+    const revision: SheetPreviewQuestion[] = [];
+    for (const qid of sheet.revisionQuestionIds ?? []) {
+      revision.push(await enrichOneQuestion(ctx, qid, snap));
+    }
     const examPrep: SheetPreviewQuestion[] = [];
     for (const qid of sheet.examPrepQuestionIds) {
       examPrep.push(await enrichOneQuestion(ctx, qid, snap));
@@ -423,10 +430,14 @@ export const getSheetWithCrops = query({
     // hitting Render.
     const allIds: Array<{
       id: Id<"questionBank">;
-      slot: "warmup" | "main" | "examPrep";
+      slot: "warmup" | "main" | "revision" | "examPrep";
     }> = [
       ...sheet.warmupQuestionIds.map((id) => ({ id, slot: "warmup" as const })),
       ...sheet.mainQuestionIds.map((id) => ({ id, slot: "main" as const })),
+      ...(sheet.revisionQuestionIds ?? []).map((id) => ({
+        id,
+        slot: "revision" as const,
+      })),
       ...sheet.examPrepQuestionIds.map((id) => ({
         id,
         slot: "examPrep" as const,
@@ -474,6 +485,7 @@ export const getSheetWithCrops = query({
       },
       warmup,
       main,
+      revision,
       examPrep,
       integrity: {
         blockingCount: integrityResult.blockingCount,

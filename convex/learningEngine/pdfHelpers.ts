@@ -49,9 +49,11 @@ export type RenderSheetData = {
   student: { name: string; schoolGrade: number };
   moduleOfDay: string | null;
   // Ordered question metadata for each slot. The pdf renderer walks
-  // warmup → main → examPrep in order, drawing one section per group.
+  // warmup → main → revision → examPrep in order, drawing one section per
+  // group. `revision` is the sheet-redesign addition; old sheets have none.
   warmup: QuestionForRender[];
   main: QuestionForRender[];
+  revision: QuestionForRender[];
   examPrep: QuestionForRender[];
   // Integrity issues surfaced from the crop analyzer (blocking + non-blocking
   // attachments). The pdf renderer throws a ConvexError when blockingCount > 0
@@ -62,7 +64,7 @@ export type RenderSheetData = {
       questionId: Id<"questionBank">;
       integrity: CropIntegrityWithMessage;
       // Slot the question came from — useful for the UI banner.
-      slot: "warmup" | "main" | "examPrep";
+      slot: "warmup" | "main" | "revision" | "examPrep";
     }>;
   };
 };
@@ -105,9 +107,10 @@ export const getSheetForRender = internalQuery({
     // Compute integrity for every picked crop up front. The renderer uses
     // `stemAttachments` to glue stems above sub-questions and the consumer
     // (pdf.ts) throws when `integrity.blockingCount > 0`.
-    const allIds: Array<{ id: Id<"questionBank">; slot: "warmup" | "main" | "examPrep" }> = [
+    const allIds: Array<{ id: Id<"questionBank">; slot: "warmup" | "main" | "revision" | "examPrep" }> = [
       ...sheet.warmupQuestionIds.map((id) => ({ id, slot: "warmup" as const })),
       ...sheet.mainQuestionIds.map((id) => ({ id, slot: "main" as const })),
+      ...(sheet.revisionQuestionIds ?? []).map((id) => ({ id, slot: "revision" as const })),
       ...sheet.examPrepQuestionIds.map((id) => ({ id, slot: "examPrep" as const })),
     ];
     const integrityList = await analyzeManyCropIntegrity(
@@ -225,6 +228,7 @@ export const getSheetForRender = internalQuery({
 
     const warmup = await enrich(sheet.warmupQuestionIds);
     const main = await enrich(sheet.mainQuestionIds);
+    const revision = await enrich(sheet.revisionQuestionIds ?? []);
     const examPrep = await enrich(sheet.examPrepQuestionIds);
 
     // Pair each integrity row with the slot it came from so the consumer
@@ -250,6 +254,7 @@ export const getSheetForRender = internalQuery({
       moduleOfDay: moduleForDateStr(sheet.date),
       warmup,
       main,
+      revision,
       examPrep,
       integrity: {
         blockingCount: integrityList.blockingCount,

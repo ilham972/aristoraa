@@ -633,6 +633,15 @@ export default defineSchema({
     warmupQuestionIds: v.array(v.id("questionBank")),
     mainQuestionIds: v.array(v.id("questionBank")),
     examPrepQuestionIds: v.array(v.id("questionBank")),
+    // ─── Sheet redesign (Phase 3): Revision section ────────────────────────
+    // Spaced-repetition body — concepts due / about to be forgotten. Optional
+    // for back-compat: pre-redesign rows have no array and render with no
+    // Revision section. Print order: Warm-up → Main → Revision → Exam-prep.
+    // NOTE the 4-section model (founder, 2026-06-04): the Warm-up section's
+    // CONTENT becomes "recent mistakes" (Phase 4) — its field name stays
+    // `warmupQuestionIds` to avoid a live-DB rename. No separate mistakes
+    // array is created.
+    revisionQuestionIds: v.optional(v.array(v.id("questionBank"))),
     // D.6 additions — all optional for forward compatibility with D.1 rows.
     status: v.optional(v.string()),
     slotId: v.optional(v.id("scheduleSlots")),

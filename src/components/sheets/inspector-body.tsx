@@ -215,7 +215,10 @@ export function InspectorBody({
       <BudgetCard
         budget={plan.budget}
         usedQuestions={
-          plan.warmup.length + plan.main.length + plan.examPrep.length
+          plan.warmup.length +
+          plan.main.length +
+          plan.revision.length +
+          plan.examPrep.length
         }
       />
       {plan.underFillReasons.length > 0 && (
@@ -246,6 +249,12 @@ export function InspectorBody({
             ? MODULE_COLORS[plan.todayModule] ?? '#0D9488'
             : '#71717A'
         }
+      />
+      <SlotSection
+        title="Revision"
+        subtitle="Spaced repetition · due concepts"
+        slot={plan.revision}
+        color="#1E8449"
       />
       <SlotSection
         title="Exam-prep"

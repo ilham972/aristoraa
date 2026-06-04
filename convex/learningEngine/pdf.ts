@@ -555,7 +555,7 @@ export type MissingImagePolicy = "fail" | "skip";
 
 export type MissingImageItem = {
   questionId: Id<"questionBank">;
-  section: "warmup" | "main" | "examPrep";
+  section: "warmup" | "main" | "revision" | "examPrep";
   reason: "no-page-link" | "fetch-failed" | "no-crop-box" | "question-deleted";
 };
 
@@ -566,7 +566,7 @@ async function buildPDF(
   bytes: Uint8Array;
   pageCount: number;
   missing: MissingImageItem[];
-  rendered: { warmup: number; main: number; examPrep: number };
+  rendered: { warmup: number; main: number; revision: number; examPrep: number };
 }> {
   // Crop-integrity gate: refuse to render when any picked Q has a blocking
   // issue (stem-only with no sub-parts cropped, sub-question with no stem,
@@ -615,7 +615,7 @@ async function buildPDF(
   const pageImageCache = new Map<string, PDFImage>();
   const missing: MissingImageItem[] = [];
 
-  type SectionName = "warmup" | "main" | "examPrep";
+  type SectionName = "warmup" | "main" | "revision" | "examPrep";
   // Resolve stem attachments for a question: embed each stem's source page
   // (cached) and pair it with the stem's cropBox. Stems missing a cropBox
   // or page link are silently dropped — the integrity gate above already
@@ -702,6 +702,7 @@ async function buildPDF(
 
   const warm = await resolveSection("warmup", data.warmup);
   const main = await resolveSection("main", data.main);
+  const revision = await resolveSection("revision", data.revision);
   const exam = await resolveSection("examPrep", data.examPrep);
 
   // Fail-fast: don't render a half-broken PDF. The Lead can fix data (re-link
@@ -751,6 +752,13 @@ async function buildPDF(
       drawQuestion(renderer, q, n, img, stems);
     }
   }
+  if (revision.length > 0) {
+    drawSectionBanner(renderer, "REVISION  ·  Spaced repetition");
+    for (const { q, img, stems } of revision) {
+      n += 1;
+      drawQuestion(renderer, q, n, img, stems);
+    }
+  }
   if (exam.length > 0) {
     drawSectionBanner(renderer, "EXAM-PREP  ·  Past-paper mixed");
     for (const { q, img, stems } of exam) {
@@ -764,7 +772,12 @@ async function buildPDF(
     bytes,
     pageCount: pdfDoc.getPageCount(),
     missing,
-    rendered: { warmup: warm.length, main: main.length, examPrep: exam.length },
+    rendered: {
+      warmup: warm.length,
+      main: main.length,
+      revision: revision.length,
+      examPrep: exam.length,
+    },
   };
 }
 
@@ -986,7 +999,7 @@ export const _smokePickAnySheet = internalQuery({
     sample: Array<{
       sheetId: Id<"generatedSheets">;
       date: string;
-      counts: { warmup: number; main: number; examPrep: number };
+      counts: { warmup: number; main: number; revision: number; examPrep: number };
       hasPdf: boolean;
     }>;
     pick: {
@@ -1003,6 +1016,7 @@ export const _smokePickAnySheet = internalQuery({
       (s) =>
         s.warmupQuestionIds.length +
           s.mainQuestionIds.length +
+          (s.revisionQuestionIds ?? []).length +
           s.examPrepQuestionIds.length >
         0,
     );
@@ -1012,6 +1026,7 @@ export const _smokePickAnySheet = internalQuery({
       counts: {
         warmup: s.warmupQuestionIds.length,
         main: s.mainQuestionIds.length,
+        revision: (s.revisionQuestionIds ?? []).length,
         examPrep: s.examPrepQuestionIds.length,
       },
       hasPdf: !!s.pdfStorageId,
@@ -1029,6 +1044,7 @@ export const _smokePickAnySheet = internalQuery({
             questionCount:
               pickRow.warmupQuestionIds.length +
               pickRow.mainQuestionIds.length +
+              (pickRow.revisionQuestionIds ?? []).length +
               pickRow.examPrepQuestionIds.length,
           }
         : null,
@@ -1064,7 +1080,7 @@ export const _smokeDryRunGeometry = internalAction({
     const rows: GeoRow[] = [];
 
     // We need image dimensions — sniff JPEG/PNG headers via fetch.
-    const all = [...data.warmup, ...data.main, ...data.examPrep];
+    const all = [...data.warmup, ...data.main, ...data.revision, ...data.examPrep];
     for (const q of all) {
       const row: GeoRow = {
         qid: q.questionId,
@@ -1198,8 +1214,12 @@ export const _smokeRender = internalAction({
       storageId,
       downloadUrl,
       questionCount:
-        data.warmup.length + data.main.length + data.examPrep.length,
-      renderedCount: rendered.warmup + rendered.main + rendered.examPrep,
+        data.warmup.length +
+        data.main.length +
+        data.revision.length +
+        data.examPrep.length,
+      renderedCount:
+        rendered.warmup + rendered.main + rendered.revision + rendered.examPrep,
       pageCount,
       missingCount: missing.length,
       missing,
@@ -1254,8 +1274,12 @@ export const renderSheetPDF = action({
     });
 
     const questionCount =
-      data.warmup.length + data.main.length + data.examPrep.length;
-    const renderedCount = rendered.warmup + rendered.main + rendered.examPrep;
+      data.warmup.length +
+      data.main.length +
+      data.revision.length +
+      data.examPrep.length;
+    const renderedCount =
+      rendered.warmup + rendered.main + rendered.revision + rendered.examPrep;
 
     return {
       sheetId: args.sheetId,

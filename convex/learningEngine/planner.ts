@@ -259,6 +259,7 @@ async function buildCandidatePool(
   for (const s of recentSheets) {
     for (const qId of s.warmupQuestionIds) bumpUsage(qId);
     for (const qId of s.mainQuestionIds) bumpUsage(qId);
+    for (const qId of s.revisionQuestionIds ?? []) bumpUsage(qId);
     for (const qId of s.examPrepQuestionIds) bumpUsage(qId);
   }
 
@@ -897,6 +898,7 @@ async function recentCompletionStats(
     const sheetQs = [
       ...sheet.warmupQuestionIds,
       ...sheet.mainQuestionIds,
+      ...(sheet.revisionQuestionIds ?? []),
       ...sheet.examPrepQuestionIds,
     ];
     if (sheetQs.length === 0) continue;
@@ -1371,6 +1373,7 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         todayModule,
         warmup: [] as EnrichedCandidate[],
         main: [] as EnrichedCandidate[],
+        revision: [] as EnrichedCandidate[],
         examPrep: [] as EnrichedCandidate[],
         phase: null,
         ratios: null,
@@ -1685,6 +1688,9 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       todayModule,
       warmup: warmupPicked,
       main: mainPicked,
+      // Phase 3: Revision section exists end-to-end but is always empty until
+      // the selection algorithm lands in Phase 5.
+      revision: [] as EnrichedCandidate[],
       examPrep: examPrepPicked,
       phase: {
         key: phaseInfo.phase,
@@ -1802,7 +1808,7 @@ async function resolveTeacherId(
 type ScoringSnapshotEntry = {
   questionId: Id<"questionBank">;
   conceptId: Id<"exercises">;
-  slot: "warmup" | "main" | "examPrep";
+  slot: "warmup" | "main" | "revision" | "examPrep";
   baseScore: number;
   factors: {
     importance: number;
@@ -1818,12 +1824,13 @@ type ScoringSnapshotEntry = {
 function buildScoringSnapshot(
   warmup: EnrichedCandidate[],
   main: EnrichedCandidate[],
+  revision: EnrichedCandidate[],
   examPrep: EnrichedCandidate[],
 ): ScoringSnapshotEntry[] {
   const out: ScoringSnapshotEntry[] = [];
   const push = (
     list: EnrichedCandidate[],
-    slot: "warmup" | "main" | "examPrep",
+    slot: "warmup" | "main" | "revision" | "examPrep",
   ) => {
     for (const c of list) {
       out.push({
@@ -1845,6 +1852,7 @@ function buildScoringSnapshot(
   };
   push(warmup, "warmup");
   push(main, "main");
+  push(revision, "revision");
   push(examPrep, "examPrep");
   return out;
 }
@@ -1959,10 +1967,12 @@ async function saveSheetForStudentImpl(
 
     const warmupQuestionIds = result.warmup.map((c) => c.question._id);
     const mainQuestionIds = result.main.map((c) => c.question._id);
+    const revisionQuestionIds = result.revision.map((c) => c.question._id);
     const examPrepQuestionIds = result.examPrep.map((c) => c.question._id);
     const scoringSnapshot = buildScoringSnapshot(
       result.warmup,
       result.main,
+      result.revision,
       result.examPrep,
     );
 
@@ -1975,6 +1985,7 @@ async function saveSheetForStudentImpl(
       generatedAt: Date.now(),
       warmupQuestionIds,
       mainQuestionIds,
+      revisionQuestionIds,
       examPrepQuestionIds,
       status: "draft",
       alerts: result.alerts,
@@ -2005,6 +2016,7 @@ async function saveSheetForStudentImpl(
       questionCount:
         warmupQuestionIds.length +
         mainQuestionIds.length +
+        revisionQuestionIds.length +
         examPrepQuestionIds.length,
       alertCount: result.alerts.length,
       underFillReasons: result.underFillReasons,
@@ -2045,6 +2057,7 @@ export const overrideSheet = mutation({
     if (
       args.slotName !== "warmup" &&
       args.slotName !== "main" &&
+      args.slotName !== "revision" &&
       args.slotName !== "examPrep"
     ) {
       throw new Error(`Invalid slotName "${args.slotName}"`);
@@ -2054,9 +2067,14 @@ export const overrideSheet = mutation({
         ? "warmupQuestionIds"
         : args.slotName === "main"
           ? "mainQuestionIds"
-          : "examPrepQuestionIds";
+          : args.slotName === "revision"
+            ? "revisionQuestionIds"
+            : "examPrepQuestionIds";
 
-    const list = [...(sheet[fieldName] as Id<"questionBank">[])];
+    // revisionQuestionIds is optional — old rows have no array. Guard the read.
+    const list = [
+      ...((sheet[fieldName] as Id<"questionBank">[] | undefined) ?? []),
+    ];
 
     if (args.action === "swap") {
       if (!args.questionIdBefore || !args.questionIdAfter) {
@@ -2080,12 +2098,17 @@ export const overrideSheet = mutation({
       if (!args.questionIdAfter) {
         throw new Error("add requires questionIdAfter");
       }
-      // Prevent cross-slot duplicates: check the OTHER two arrays too.
+      // Prevent cross-slot duplicates: check the OTHER three arrays too.
       const otherFields: Array<typeof fieldName> = (
-        ["warmupQuestionIds", "mainQuestionIds", "examPrepQuestionIds"] as const
+        [
+          "warmupQuestionIds",
+          "mainQuestionIds",
+          "revisionQuestionIds",
+          "examPrepQuestionIds",
+        ] as const
       ).filter((f) => f !== fieldName) as Array<typeof fieldName>;
       for (const f of otherFields) {
-        const otherList = sheet[f] as Id<"questionBank">[];
+        const otherList = (sheet[f] as Id<"questionBank">[] | undefined) ?? [];
         if (otherList.includes(args.questionIdAfter)) {
           throw new Error(
             `Question already on this sheet in ${f.replace("QuestionIds", "")}`,
