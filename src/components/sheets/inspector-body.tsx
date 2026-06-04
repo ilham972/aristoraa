@@ -171,16 +171,18 @@ export function InspectorBody({
   dateStr,
   unitIds,
   gradeByModule,
+  slotId,
 }: {
   studentId: Id<'students'>;
   dateStr: string;
   unitIds: string[];
   gradeByModule: Record<string, number[]>;
+  slotId?: Id<'scheduleSlots'>;
 }) {
   const plan = useQuery(
     api.learningEngine.planner.planSheet,
     unitIds.length > 0
-      ? { studentId, dateStr, unitIds, gradeByModule }
+      ? { studentId, dateStr, unitIds, gradeByModule, slotId }
       : 'skip',
   );
 

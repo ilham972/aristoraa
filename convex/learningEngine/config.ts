@@ -207,12 +207,17 @@ export const EXAM_WEEK_RATIOS = {
 // student — past-paper questions are typically harder than textbook ones.
 export const EXAM_PREP_MASTERY_FLOOR = 0.5;
 
-// ─── Sheet redesign (Phase 4): path-driven Main block ──────────────────────
+// ─── Sheet redesign (Phase 4 / 6): path-driven Main block ──────────────────
 // How many NOT-yet-introduced concepts the Main block teaches per sheet. The
 // planner walks the teacher-curated teaching path and picks the next N concepts
 // the student hasn't started (prereqs met). Phase 6 makes this session-length-
-// aware (longer class → more new concepts); for now it's a flat default.
+// aware: N = clamp(round(sessionMinutes / MINUTES_PER_NEW_CONCEPT), MIN, MAX).
+// MAIN_NEW_CONCEPTS remains the Phase-7 fallback default when no pacing signal
+// is available.
 export const MAIN_NEW_CONCEPTS = 2;
+export const MINUTES_PER_NEW_CONCEPT = 50;
+export const MAIN_NEW_CONCEPTS_MIN = 1;
+export const MAIN_NEW_CONCEPTS_MAX = 3;
 
 // ─── Sheet redesign (Phase 5): Revision section ────────────────────────────
 // A concept is "due" for revision when its retention R has decayed below this

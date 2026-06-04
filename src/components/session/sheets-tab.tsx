@@ -394,6 +394,7 @@ export function SheetsTab({
           dateStr={dateStr}
           unitIds={studentScope(openRow.studentId)?.unitIds ?? []}
           gradeByModule={studentScope(openRow.studentId)?.gradeByModule ?? {}}
+          slotId={slotId}
           busyLabel={rowBusy[openRow.studentId as unknown as string] ?? null}
           onClose={() => setOpenStudentId(null)}
           onOpenEdit={() => {

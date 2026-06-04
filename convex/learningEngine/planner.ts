@@ -93,7 +93,11 @@ import {
   DEFAULT_RATIOS,
   EXAM_WEEK_RATIOS,
   EXAM_PREP_MASTERY_FLOOR,
-  MAIN_NEW_CONCEPTS,
+  MINUTES_PER_NEW_CONCEPT,
+  MAIN_NEW_CONCEPTS_MIN,
+  MAIN_NEW_CONCEPTS_MAX,
+  BUDGET_GROW_FACTOR,
+  BUDGET_SHRINK_FACTOR,
   REVISION_DUE_R,
   UNDERFILL_REASONS,
   EXAM_BACKSTOP_DAYS,
@@ -148,6 +152,21 @@ function clamp01(x: number): number {
 
 function parseYmdToMs(ymd: string): number {
   return Date.parse(`${ymd}T00:00:00.000Z`);
+}
+
+// Phase 6: minutes between two "HH:MM" clock strings (scheduleSlots.startTime /
+// endTime). Returns null on malformed input or non-positive duration so the
+// caller falls back to overrides/defaults. Handles a slot that wraps past
+// midnight defensively (treated as same-day; negative → null).
+function minutesBetweenClock(start: string, end: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/;
+  const s = m.exec(start);
+  const e = m.exec(end);
+  if (!s || !e) return null;
+  const startMin = Number(s[1]) * 60 + Number(s[2]);
+  const endMin = Number(e[1]) * 60 + Number(e[2]);
+  const diff = endMin - startMin;
+  return diff > 0 ? diff : null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -816,12 +835,16 @@ type Budget = {
   questionCap: number;    // hard cap on questions even if time budget allows more
   tier: Tier;
   source:
+    | "slot-length"
     | "manual-override"
     | "auto-tuned"
     | "default-no-history"
     | "default-fallback";
   recentCompletionRate: number | null;
   recentSheetsConsidered: number;
+  // Phase 6: resolved session length in minutes BEFORE the tier multiplier
+  // (i.e. the raw class/override/default minutes). Drives MAIN_NEW_CONCEPTS.
+  sessionMinutes: number;
 };
 
 function clamp(x: number, lo: number, hi: number): number {
@@ -919,74 +942,93 @@ async function recentCompletionStats(
   return { avgCompletion: totalRate / denom, sampleCount: denom };
 }
 
+// Phase 6 — session-length-aware budget.
+//
+// TIME budget precedence (founder decision: "use the class times"):
+//   1. the scheduled session's actual length (slot start→end)
+//   2. student.sessionMinutesOverride (manual per-student)
+//   3. tier default from completion history (or SESSION_MIN_DEFAULT)
+//
+// The class length is fixed, so the completion-history tier is NOT applied to
+// time — it's applied as a DENSITY multiplier on the QUESTION cap (a strong
+// student fits more questions in the same hour; a weak student fewer). The
+// question cap otherwise derives from the time budget so longer sessions yield
+// longer sheets. Manual sheetLengthOverride still wins the cap outright.
 async function computeBudget(
   ctx: ReadCtx,
   student: StudentDoc,
   dateStr: string,
+  slotId?: Id<"scheduleSlots">,
 ): Promise<Budget> {
-  const hasMinOverride =
-    student.sessionMinutesOverride !== undefined &&
-    student.sessionMinutesOverride !== null;
-  const hasCountOverride =
-    student.sheetLengthOverride !== undefined &&
-    student.sheetLengthOverride !== null;
-
-  if (hasMinOverride || hasCountOverride) {
-    const timeMin = clamp(
-      student.sessionMinutesOverride ?? SESSION_MIN_DEFAULT,
-      SESSION_MIN_FLOOR,
-      SESSION_MIN_CEILING,
-    );
-    const questionCap = clamp(
-      student.sheetLengthOverride ?? SHEET_LEN_CEILING,
-      SHEET_LEN_FLOOR,
-      SHEET_LEN_CEILING,
-    );
-    return {
-      timeMin,
-      questionCap,
-      tier: "default",
-      source: "manual-override",
-      recentCompletionRate: null,
-      recentSheetsConsidered: 0,
-    };
-  }
-
-  // Auto-tune from history.
+  // Completion-history tier (always computed; used as the density multiplier).
   const { avgCompletion, sampleCount } = await recentCompletionStats(
     ctx,
     student._id,
     dateStr,
   );
-  if (
-    avgCompletion === null ||
-    sampleCount < MIN_COMPLETION_SAMPLE
+  let tier: Tier = "default";
+  const haveHistory =
+    avgCompletion !== null && sampleCount >= MIN_COMPLETION_SAMPLE;
+  if (haveHistory) {
+    if (avgCompletion! >= COMPLETION_RATE_GROW) tier = "strong";
+    else if (avgCompletion! <= COMPLETION_RATE_SHRINK) tier = "weak";
+  }
+  const densityMultiplier =
+    tier === "strong"
+      ? BUDGET_GROW_FACTOR
+      : tier === "weak"
+        ? BUDGET_SHRINK_FACTOR
+        : 1.0;
+
+  // Resolve session minutes by precedence.
+  let sessionMinutes: number;
+  let source: Budget["source"];
+  let slotMinutes: number | null = null;
+  if (slotId) {
+    const slot = await ctx.db.get(slotId);
+    if (slot) slotMinutes = minutesBetweenClock(slot.startTime, slot.endTime);
+  }
+  if (slotMinutes !== null) {
+    sessionMinutes = slotMinutes;
+    source = "slot-length";
+  } else if (
+    student.sessionMinutesOverride !== undefined &&
+    student.sessionMinutesOverride !== null
   ) {
-    return {
-      timeMin: SESSION_MIN_DEFAULT,
-      questionCap: SHEET_LEN_DEFAULT,
-      tier: "default",
-      source: "default-no-history",
-      recentCompletionRate: avgCompletion,
-      recentSheetsConsidered: sampleCount,
-    };
+    sessionMinutes = student.sessionMinutesOverride;
+    source = "manual-override";
+  } else {
+    sessionMinutes = tierToTime(tier);
+    source = haveHistory ? "auto-tuned" : "default-no-history";
   }
 
-  let tier: Tier = "default";
-  if (avgCompletion >= COMPLETION_RATE_GROW) tier = "strong";
-  else if (avgCompletion <= COMPLETION_RATE_SHRINK) tier = "weak";
+  const timeMin = clamp(
+    sessionMinutes,
+    SESSION_MIN_FLOOR,
+    SESSION_MIN_CEILING,
+  );
+
+  // Question cap: explicit per-student override wins; otherwise derive from the
+  // time budget (so it scales with session length) and apply the tier density.
+  const hasCountOverride =
+    student.sheetLengthOverride !== undefined &&
+    student.sheetLengthOverride !== null;
+  const questionCap = hasCountOverride
+    ? clamp(student.sheetLengthOverride!, SHEET_LEN_FLOOR, SHEET_LEN_CEILING)
+    : clamp(
+        Math.round((timeMin / DEFAULT_QUESTION_TIME_MIN) * densityMultiplier),
+        SHEET_LEN_FLOOR,
+        SHEET_LEN_CEILING,
+      );
 
   return {
-    timeMin: clamp(tierToTime(tier), SESSION_MIN_FLOOR, SESSION_MIN_CEILING),
-    questionCap: clamp(
-      tierToCount(tier),
-      SHEET_LEN_FLOOR,
-      SHEET_LEN_CEILING,
-    ),
+    timeMin,
+    questionCap,
     tier,
-    source: "auto-tuned",
+    source,
     recentCompletionRate: avgCompletion,
     recentSheetsConsidered: sampleCount,
+    sessionMinutes,
   };
 }
 
@@ -1353,6 +1395,9 @@ type PlanSheetArgs = {
   dateStr: string;
   unitIds: string[];
   gradeByModule: Record<string, number[]>;
+  // Phase 6: the scheduled session whose start→end length drives the time
+  // budget. Optional — planner still works (default budget) without it.
+  slotId?: Id<"scheduleSlots">;
   debugSessionMinutes?: number;
   debugSheetLength?: number;
 };
@@ -1479,12 +1524,9 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       args.debugSessionMinutes !== undefined ||
       args.debugSheetLength !== undefined
     ) {
+      const dbgMinutes = args.debugSessionMinutes ?? SESSION_MIN_DEFAULT;
       budget = {
-        timeMin: clamp(
-          args.debugSessionMinutes ?? SESSION_MIN_DEFAULT,
-          SESSION_MIN_FLOOR,
-          SESSION_MIN_CEILING,
-        ),
+        timeMin: clamp(dbgMinutes, SESSION_MIN_FLOOR, SESSION_MIN_CEILING),
         questionCap: clamp(
           args.debugSheetLength ?? SHEET_LEN_CEILING,
           SHEET_LEN_FLOOR,
@@ -1494,9 +1536,10 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         source: "manual-override",
         recentCompletionRate: null,
         recentSheetsConsidered: 0,
+        sessionMinutes: dbgMinutes,
       };
     } else {
-      budget = await computeBudget(ctx, student, args.dateStr);
+      budget = await computeBudget(ctx, student, args.dateStr, args.slotId);
     }
 
     // ── 9. Slot allocation ──────────────────────────────────────────────
@@ -1573,10 +1616,17 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       return a.order - b.order;
     });
     // "New" = never attempted (prereq-gapped concepts are already absent).
+    // Phase 6: how many new concepts to introduce scales with session length
+    // (a 2-hour class can take on more than a 1-hour one).
+    const mainNewConcepts = clamp(
+      Math.round(budget.sessionMinutes / MINUTES_PER_NEW_CONCEPT),
+      MAIN_NEW_CONCEPTS_MIN,
+      MAIN_NEW_CONCEPTS_MAX,
+    );
     const newConceptIds = new Set<string>(
       orderedConcepts
         .filter((c) => c.attemptCount === 0)
-        .slice(0, MAIN_NEW_CONCEPTS)
+        .slice(0, mainNewConcepts)
         .map((c) => c.conceptId as unknown as string),
     );
 
@@ -1767,6 +1817,44 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       }
     }
 
+    // ── 9f. Leftover reallocation (Phase 6) ─────────────────────────────
+    // If a section's pool was thin (e.g. no mistakes → empty Warm-up), its
+    // share of the budget went unused. Rather than ship a short sheet, top up
+    // with the most-urgent remaining introduced concepts (spaced-repetition
+    // flavoured) and append them to the Revision section — the natural home for
+    // extra retrieval practice. Respects `seen` (no repeats) and the overall
+    // time + question budget, so this never overshoots the sheet length.
+    {
+      const usedTime = [
+        ...warmupPicked,
+        ...mainPicked,
+        ...examPrepPicked,
+        ...revisionPicked,
+      ].reduce(
+        (s, c) => s + (c.question.expectedTimeMin ?? DEFAULT_QUESTION_TIME_MIN),
+        0,
+      );
+      const pickedSoFar =
+        warmupPicked.length +
+        mainPicked.length +
+        examPrepPicked.length +
+        revisionPicked.length;
+      const leftoverQ = budget.questionCap - pickedSoFar;
+      const leftoverTime = budget.timeMin - usedTime;
+      if (leftoverQ > 0 && leftoverTime > 0) {
+        const topup = enriched
+          .filter(
+            (c) =>
+              c.concept.attemptCount > 0 &&
+              c.concept.lastResponse !== "again",
+          )
+          .slice()
+          .sort((a, b) => a.concept.R - b.concept.R);
+        const r = pickInterleaved(topup, leftoverTime, leftoverQ, seen);
+        if (r.picked.length > 0) revisionPicked.push(...r.picked);
+      }
+    }
+
     // ── 10. Pool-exhaustion underfill flag ──────────────────────────────
     const totalPicked =
       warmupPicked.length +
@@ -1850,6 +1938,7 @@ export const planSheet = query({
     dateStr: v.string(),                                   // YYYY-MM-DD
     unitIds: v.array(v.string()),
     gradeByModule: v.record(v.string(), v.array(v.number())),
+    slotId: v.optional(v.id("scheduleSlots")),
     debugSessionMinutes: v.optional(v.number()),
     debugSheetLength: v.optional(v.number()),
   },
@@ -2015,6 +2104,7 @@ async function saveSheetForStudentImpl(
       dateStr: args.dateStr,
       unitIds: args.unitIds,
       gradeByModule: args.gradeByModule,
+      slotId: args.slotId,
       debugSessionMinutes: args.debugSessionMinutes,
       debugSheetLength: args.debugSheetLength,
     });

@@ -35,6 +35,7 @@ export function InspectorDrawer({
   dateStr,
   unitIds,
   gradeByModule,
+  slotId,
   busyLabel,
   onClose,
   onOpenEdit,
@@ -48,6 +49,7 @@ export function InspectorDrawer({
   dateStr: string;
   unitIds: string[];
   gradeByModule: Record<string, number[]>;
+  slotId: Id<'scheduleSlots'>;
   busyLabel: string | null;
   onClose: () => void;
   onOpenEdit: () => void;
@@ -151,6 +153,7 @@ export function InspectorDrawer({
               dateStr={dateStr}
               unitIds={unitIds}
               gradeByModule={gradeByModule}
+              slotId={slotId}
             />
           )}
         </div>
