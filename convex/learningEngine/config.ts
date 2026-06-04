@@ -164,26 +164,30 @@ export const SHEET_LEN_CEILING = 20;
 export const EXAM_WEEK_DAYS = 14;
 export const LATE_TERM_DAYS = 35;
 
-// Phase ratios: { warmup, main, examPrep }. Σ = 1.0 per row.
-// Mapping from learning_engine_plan.md table (Section 5):
-//   "new acquisition" → main block (today's-module new content)
-//   "prior-term SR"   → warm-up (cross-module SR)
-//   "mixed exam-prep" → exam-prep (past-paper)
+// Phase ratios: { warmup, main, revision, examPrep }. Σ = 1.0 per row.
+// Sheet-redesign 4-section model (founder, 2026-06-04):
+//   warmup   → recent MISTAKES (small, easy-first opener)
+//   main     → new acquisition (next concept(s) on the teaching path)
+//   revision → spaced-repetition body (due / forgetting concepts) — grows
+//              through the year as there's more to retain
+//   examPrep → past-paper mixed
+// (Phase 6 makes the time budget session-length-aware; these proportions are
+// the per-phase split and are tunable.)
 export const PHASE_RATIOS = {
-  earlyT1: { warmup: 0.0, main: 0.9, examPrep: 0.1 },
-  lateT1: { warmup: 0.15, main: 0.75, examPrep: 0.1 },
-  earlyT2: { warmup: 0.35, main: 0.6, examPrep: 0.05 },
-  lateT2: { warmup: 0.3, main: 0.5, examPrep: 0.2 },
-  earlyT3: { warmup: 0.4, main: 0.5, examPrep: 0.1 },
-  lateT3: { warmup: 0.6, main: 0.25, examPrep: 0.15 },
+  earlyT1: { warmup: 0.1, main: 0.7, revision: 0.1, examPrep: 0.1 },
+  lateT1: { warmup: 0.15, main: 0.45, revision: 0.25, examPrep: 0.15 },
+  earlyT2: { warmup: 0.15, main: 0.45, revision: 0.3, examPrep: 0.1 },
+  lateT2: { warmup: 0.15, main: 0.35, revision: 0.3, examPrep: 0.2 },
+  earlyT3: { warmup: 0.1, main: 0.4, revision: 0.4, examPrep: 0.1 },
+  lateT3: { warmup: 0.1, main: 0.2, revision: 0.45, examPrep: 0.25 },
 } as const;
 
 // Fallback ratios when no upcoming exam is scheduled (or the student has no
-// term context). Matches default WARMUP/MAIN/EXAM in the original sheet
-// allocator design.
+// term context).
 export const DEFAULT_RATIOS = {
-  warmup: 0.2,
-  main: 0.65,
+  warmup: 0.15,
+  main: 0.4,
+  revision: 0.3,
   examPrep: 0.15,
 } as const;
 
@@ -192,9 +196,10 @@ export const DEFAULT_RATIOS = {
 // past-paper-source preferred, ranked by score. The "main" slot becomes
 // "rest of the exam-relevant pool", warm-up shrinks, exam-prep grows.
 export const EXAM_WEEK_RATIOS = {
-  warmup: 0.15,
-  main: 0.3,
-  examPrep: 0.55,
+  warmup: 0.1,
+  main: 0.15,
+  revision: 0.4,
+  examPrep: 0.35,
 } as const;
 
 // Mastery threshold for inclusion in the exam-prep slot. Concept must be at
@@ -208,6 +213,13 @@ export const EXAM_PREP_MASTERY_FLOOR = 0.5;
 // the student hasn't started (prereqs met). Phase 6 makes this session-length-
 // aware (longer class → more new concepts); for now it's a flat default.
 export const MAIN_NEW_CONCEPTS = 2;
+
+// ─── Sheet redesign (Phase 5): Revision section ────────────────────────────
+// A concept is "due" for revision when its retention R has decayed below this
+// threshold (or it is past its natural review interval). 0.7 ≈ re-surface
+// before the student drops below 70% recall — early enough to relearn cheaply,
+// late enough not to waste a slot on something still fresh.
+export const REVISION_DUE_R = 0.7;
 
 // ─── Phase D.5: exam-date backstop ────────────────────────────────────────
 // "Force-review window" before an upcoming exam. A concept whose natural

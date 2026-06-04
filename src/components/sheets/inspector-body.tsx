@@ -120,7 +120,7 @@ type PickedCandidate = {
 
 type PhaseShape = {
   key: string;
-  ratios: { warmup: number; main: number; examPrep: number };
+  ratios: { warmup: number; main: number; revision: number; examPrep: number };
   examWeekMode: boolean;
   daysToExam: number | null;
   examTerm: number | null;
@@ -354,21 +354,24 @@ function PhaseInfoCard({
 function RatioBar({
   ratios,
 }: {
-  ratios: { warmup: number; main: number; examPrep: number };
+  ratios: { warmup: number; main: number; revision: number; examPrep: number };
 }) {
   const wp = Math.round(ratios.warmup * 100);
   const mp = Math.round(ratios.main * 100);
-  const ep = Math.max(0, 100 - wp - mp);
+  const rp = Math.round(ratios.revision * 100);
+  const ep = Math.max(0, 100 - wp - mp - rp);
   return (
     <div>
       <div className="flex h-2 rounded-full overflow-hidden bg-muted">
         <div className="h-full bg-blue-500" style={{ width: `${wp}%` }} title={`Warmup ${wp}%`} />
         <div className="h-full bg-emerald-500" style={{ width: `${mp}%` }} title={`Main ${mp}%`} />
+        <div className="h-full bg-green-700" style={{ width: `${rp}%` }} title={`Revision ${rp}%`} />
         <div className="h-full bg-amber-500" style={{ width: `${ep}%` }} title={`Exam-prep ${ep}%`} />
       </div>
       <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-        <span>Warmup {wp}%</span>
+        <span>Warm {wp}%</span>
         <span>Main {mp}%</span>
+        <span>Rev {rp}%</span>
         <span>Exam {ep}%</span>
       </div>
     </div>
@@ -805,7 +808,7 @@ function MetaPanel({
   ratios,
 }: {
   meta: MetaShape | null;
-  ratios: { warmup: number; main: number; examPrep: number } | null;
+  ratios: { warmup: number; main: number; revision: number; examPrep: number } | null;
 }) {
   const [open, setOpen] = useState(false);
   if (!meta) return null;
@@ -838,7 +841,7 @@ function MetaPanel({
           {ratios && (
             <MetaRow
               label="Ratios applied"
-              value={`W ${ratios.warmup.toFixed(2)} · M ${ratios.main.toFixed(2)} · E ${ratios.examPrep.toFixed(2)}`}
+              value={`W ${ratios.warmup.toFixed(2)} · M ${ratios.main.toFixed(2)} · R ${ratios.revision.toFixed(2)} · E ${ratios.examPrep.toFixed(2)}`}
             />
           )}
           <MetaRow

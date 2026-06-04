@@ -94,6 +94,7 @@ import {
   EXAM_WEEK_RATIOS,
   EXAM_PREP_MASTERY_FLOOR,
   MAIN_NEW_CONCEPTS,
+  REVISION_DUE_R,
   UNDERFILL_REASONS,
   EXAM_BACKSTOP_DAYS,
   NATURAL_INTERVAL_FLOOR_DAYS,
@@ -1003,7 +1004,12 @@ type PhaseKey =
   | "examWeek-T3"
   | "default";
 
-type Ratios = { warmup: number; main: number; examPrep: number };
+type Ratios = {
+  warmup: number;
+  main: number;
+  revision: number;
+  examPrep: number;
+};
 
 type PhaseInfo = {
   phase: PhaseKey;
@@ -1517,6 +1523,7 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     const examPrepBudget = slotBudget(phaseInfo.ratios.examPrep);
     const mainBudget = slotBudget(phaseInfo.ratios.main);
     const warmupBudget = slotBudget(phaseInfo.ratios.warmup);
+    const revisionBudget = slotBudget(phaseInfo.ratios.revision);
 
     // ── Sheet redesign (Phase 4): teaching-path order over in-scope concepts.
     // The weekday→module rule is GONE. The Main block walks the teacher-curated
@@ -1712,9 +1719,60 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       }
     }
 
+    // ── 9e. Revision slot — spaced repetition on DUE concepts ───────────
+    // Introduced concepts that have decayed (R < REVISION_DUE_R) or are past
+    // their natural review interval, EXCLUDING current mistakes (those are the
+    // Warm-up's job). Ranked by the existing baseScore (urgency × importance
+    // already inside it), interleaved across units. Fallback: lowest-R
+    // introduced concepts even if not strictly due, so an active student's
+    // Revision section is rarely empty.
+    let revisionPicked: EnrichedCandidate[] = [];
+    if (revisionBudget.qCap > 0) {
+      const isDue = (c: EnrichedCandidate): boolean => {
+        if (c.concept.attemptCount <= 0) return false; // not introduced
+        if (c.concept.lastResponse === "again") return false; // mistake → warmup
+        if (c.concept.R < REVISION_DUE_R) return true;
+        return (
+          overdueDays(
+            c.concept.stability,
+            c.concept.lastReviewAt,
+            pool.asOfMs,
+          ) > 0
+        );
+      };
+      const primary = enriched.filter(isDue); // already score-sorted
+      const r = pickInterleaved(
+        primary,
+        revisionBudget.timeMin,
+        revisionBudget.qCap,
+        seen,
+      );
+      revisionPicked = r.picked;
+      if (revisionPicked.length < revisionBudget.qCap) {
+        const fallback = enriched
+          .filter(
+            (c) =>
+              c.concept.attemptCount > 0 &&
+              c.concept.lastResponse !== "again",
+          )
+          .slice()
+          .sort((a, b) => a.concept.R - b.concept.R);
+        const r2 = pickInterleaved(
+          fallback,
+          revisionBudget.timeMin - r.usedTimeMin,
+          revisionBudget.qCap - revisionPicked.length,
+          seen,
+        );
+        revisionPicked.push(...r2.picked);
+      }
+    }
+
     // ── 10. Pool-exhaustion underfill flag ──────────────────────────────
     const totalPicked =
-      warmupPicked.length + mainPicked.length + examPrepPicked.length;
+      warmupPicked.length +
+      mainPicked.length +
+      revisionPicked.length +
+      examPrepPicked.length;
     if (totalPicked < budget.questionCap * 0.6) {
       underFillReasons.push(UNDERFILL_REASONS.POOL_EXHAUSTED);
     }
@@ -1723,6 +1781,7 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     const allPickedQIds = [
       ...warmupPicked.map((c) => c.question._id),
       ...mainPicked.map((c) => c.question._id),
+      ...revisionPicked.map((c) => c.question._id),
       ...examPrepPicked.map((c) => c.question._id),
     ];
     const alerts = await computePrereqAlerts(ctx, {
@@ -1739,9 +1798,7 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       todayModule,
       warmup: warmupPicked,
       main: mainPicked,
-      // Phase 3: Revision section exists end-to-end but is always empty until
-      // the selection algorithm lands in Phase 5.
-      revision: [] as EnrichedCandidate[],
+      revision: revisionPicked,
       examPrep: examPrepPicked,
       phase: {
         key: phaseInfo.phase,
