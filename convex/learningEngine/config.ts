@@ -202,6 +202,13 @@ export const EXAM_WEEK_RATIOS = {
 // student — past-paper questions are typically harder than textbook ones.
 export const EXAM_PREP_MASTERY_FLOOR = 0.5;
 
+// ─── Sheet redesign (Phase 4): path-driven Main block ──────────────────────
+// How many NOT-yet-introduced concepts the Main block teaches per sheet. The
+// planner walks the teacher-curated teaching path and picks the next N concepts
+// the student hasn't started (prereqs met). Phase 6 makes this session-length-
+// aware (longer class → more new concepts); for now it's a flat default.
+export const MAIN_NEW_CONCEPTS = 2;
+
 // ─── Phase D.5: exam-date backstop ────────────────────────────────────────
 // "Force-review window" before an upcoming exam. A concept whose natural
 // FSRS-lite review interval (lastReviewAt + naturalInterval) would land
@@ -235,4 +242,11 @@ export const UNDERFILL_REASONS = {
   MAIN_FALLBACK_PAST_PAPER: "main-fallback-past-paper",
   EXAM_PREP_FALLBACK_HARDER: "exam-prep-fallback-harder-textbook",
   POOL_EXHAUSTED: "pool-exhausted",
+  // ─── Sheet redesign (Phase 4 / 5) ───────────────────────────────────────
+  // Main block had no not-yet-introduced concepts left on the path, so it
+  // deepened on the least-mastered introduced concepts instead.
+  MAIN_FALLBACK_DEEPEN: "main-fallback-deepen",
+  // Warm-up (mistakes) found no recently-wrong concepts, so it borrowed the
+  // most-urgent introduced (lowest-R) concepts as a gentle opener.
+  WARMUP_FALLBACK_REVISION: "warmup-fallback-urgent-revision",
 } as const;

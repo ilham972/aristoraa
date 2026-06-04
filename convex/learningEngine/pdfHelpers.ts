@@ -20,23 +20,10 @@ import {
   type CropIntegrityWithMessage,
 } from "./cropIntegrity";
 
-// Module-of-day mapping. Mirrors planner.ts so the renderer can stamp the
-// module-of-day header without depending on planner internals.
-const MODULE_BY_UTC_WEEKDAY: Record<number, string | null> = {
-  0: null,
-  1: "M1",
-  2: "M2",
-  3: "M3",
-  4: "M4",
-  5: "M5",
-  6: "M6",
-};
-
-function moduleForDateStr(dateStr: string): string | null {
-  const ms = Date.parse(`${dateStr}T00:00:00.000Z`);
-  if (Number.isNaN(ms)) return null;
-  return MODULE_BY_UTC_WEEKDAY[new Date(ms).getUTCDay()] ?? null;
-}
+// Sheet redesign (Phase 4): the weekday→module rule is gone, so the header no
+// longer stamps a "module of day". Instead `topicLabel` carries the student's
+// ACTUAL topic today — the concept name(s) the Main block is teaching — so the
+// printed sheet reads "this is YOUR next topic", not a calendar artifact.
 
 export type RenderSheetData = {
   sheet: {
@@ -47,7 +34,9 @@ export type RenderSheetData = {
     pdfStorageId: Id<"_storage"> | undefined;
   };
   student: { name: string; schoolGrade: number };
-  moduleOfDay: string | null;
+  // The student's actual topic today — Main-block concept name(s), or null
+  // when the Main block is empty (e.g. fully-introduced student deepening).
+  topicLabel: string | null;
   // Ordered question metadata for each slot. The pdf renderer walks
   // warmup → main → revision → examPrep in order, drawing one section per
   // group. `revision` is the sheet-redesign addition; old sheets have none.
@@ -231,6 +220,21 @@ export const getSheetForRender = internalQuery({
     const revision = await enrich(sheet.revisionQuestionIds ?? []);
     const examPrep = await enrich(sheet.examPrepQuestionIds);
 
+    // Topic label = distinct Main-block concept names (first two), the actual
+    // thing the student is learning today.
+    const topicNames: string[] = [];
+    const seenTopic = new Set<string>();
+    for (const q of main) {
+      for (const n of q.conceptNames) {
+        if (n && !seenTopic.has(n)) {
+          seenTopic.add(n);
+          topicNames.push(n);
+        }
+      }
+    }
+    const topicLabel =
+      topicNames.length > 0 ? topicNames.slice(0, 2).join("  ·  ") : null;
+
     // Pair each integrity row with the slot it came from so the consumer
     // can render banners that pinpoint a problem location on the sheet.
     const perQuestion: RenderSheetData["integrity"]["perQuestion"] = [];
@@ -251,7 +255,7 @@ export const getSheetForRender = internalQuery({
         pdfStorageId: sheet.pdfStorageId,
       },
       student: { name: student.name, schoolGrade: student.schoolGrade },
-      moduleOfDay: moduleForDateStr(sheet.date),
+      topicLabel,
       warmup,
       main,
       revision,

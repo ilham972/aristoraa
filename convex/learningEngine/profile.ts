@@ -343,6 +343,10 @@ export async function computeStudentProfile(
       stability: number | null;
       lastReviewAt: number | null;
       attemptCount: number;
+      // Most recent graded response ("good" | "again" | "hard") or null when
+      // never attempted. The sheet-redesign Mistakes selection (Phase 4) keys
+      // off lastResponse === "again" to re-surface recently-wrong concepts.
+      lastResponse: string | null;
     };
 
     const profile: ProfileRow[] = [];
@@ -379,6 +383,7 @@ export async function computeStudentProfile(
         stability: stateRow?.stability ?? null,
         lastReviewAt: stateRow?.lastReviewAt ?? null,
         attemptCount: stateRow?.attemptCount ?? 0,
+        lastResponse: stateRow?.lastResponse ?? null,
       });
     }
 

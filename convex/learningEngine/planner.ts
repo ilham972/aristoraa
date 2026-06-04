@@ -54,6 +54,7 @@ import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
 import { masteryFromState } from "./mastery";
+import { resolveTeachingPath } from "./path";
 import { baseStudentIdsForSlot } from "../lib/roster";
 import {
   conceptsForQuestion,
@@ -92,6 +93,7 @@ import {
   DEFAULT_RATIOS,
   EXAM_WEEK_RATIOS,
   EXAM_PREP_MASTERY_FLOOR,
+  MAIN_NEW_CONCEPTS,
   UNDERFILL_REASONS,
   EXAM_BACKSTOP_DAYS,
   NATURAL_INTERVAL_FLOOR_DAYS,
@@ -1516,6 +1518,61 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     const mainBudget = slotBudget(phaseInfo.ratios.main);
     const warmupBudget = slotBudget(phaseInfo.ratios.warmup);
 
+    // ── Sheet redesign (Phase 4): teaching-path order over in-scope concepts.
+    // The weekday→module rule is GONE. The Main block walks the teacher-curated
+    // teaching path to each student's next NOT-yet-introduced concept. Order
+    // key: (grade asc, term asc, teaching-path unit rank, natural unit, concept
+    // order). Teaching path is per (grade, term); units absent from a saved
+    // path — or when none is saved — fall back to natural curriculum order
+    // parsed from the unit id. Only candidate concepts are considered: a
+    // concept with no tagged questions can't be put on a sheet, and
+    // prereq-gapped concepts were already excluded by buildCandidatePool.
+    const unitNaturalKey = (unitId: string): number => {
+      const m = /^M(\d+)-G\d+-T\d+-(\d+)$/.exec(unitId);
+      if (!m) return 1_000_000;
+      return Number(m[1]) * 1000 + Number(m[2]);
+    };
+    const gradeTermKeys = new Set<string>();
+    for (const c of enriched) {
+      gradeTermKeys.add(`${c.concept.grade}-${c.concept.term}`);
+    }
+    const pathByGradeTerm = new Map<string, string[] | null>();
+    for (const key of Array.from(gradeTermKeys)) {
+      const [g, t] = key.split("-").map(Number);
+      pathByGradeTerm.set(key, await resolveTeachingPath(ctx, g, t));
+    }
+    const unitRank = (concept: ProfileRow): number => {
+      const path = pathByGradeTerm.get(`${concept.grade}-${concept.term}`);
+      if (path) {
+        const idx = path.indexOf(concept.unitId);
+        if (idx >= 0) return idx;
+        return 100_000 + unitNaturalKey(concept.unitId);
+      }
+      return unitNaturalKey(concept.unitId);
+    };
+    // Distinct in-scope concepts (dedupe the per-question candidate rows),
+    // ordered along the teaching path.
+    const conceptById = new Map<string, ProfileRow>();
+    for (const c of enriched) {
+      const id = c.concept.conceptId as unknown as string;
+      if (!conceptById.has(id)) conceptById.set(id, c.concept);
+    }
+    const orderedConcepts = Array.from(conceptById.values()).sort((a, b) => {
+      if (a.grade !== b.grade) return a.grade - b.grade;
+      if (a.term !== b.term) return a.term - b.term;
+      const ra = unitRank(a);
+      const rb = unitRank(b);
+      if (ra !== rb) return ra - rb;
+      return a.order - b.order;
+    });
+    // "New" = never attempted (prereq-gapped concepts are already absent).
+    const newConceptIds = new Set<string>(
+      orderedConcepts
+        .filter((c) => c.attemptCount === 0)
+        .slice(0, MAIN_NEW_CONCEPTS)
+        .map((c) => c.conceptId as unknown as string),
+    );
+
     // ── 9a. Exam-prep slot ──────────────────────────────────────────────
     // Primary: past-paper + mastery ≥ floor. In exam-week mode, ignore
     // module-of-day; out of exam week, also ignore module (past-paper
@@ -1557,14 +1614,15 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       }
     }
 
-    // ── 9b. Main slot ───────────────────────────────────────────────────
-    // Exam-week: collapse module-of-day boundary. Otherwise: today's
-    // module. Skip Sundays (todayModule === null) — main becomes empty
-    // and the warmup slot expands to absorb the budget below.
+    // ── 9b. Main slot — next NEW concept(s) on the teaching path ─────────
+    // Non-exam-week: the next not-yet-introduced concept(s) on the path. The
+    // difficulty-fit factor already favours easy questions for brand-new
+    // concepts (mastery ≈ 0 → skill ≈ 1). Exam-week keeps the existing
+    // exam-term focus (module boundaries already collapsed).
     let mainPicked: EnrichedCandidate[] = [];
-    if (mainBudget.qCap > 0 && !phaseInfo.examWeekMode && todayModule) {
-      const primary = enriched.filter(
-        (c) => c.concept.moduleId === todayModule,
+    if (mainBudget.qCap > 0 && !phaseInfo.examWeekMode) {
+      const primary = enriched.filter((c) =>
+        newConceptIds.has(c.concept.conceptId as unknown as string),
       );
       const r = pickInterleaved(
         primary,
@@ -1573,23 +1631,22 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         seen,
       );
       mainPicked = r.picked;
+      // Deepen fallback: the student has been introduced to everything on the
+      // path in scope → drill the least-mastered introduced concepts instead.
       if (mainPicked.length < mainBudget.qCap) {
-        const fallback = enriched.filter(
-          (c) =>
-            c.concept.moduleId === todayModule &&
-            c.question.source === "past-paper",
-        );
-        // pickInterleaved respects `seen`, so anything already in mainPicked
-        // is automatically excluded.
+        const deepen = enriched
+          .filter((c) => c.concept.attemptCount > 0)
+          .slice()
+          .sort((a, b) => a.concept.mastery - b.concept.mastery);
         const r2 = pickInterleaved(
-          fallback,
+          deepen,
           mainBudget.timeMin - r.usedTimeMin,
           mainBudget.qCap - mainPicked.length,
           seen,
         );
         if (r2.picked.length > 0) {
-          mainPicked.push(...(r2.picked));
-          underFillReasons.push(UNDERFILL_REASONS.MAIN_FALLBACK_PAST_PAPER);
+          mainPicked.push(...r2.picked);
+          underFillReasons.push(UNDERFILL_REASONS.MAIN_FALLBACK_DEEPEN);
         }
       }
     } else if (mainBudget.qCap > 0 && phaseInfo.examWeekMode) {
@@ -1608,55 +1665,49 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       mainPicked = r.picked;
     }
 
-    // ── 9c. Warmup slot ─────────────────────────────────────────────────
-    // Exam-week: any concept (already dedup'd against main / exam-prep).
-    // Normal: off-module SR. Sunday-style "no main" days: warmup grows to
-    // absorb the leftover budget (main was zero-allocated above).
+    // ── 9c. Warm-up slot = recent MISTAKES (easy-first) ─────────────────
+    // Founder decision (2026-06-04): the confidence Warm-up is replaced by
+    // error recovery. Lead with the student's recently-wrong concepts
+    // (lastResponse === "again"), easiest question first — a re-test of a
+    // corrected mistake is both a confidence win and the highest-value
+    // retrieval. Fallback: the most-urgent introduced concepts (lowest R) so
+    // the opener is never empty for an active student. (Full spaced-repetition
+    // Revision is a separate section, filled in Phase 5.)
     let warmupPicked: EnrichedCandidate[] = [];
-    const noMainAbsorb =
-      todayModule === null && !phaseInfo.examWeekMode
-        ? mainBudget
-        : { timeMin: 0, qCap: 0 };
-    const effectiveWarmup = {
-      timeMin: warmupBudget.timeMin + noMainAbsorb.timeMin,
-      qCap: warmupBudget.qCap + noMainAbsorb.qCap,
-    };
-    if (effectiveWarmup.qCap > 0) {
-      const primary = phaseInfo.examWeekMode
-        ? enriched
-        : enriched.filter(
-            (c) =>
-              todayModule === null
-                ? true
-                : c.concept.moduleId !== todayModule,
-          );
+    if (warmupBudget.qCap > 0) {
+      const mistakes = enriched
+        .filter((c) => c.concept.lastResponse === "again")
+        .slice()
+        .sort(
+          (a, b) =>
+            (a.question.difficulty ?? DEFAULT_QUESTION_DIFFICULTY) -
+            (b.question.difficulty ?? DEFAULT_QUESTION_DIFFICULTY),
+        );
       const r = pickInterleaved(
-        primary,
-        effectiveWarmup.timeMin,
-        effectiveWarmup.qCap,
+        mistakes,
+        warmupBudget.timeMin,
+        warmupBudget.qCap,
         seen,
       );
       warmupPicked = r.picked;
-      if (warmupPicked.length < effectiveWarmup.qCap) {
-        // Fallback: same-module review concepts (mastery ≥ 0.5).
-        const fallback = enriched.filter(
-          (c) =>
-            (todayModule === null
-              ? false
-              : c.concept.moduleId === todayModule) &&
-            c.concept.mastery >= 0.5,
-        );
+      if (warmupPicked.length < warmupBudget.qCap) {
+        const fallback = enriched
+          .filter(
+            (c) =>
+              c.concept.attemptCount > 0 &&
+              c.concept.lastResponse !== "again",
+          )
+          .slice()
+          .sort((a, b) => a.concept.R - b.concept.R);
         const r2 = pickInterleaved(
           fallback,
-          effectiveWarmup.timeMin - r.usedTimeMin,
-          effectiveWarmup.qCap - warmupPicked.length,
+          warmupBudget.timeMin - r.usedTimeMin,
+          warmupBudget.qCap - warmupPicked.length,
           seen,
         );
         if (r2.picked.length > 0) {
-          warmupPicked.push(...(r2.picked));
-          underFillReasons.push(
-            UNDERFILL_REASONS.WARMUP_FALLBACK_SAME_MODULE,
-          );
+          warmupPicked.push(...r2.picked);
+          underFillReasons.push(UNDERFILL_REASONS.WARMUP_FALLBACK_REVISION);
         }
       }
     }

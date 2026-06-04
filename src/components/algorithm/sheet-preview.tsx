@@ -76,8 +76,8 @@ type SheetQ = {
 const MODULE_IDS = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6'] as const;
 
 const SECTION_TITLES: Record<SlotName, string> = {
-  warmup: 'Warm-up · cross-module review',
-  main: 'Main block · today’s module',
+  warmup: 'Warm-up · fix your mistakes',
+  main: 'Main block · next on your path',
   revision: 'Revision · spaced repetition',
   examPrep: 'Exam prep · past papers',
 };

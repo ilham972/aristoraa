@@ -283,11 +283,13 @@ function drawSectionBanner(r: PagedRenderer, label: string): void {
     height: SECTION_BANNER_HEIGHT,
     color: COLOR_SECTION_BG,
   });
+  // Banner labels are ASCII except the Main block's, which embeds the topic
+  // (concept name, often Tamil). Pick the Tamil-aware font when needed.
   r.current.drawText(label, {
     x: MARGIN + 3 * MM,
     y: top - SECTION_BANNER_HEIGHT + 1.6 * MM,
     size: 10,
-    font: r.helvBold,
+    font: hasNonLatin(label) ? r.tamil : r.helvBold,
     color: COLOR_TEXT,
   });
   r.yCursor = top - SECTION_BANNER_HEIGHT - QUESTION_GAP;
@@ -484,11 +486,15 @@ function buildHeaderDrawer(
     // using two fonts so Helvetica covers the metadata while Noto Sans
     // Tamil handles the name. Width-measure each piece in its own font.
     const nameFont = hasNonLatin(data.student.name) ? tamil : helv;
+    // Topic label (Main-block concept names) may be Tamil. Noto Sans Tamil
+    // also carries Basic Latin, so render the whole tail with it when the
+    // topic is non-Latin; otherwise Helvetica.
     const tail = `  ·  ${data.sheet.date}  ·  ${
-      data.moduleOfDay ?? "—"
+      data.topicLabel ?? "—"
     }  ·  #${sheetIdShort}`;
+    const tailFont = hasNonLatin(tail) ? tamil : helv;
     const nameWidth = nameFont.widthOfTextAtSize(data.student.name, 9);
-    const tailWidth = helv.widthOfTextAtSize(tail, 9);
+    const tailWidth = tailFont.widthOfTextAtSize(tail, 9);
     const stripRight = A4_WIDTH - MARGIN;
     const stripY = top - 4 * MM;
     page.drawText(data.student.name, {
@@ -502,7 +508,7 @@ function buildHeaderDrawer(
       x: stripRight - tailWidth,
       y: stripY,
       size: 9,
-      font: helv,
+      font: tailFont,
       color: COLOR_TEXT,
     });
 
@@ -736,7 +742,7 @@ async function buildPDF(
   // questions don't take a number — the Lead sees a clean 1..N sheet.
   let n = 0;
   if (warm.length > 0) {
-    drawSectionBanner(renderer, "WARM-UP  ·  Cross-module review");
+    drawSectionBanner(renderer, "WARM-UP  ·  Fix & recall");
     for (const { q, img, stems } of warm) {
       n += 1;
       drawQuestion(renderer, q, n, img, stems);
@@ -745,7 +751,7 @@ async function buildPDF(
   if (main.length > 0) {
     drawSectionBanner(
       renderer,
-      `MAIN BLOCK  ·  ${data.moduleOfDay ?? "Today's module"}`,
+      `MAIN BLOCK  ·  ${data.topicLabel ?? "Today's lesson"}`,
     );
     for (const { q, img, stems } of main) {
       n += 1;

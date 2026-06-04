@@ -209,7 +209,6 @@ export function InspectorBody({
     <div className="space-y-4">
       <PhaseInfoCard
         phase={plan.phase}
-        todayModule={plan.todayModule}
         examSummary={plan.meta?.examSummary ?? []}
       />
       <BudgetCard
@@ -226,11 +225,7 @@ export function InspectorBody({
       )}
       <SlotSection
         title="Warm-up"
-        subtitle={
-          plan.phase?.examWeekMode
-            ? 'Exam week · cross-module'
-            : `Cross-module SR ${plan.todayModule ? `(off ${plan.todayModule})` : ''}`
-        }
+        subtitle="Recent mistakes · easy first"
         slot={plan.warmup}
         color="#2E86C1"
       />
@@ -239,16 +234,10 @@ export function InspectorBody({
         subtitle={
           plan.phase?.examWeekMode
             ? `Exam-term focus (T${plan.phase?.examTerm ?? '?'})`
-            : plan.todayModule
-            ? `Today's module · ${plan.todayModule}`
-            : 'No module today'
+            : 'Next new concept(s) on the path'
         }
         slot={plan.main}
-        color={
-          plan.todayModule
-            ? MODULE_COLORS[plan.todayModule] ?? '#0D9488'
-            : '#71717A'
-        }
+        color="#0D9488"
       />
       <SlotSection
         title="Revision"
@@ -293,11 +282,9 @@ function OffDayCard({ reason }: { reason: string | null }) {
 
 function PhaseInfoCard({
   phase,
-  todayModule,
   examSummary,
 }: {
   phase: PhaseShape;
-  todayModule: string | null;
   examSummary: Array<{ term: number; examDate: string; daysToExam: number }>;
 }) {
   const label = phase ? PHASE_LABEL[phase.key] ?? phase.key : 'Default';
@@ -317,9 +304,6 @@ function PhaseInfoCard({
       </div>
       <div className="flex items-baseline justify-between mb-2">
         <span className="text-sm font-bold text-foreground">{label}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {todayModule ? `${todayModule} day` : 'No-module day'}
-        </span>
       </div>
       {phase && (
         <>
