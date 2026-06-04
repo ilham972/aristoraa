@@ -45,6 +45,24 @@ export async function resolveTeachingPath(
   return row ? row.orderedUnitIds : null;
 }
 
+// ── Unit pacing (Phase 7) ─────────────────────────────────────────────────
+// Per-unit teacher estimate of new concepts per session-hour. Read by the
+// planner to size the Main block; null when the teacher hasn't set one.
+export async function resolveUnitPacing(
+  ctx: ReadCtx,
+  grade: number,
+  term: number,
+  unitId: string,
+): Promise<number | null> {
+  const row = await ctx.db
+    .query("unitPacing")
+    .withIndex("by_grade_term_unit", (q) =>
+      q.eq("grade", grade).eq("term", term).eq("unitId", unitId),
+    )
+    .unique();
+  return row ? row.conceptsPerHour : null;
+}
+
 // Resolve the calling teacher id (best-effort, for the audit field). Mirrors
 // the defensive collect()-not-unique() pattern in planner.resolveTeacherId:
 // historical bootstrap allowed duplicate teacher rows per clerk user, and
@@ -131,6 +149,51 @@ export const setTeachingPath = mutation({
   },
 });
 
+// ── WRITE — setUnitPacing (Phase 7) ───────────────────────────────────────
+// Upsert a unit's concepts-per-hour estimate. conceptsPerHour <= 0 deletes the
+// row (revert to the global default). Clamped to a sane ceiling.
+export const setUnitPacing = mutation({
+  args: {
+    grade: v.number(),
+    term: v.number(),
+    unitId: v.string(),
+    conceptsPerHour: v.number(),
+  },
+  handler: async (ctx, { grade, term, unitId, conceptsPerHour }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    if (!isUnitInScope(unitId, grade, term)) {
+      throw new Error(`Unit ${unitId} is not in G${grade} T${term}`);
+    }
+    const existing = await ctx.db
+      .query("unitPacing")
+      .withIndex("by_grade_term_unit", (q) =>
+        q.eq("grade", grade).eq("term", term).eq("unitId", unitId),
+      )
+      .unique();
+    if (conceptsPerHour <= 0) {
+      if (existing) await ctx.db.delete(existing._id);
+      return { ok: true as const, cleared: true };
+    }
+    const clamped = Math.min(10, conceptsPerHour);
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        conceptsPerHour: clamped,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("unitPacing", {
+        grade,
+        term,
+        unitId,
+        conceptsPerHour: clamped,
+        updatedAt: Date.now(),
+      });
+    }
+    return { ok: true as const, cleared: false };
+  },
+});
+
 // ── READ — listPathUnitsWithPriority ──────────────────────────────────────
 // Card metadata for the editor (Phase 2). For each unit in (grade, term):
 //   conceptCount  — number of concept-type exercises in the unit
@@ -163,12 +226,23 @@ export const listPathUnitsWithPriority = query({
       );
     }
 
+    // Per-unit pacing (Phase 7), one indexed prefix read.
+    const pacingRows = await ctx.db
+      .query("unitPacing")
+      .withIndex("by_grade_term_unit", (q) =>
+        q.eq("grade", grade).eq("term", term),
+      )
+      .collect();
+    const pacingByUnit = new Map<string, number>();
+    for (const r of pacingRows) pacingByUnit.set(r.unitId, r.conceptsPerHour);
+
     type Card = {
       unitId: string;
       unitName: string;
       conceptCount: number;
       examPriority: number;
       marks: number | null;
+      conceptsPerHour: number | null;
     };
 
     const cards: Card[] = [];
@@ -203,6 +277,7 @@ export const listPathUnitsWithPriority = query({
         conceptCount: concepts.length,
         examPriority,
         marks: anyMarks ? marks : null,
+        conceptsPerHour: pacingByUnit.get(u.unitId) ?? null,
       });
     }
 

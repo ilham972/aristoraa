@@ -13,7 +13,7 @@
 
 import { useMemo, useRef, useState, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { GripVertical, ChevronUp, ChevronDown, Check } from 'lucide-react';
+import { GripVertical, ChevronUp, ChevronDown, Check, Minus, Plus } from 'lucide-react';
 import { api } from '@/lib/convex';
 import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
 import { MODULE_COLORS } from '@/lib/types';
@@ -47,6 +47,7 @@ type Card = {
   conceptCount: number;
   examPriority: number;
   marks: number | null;
+  conceptsPerHour: number | null;
 };
 
 function GradeTermSelector({
@@ -125,6 +126,7 @@ export function PathTab({
     units,
   });
   const setPath = useMutation(api.learningEngine.path.setTeachingPath);
+  const setPacing = useMutation(api.learningEngine.path.setUnitPacing);
 
   // Local working order. Seeded from the server (already sorted by saved
   // order); re-seeded whenever the (grade, term) scope or server data changes
@@ -142,7 +144,9 @@ export function PathTab({
   // (not a ref) keeps it to once per new server order and lets it converge.
   const [seedSig, setSeedSig] = useState<string | null>(null);
   const sig = data
-    ? `${grade}-${term}:${(data as Card[]).map((c) => c.unitId).join('|')}`
+    ? `${grade}-${term}:${(data as Card[])
+        .map((c) => `${c.unitId}:${c.conceptsPerHour ?? ''}`)
+        .join('|')}`
     : null;
   if (sig !== null && sig !== seedSig && draggingId === null) {
     setSeedSig(sig);
@@ -215,6 +219,27 @@ export function PathTab({
       return cur;
     });
   };
+
+  const onChangePace = useCallback(
+    async (unitId: string, next: number) => {
+      const clamped = Math.max(0, Math.min(10, next));
+      // Optimistic update (0 = clear → auto).
+      setOrder((prev) =>
+        prev.map((c) =>
+          c.unitId === unitId
+            ? { ...c, conceptsPerHour: clamped > 0 ? clamped : null }
+            : c,
+        ),
+      );
+      try {
+        await setPacing({ grade, term, unitId, conceptsPerHour: clamped });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to set pace');
+        if (data) setOrder(data as Card[]);
+      }
+    },
+    [setPacing, grade, term, data],
+  );
 
   const onButtonMove = (idx: number, dir: -1 | 1) => {
     const to = idx + dir;
@@ -321,6 +346,35 @@ export function PathTab({
                   <div className="text-[10px] text-muted-foreground mt-1">
                     {moduleId} · {card.conceptCount} concept{card.conceptCount === 1 ? '' : 's'}
                     {card.marks !== null && <span> · {card.marks} exam marks</span>}
+                  </div>
+                  {/* Phase 7: per-unit teaching pace (new concepts / hour). */}
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <span className="text-[10px] text-muted-foreground">Pace</span>
+                    <button
+                      type="button"
+                      aria-label="Decrease pace"
+                      onClick={() =>
+                        onChangePace(card.unitId, (card.conceptsPerHour ?? 0) - 1)
+                      }
+                      className="p-0.5 rounded border border-border text-muted-foreground hover:text-foreground"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <span className="text-[10px] font-semibold text-foreground tabular-nums w-12 text-center">
+                      {card.conceptsPerHour != null
+                        ? `${card.conceptsPerHour}/hr`
+                        : 'auto'}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Increase pace"
+                      onClick={() =>
+                        onChangePace(card.unitId, (card.conceptsPerHour ?? 0) + 1)
+                      }
+                      className="p-0.5 rounded border border-border text-muted-foreground hover:text-foreground"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
                   </div>
                 </div>
 

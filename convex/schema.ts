@@ -701,6 +701,21 @@ export default defineSchema({
     updatedByTeacherId: v.optional(v.id("teachers")),
   }).index("by_grade_term", ["grade", "term"]),
 
+  // ─── Sheet redesign (Phase 7): per-unit teaching pace ────────────────────
+  // Teacher's estimate of how many NEW concepts fit per session-hour for a
+  // given unit. The Main-block planner uses this (when set) to size how many
+  // new concepts to introduce: round(conceptsPerHour * sessionHours). When
+  // absent it falls back to the global session-length heuristic
+  // (MINUTES_PER_NEW_CONCEPT). Auto-maturation from observed completion is
+  // explicitly out of scope for now (see TODO(maturity) in planner.ts).
+  unitPacing: defineTable({
+    grade: v.number(),
+    term: v.number(),
+    unitId: v.string(),
+    conceptsPerHour: v.number(),
+    updatedAt: v.number(),
+  }).index("by_grade_term_unit", ["grade", "term", "unitId"]),
+
   // ═══════════════════════════════════════════════════════════════════════
   // Phase W — WhatsApp integration (Open-WA provider, swappable to Meta API)
   // Full spec: whatsapp_integration_plan.md (gitignored). All outbound goes

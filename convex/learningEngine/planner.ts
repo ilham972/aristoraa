@@ -54,7 +54,7 @@ import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
 import { masteryFromState } from "./mastery";
-import { resolveTeachingPath } from "./path";
+import { resolveTeachingPath, resolveUnitPacing } from "./path";
 import { baseStudentIdsForSlot } from "../lib/roster";
 import {
   conceptsForQuestion,
@@ -1616,16 +1616,31 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       return a.order - b.order;
     });
     // "New" = never attempted (prereq-gapped concepts are already absent).
-    // Phase 6: how many new concepts to introduce scales with session length
-    // (a 2-hour class can take on more than a 1-hour one).
-    const mainNewConcepts = clamp(
-      Math.round(budget.sessionMinutes / MINUTES_PER_NEW_CONCEPT),
-      MAIN_NEW_CONCEPTS_MIN,
-      MAIN_NEW_CONCEPTS_MAX,
-    );
+    const orderedNew = orderedConcepts.filter((c) => c.attemptCount === 0);
+    // How many new concepts to introduce:
+    //   Phase 7: if the unit of the next new concept has a teacher-set pace,
+    //            use round(conceptsPerHour * sessionHours).
+    //   Phase 6: else scale by session length (round(min / 50)).
+    // TODO(maturity): adjust the per-unit conceptsPerHour from observed session
+    // completion over time — not built yet (Phase 7 is teacher-set only).
+    const firstNew = orderedNew[0];
+    const pacing = firstNew
+      ? await resolveUnitPacing(ctx, firstNew.grade, firstNew.term, firstNew.unitId)
+      : null;
+    const mainNewConcepts =
+      pacing !== null
+        ? clamp(
+            Math.round((pacing * budget.sessionMinutes) / 60),
+            MAIN_NEW_CONCEPTS_MIN,
+            MAIN_NEW_CONCEPTS_MAX,
+          )
+        : clamp(
+            Math.round(budget.sessionMinutes / MINUTES_PER_NEW_CONCEPT),
+            MAIN_NEW_CONCEPTS_MIN,
+            MAIN_NEW_CONCEPTS_MAX,
+          );
     const newConceptIds = new Set<string>(
-      orderedConcepts
-        .filter((c) => c.attemptCount === 0)
+      orderedNew
         .slice(0, mainNewConcepts)
         .map((c) => c.conceptId as unknown as string),
     );
