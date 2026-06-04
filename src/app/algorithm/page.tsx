@@ -4,10 +4,11 @@ import { useMemo, useState, useCallback, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import {
-  Layers, BarChart3, CalendarDays,
+  Layers, BarChart3, CalendarDays, ListOrdered,
   RefreshCw, AlertTriangle, FileText,
   ChevronDown, ChevronRight, Pencil, Plus, Trash2,
 } from 'lucide-react';
+import { PathTab } from '@/components/algorithm/path-tab';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { CURRICULUM_MODULES, getModuleById, findUnit } from '@/lib/curriculum-data';
@@ -23,11 +24,12 @@ import { toast } from 'sonner';
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
 
-type TabId = 'coverage' | 'blueprint' | 'exams';
+type TabId = 'coverage' | 'blueprint' | 'path' | 'exams';
 
 const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Layers }[] = [
   { id: 'coverage',  label: 'Coverage',  fullLabel: 'Coverage',       icon: Layers },
   { id: 'blueprint', label: 'Blueprint', fullLabel: 'Exam Blueprint', icon: BarChart3 },
+  { id: 'path',      label: 'Path',      fullLabel: 'Teaching Path',  icon: ListOrdered },
   { id: 'exams',     label: 'Exams',     fullLabel: 'Exam Calendar',  icon: CalendarDays },
 ];
 
@@ -1034,7 +1036,7 @@ function AlgorithmPageInner() {
   }, [router, searchParams]);
 
   const rawTab = searchParams.get('tab') ?? 'coverage';
-  const tab: TabId = (['coverage', 'blueprint', 'exams'] as TabId[]).includes(rawTab as TabId)
+  const tab: TabId = (['coverage', 'blueprint', 'path', 'exams'] as TabId[]).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'coverage';
 
@@ -1104,6 +1106,9 @@ function AlgorithmPageInner() {
       )}
       {tab === 'blueprint' && (
         <BlueprintTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
+      )}
+      {tab === 'path' && (
+        <PathTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
       )}
       {tab === 'exams' && <ExamCalendarTab />}
     </div>
