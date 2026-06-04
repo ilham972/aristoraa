@@ -674,6 +674,24 @@ export default defineSchema({
     at: v.number(),
   }).index("by_sheet", ["sheetId"]),
 
+  // ─── Sheet redesign (Phase 1): teacher-curated teaching path ─────────────
+  // The teacher's chosen order of units to TEACH within a (grade, term),
+  // across all six modules. Replaces the old weekday→module rule as the driver
+  // of the Main block: the planner walks each student to the next not-yet-
+  // introduced concept along this path (prereqs permitting). One row per
+  // (grade, term); orderedUnitIds holds curriculum unit ids
+  // ("M{n}-G{grade}-T{term}-{i}") in teaching order. Units missing from the
+  // saved order are appended in natural curriculum order by readers, and stale
+  // ids (units that no longer exist) are dropped at read time — so the row is
+  // always tolerant of syllabus edits. No saved row ⇒ natural curriculum order.
+  teachingPath: defineTable({
+    grade: v.number(), // 6..11
+    term: v.number(), // 1 | 2 | 3
+    orderedUnitIds: v.array(v.string()),
+    updatedAt: v.number(),
+    updatedByTeacherId: v.optional(v.id("teachers")),
+  }).index("by_grade_term", ["grade", "term"]),
+
   // ═══════════════════════════════════════════════════════════════════════
   // Phase W — WhatsApp integration (Open-WA provider, swappable to Meta API)
   // Full spec: whatsapp_integration_plan.md (gitignored). All outbound goes
