@@ -344,7 +344,9 @@ function findFactors(
   };
 }
 
-async function enrichOneQuestion(
+// Exported so the Phase-2 scoring read query (scoring.ts:getSheetForScoring)
+// reuses the exact crop/concept/marks resolution instead of re-deriving it.
+export async function enrichOneQuestion(
   ctx: QueryCtx,
   qid: Id<"questionBank">,
   snapshot: unknown,
