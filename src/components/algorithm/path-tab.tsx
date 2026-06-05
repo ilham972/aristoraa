@@ -10,15 +10,19 @@
 //   • drag the grip handle (pointer events; works with touch), or
 //   • the ▲ / ▼ buttons (precise, never mis-fires).
 // Either way, the new order persists immediately via setTeachingPath.
+//
+// Phase 4 (railway map): the exported PathTab now wraps a Path | Map sub-tab —
+// the editor below (PathEditor) and the cross-grade train map (RailwayMap).
 
 import { useMemo, useRef, useState, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { GripVertical, ChevronUp, ChevronDown, Check, Minus, Plus } from 'lucide-react';
+import { GripVertical, ChevronUp, ChevronDown, Check, Minus, Plus, ListOrdered, Train } from 'lucide-react';
 import { api } from '@/lib/convex';
 import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
 import { MODULE_COLORS } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { RailwayMap } from './railway-map';
 
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
@@ -99,7 +103,7 @@ function GradeTermSelector({
   );
 }
 
-export function PathTab({
+function PathEditor({
   grade,
   term,
   setGrade,
@@ -404,6 +408,48 @@ export function PathTab({
           })}
         </ol>
       )}
+    </>
+  );
+}
+
+// ── PathTab wrapper: Path | Map sub-tab (Phase 4) ───────────────────────────
+// The founder asked for the railway map to live as a sub-tab inside the Path
+// tab. "Path" is the teaching-order editor; "Map" is the cross-grade train map.
+export function PathTab(props: {
+  grade: number;
+  term: 1 | 2 | 3;
+  setGrade: (g: number) => void;
+  setTerm: (t: number) => void;
+}) {
+  const [sub, setSub] = useState<'path' | 'map'>('path');
+  return (
+    <>
+      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4">
+        <button
+          onClick={() => setSub('path')}
+          className={cn(
+            'flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all',
+            sub === 'path'
+              ? 'bg-card text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <ListOrdered className="w-3.5 h-3.5" /> Path
+        </button>
+        <button
+          onClick={() => setSub('map')}
+          className={cn(
+            'flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all',
+            sub === 'map'
+              ? 'bg-card text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Train className="w-3.5 h-3.5" /> Map
+        </button>
+      </div>
+
+      {sub === 'path' ? <PathEditor {...props} /> : <RailwayMap />}
     </>
   );
 }
