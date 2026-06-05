@@ -24,6 +24,13 @@ import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { applyAttempt } from "./memory";
 import { enrichOneQuestion, type SheetPreviewQuestion } from "./sheets";
+import {
+  BASE_POINTS,
+  SECTION_MULT,
+  STREAK_STEP,
+  STREAK_CAP,
+  diffMult,
+} from "./config";
 
 // Marks the drawer can write. "unmarked" deletes the key (back to neutral).
 const VALID_MARKS = new Set(["correct", "wrong", "skipped", "unmarked"]);
@@ -101,6 +108,70 @@ export const finalizeSheetScoring = mutation({
       committed[questionId] = mark;
     }
 
+    // ── Part B: points (additive, dual-tracked) ─────────────────────────────
+    // Recomputed wholesale from the sheet's marks every finalize, then upserted
+    // by sheetId into sessionPoints. Both the legacy triangular points and the
+    // new difficulty×section weighted points are stored side by side for the
+    // founder's parallel-run comparison — the live board is untouched.
+    //
+    // Walk every section in print order (warmup→main→revision→examPrep) so the
+    // streak bonus reflects the consecutive-correct run on the printed sheet.
+    // Stale results keys (questions removed from the sheet after marking) are
+    // naturally ignored because we iterate the section arrays, not results.
+    const orderedSections: Array<
+      [keyof typeof SECTION_MULT, Id<"questionBank">[]]
+    > = [
+      ["warmup", sheet.warmupQuestionIds],
+      ["main", sheet.mainQuestionIds],
+      ["revision", sheet.revisionQuestionIds ?? []],
+      ["examPrep", sheet.examPrepQuestionIds],
+    ];
+
+    let correctCount = 0;
+    let totalQuestions = 0;
+    let pointsNew = 0;
+    let streak = 0;
+    for (const [section, ids] of orderedSections) {
+      for (const qid of ids) {
+        totalQuestions += 1;
+        const mark = results[qid as unknown as string];
+        if (mark === "correct") {
+          correctCount += 1;
+          streak += 1;
+          const q = await ctx.db.get(qid);
+          const d = q?.difficulty ?? 3;
+          const base = BASE_POINTS * diffMult(d) * SECTION_MULT[section];
+          const bonus =
+            streak > 2 ? Math.min(STREAK_STEP * (streak - 2), STREAK_CAP) : 0;
+          pointsNew += base + bonus;
+        } else {
+          streak = 0;
+        }
+      }
+    }
+    const pointsOld = (5 * correctCount * (correctCount + 1)) / 2;
+
+    const existingPoints = await ctx.db
+      .query("sessionPoints")
+      .withIndex("by_sheet", (q) => q.eq("sheetId", args.sheetId))
+      .unique();
+    const pointsRow = {
+      studentId: sheet.studentId,
+      sheetId: args.sheetId,
+      date: sheet.date,
+      slotId: sheet.slotId,
+      correctCount,
+      totalQuestions,
+      pointsOld,
+      pointsNew,
+      computedAt: Date.now(),
+    };
+    if (existingPoints) {
+      await ctx.db.patch(existingPoints._id, pointsRow);
+    } else {
+      await ctx.db.insert("sessionPoints", pointsRow);
+    }
+
     await ctx.db.patch(args.sheetId, {
       committedMarks: committed,
       scoredAt: Date.now(),
@@ -108,7 +179,7 @@ export const finalizeSheetScoring = mutation({
       completedAt: Date.now(),
     });
 
-    return { appliedAttempts };
+    return { appliedAttempts, correctCount, totalQuestions, pointsOld, pointsNew };
   },
 });
 
