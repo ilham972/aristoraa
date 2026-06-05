@@ -760,6 +760,24 @@ export default defineSchema({
     .index("by_target_grade_term", ["targetGrade", "targetTerm"])
     .index("by_level", ["level"]),
 
+  // ─── Phase 3 (cohort leagues): promotion audit log ───────────────────────
+  // Append-only record of every track promotion. A row is written when a
+  // student completes their track (all units cleared) and a teacher promotes
+  // them into track.mergesIntoTrackId, OR when a teacher manually reassigns a
+  // track. Drives the Phase 4 parent-share "promotion history" line and the
+  // Leagues board audit. Never mutated after insert.
+  //   reason: "completed-track" | "manual"
+  promotions: defineTable({
+    studentId: v.id("students"),
+    fromTrackId: v.optional(v.id("tracks")),
+    toTrackId: v.id("tracks"),
+    reason: v.string(),                 // "completed-track" | "manual"
+    byTeacherId: v.optional(v.id("teachers")),
+    at: v.number(),
+  })
+    .index("by_student", ["studentId"])
+    .index("by_track", ["toTrackId"]),
+
   // ─── Sheet redesign (Phase 7): per-unit teaching pace ────────────────────
   // Teacher's estimate of how many NEW concepts fit per session-hour for a
   // given unit. The Main-block planner uses this (when set) to size how many

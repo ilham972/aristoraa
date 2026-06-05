@@ -304,3 +304,12 @@ export const STREAK_CAP = 5;
 export function diffMult(d: number): number {
   return 0.6 + 0.2 * (d || 3);
 }
+
+// ─── Phase 3 (cohort leagues): public-board source switch ───────────────────
+// Which board is the PRIMARY public leaderboard the app links to:
+//   "legacy" — today's grade-ranked /leaderboard (live, untouched).
+//   "cohort" — the new within-track /leaderboard/leagues board (Phase 3).
+// The switch is BUILT now but stays "legacy" — the founder flips it to "cohort"
+// after the parallel-run, the same way LEADERBOARD points/board cutovers are
+// founder-gated. Navigation reads this; the /leaderboard page itself never does.
+export const LEADERBOARD_PRIMARY: "legacy" | "cohort" = "legacy";
