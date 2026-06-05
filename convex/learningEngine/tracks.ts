@@ -7,6 +7,7 @@ import { v } from "convex/values";
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { resolveTeachingPath } from "./path";
+import { TRACK_SKIP_THRESHOLD } from "./config";
 
 type QueryCtx = GenericQueryCtx<DataModel>;
 type MutationCtx = GenericMutationCtx<DataModel>;
@@ -211,5 +212,82 @@ export const backfillStudentTracks = mutation({
       assigned++;
     }
     return { ok: true as const, assigned };
+  },
+});
+
+// ── Remedial-track builder candidate query (Task 4) ────────────────────────
+
+// Builder read query: for a remedial track aiming at targetGrade, list units
+// from startGrade..targetGrade with their importance toward the target exam,
+// pre-flagging high-importance units for inclusion. Client supplies the unit
+// list per (grade,term) (Convex can't read curriculum-data.ts).
+export const listCandidateUnitsForTrack = query({
+  args: {
+    targetGrade: v.number(),
+    units: v.array(
+      v.object({
+        unitId: v.string(),
+        unitName: v.string(),
+        grade: v.number(),
+        term: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, { targetGrade, units }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    // Importance is stored per (grade, term, concept). For each candidate unit
+    // we sum its concepts' importance scoped to the TARGET grade's blueprint
+    // for that unit's term (cumulative exams tag lower-grade concepts into the
+    // target term). Fall back to the unit's own (grade,term) importance.
+    const out: Array<{
+      unitId: string;
+      unitName: string;
+      grade: number;
+      term: number;
+      importance: number;
+      suggestedInclude: boolean;
+    }> = [];
+
+    for (const u of units) {
+      const conceptRows = await ctx.db
+        .query("exercises")
+        .withIndex("by_unit", (q) => q.eq("unitId", u.unitId))
+        .collect();
+      const concepts = conceptRows.filter((r) => r.type === "concept");
+
+      let importance = 0;
+      for (const c of concepts) {
+        // Prefer importance computed for the target grade; else the unit's own grade.
+        const targetRow = await ctx.db
+          .query("conceptImportance")
+          .withIndex("by_grade_term_concept", (q) =>
+            q.eq("grade", targetGrade).eq("term", u.term).eq("conceptExerciseId", c._id),
+          )
+          .unique();
+        const ownRow = targetRow
+          ? null
+          : await ctx.db
+              .query("conceptImportance")
+              .withIndex("by_grade_term_concept", (q) =>
+                q.eq("grade", u.grade).eq("term", u.term).eq("conceptExerciseId", c._id),
+              )
+              .unique();
+        importance += (targetRow ?? ownRow)?.importance ?? 0;
+      }
+
+      out.push({
+        unitId: u.unitId,
+        unitName: u.unitName,
+        grade: u.grade,
+        term: u.term,
+        importance,
+        // Target-grade's own units always suggested; lower-grade units only if
+        // they carry importance above the skip threshold.
+        suggestedInclude: u.grade === targetGrade || importance >= TRACK_SKIP_THRESHOLD,
+      });
+    }
+    return out;
   },
 });

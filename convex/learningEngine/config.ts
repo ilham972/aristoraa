@@ -267,3 +267,7 @@ export const UNDERFILL_REASONS = {
   // most-urgent introduced (lowest-R) concepts as a gentle opener.
   WARMUP_FALLBACK_REVISION: "warmup-fallback-urgent-revision",
 } as const;
+
+// Track builder: units whose summed concept-importance for the TARGET exam is
+// below this are proposed for skipping in a remedial track (e.g. "time" unit).
+export const TRACK_SKIP_THRESHOLD = 0.01;
