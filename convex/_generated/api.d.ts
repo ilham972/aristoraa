@@ -29,6 +29,7 @@ import type * as learningEngine_derivedConcepts from "../learningEngine/derivedC
 import type * as learningEngine_difficultyTab from "../learningEngine/difficultyTab.js";
 import type * as learningEngine_importance from "../learningEngine/importance.js";
 import type * as learningEngine_leagues from "../learningEngine/leagues.js";
+import type * as learningEngine_map from "../learningEngine/map.js";
 import type * as learningEngine_mastery from "../learningEngine/mastery.js";
 import type * as learningEngine_memory from "../learningEngine/memory.js";
 import type * as learningEngine_path from "../learningEngine/path.js";
@@ -116,6 +117,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/difficultyTab": typeof learningEngine_difficultyTab;
   "learningEngine/importance": typeof learningEngine_importance;
   "learningEngine/leagues": typeof learningEngine_leagues;
+  "learningEngine/map": typeof learningEngine_map;
   "learningEngine/mastery": typeof learningEngine_mastery;
   "learningEngine/memory": typeof learningEngine_memory;
   "learningEngine/path": typeof learningEngine_path;
