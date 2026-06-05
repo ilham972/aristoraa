@@ -55,6 +55,7 @@ import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
 import { masteryFromState } from "./mastery";
 import { resolveTeachingPath, resolveUnitPacing } from "./path";
+import { resolveTrackForStudent } from "./tracks";
 import { baseStudentIdsForSlot } from "../lib/roster";
 import {
   conceptsForQuestion,
@@ -1449,12 +1450,25 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     });
     if (!pool) return null;
 
+    // ── 3b. Track resolution (Phase 1 — track model) ────────────────────
+    // When the student rides a track, the Main block walks the track's
+    // orderedUnitIds and the budget grade/term come from the track's target
+    // exam. trackUnitSet restricts NEW-concept Main candidates; trackRank
+    // gives the global ordering. When null, behaviour is unchanged (legacy
+    // schoolGrade + per-(grade,term) teachingPath path).
+    const track = await resolveTrackForStudent(ctx, student);
+    const trackUnitSet = track ? new Set(track.orderedUnitIds) : null;
+    const trackRank = track
+      ? new Map(track.orderedUnitIds.map((id, i) => [id, i] as const))
+      : null;
+    const budgetGrade = track ? track.targetGrade : pool.studentSchoolGrade;
+
     // ── 4. Exam calendar lookups (for both phase + scoring proximity) ───
     const poolAsOfMs = pool.asOfMs;
     const examRows = await ctx.db
       .query("examCalendar")
       .withIndex("by_grade", (q) =>
-        q.eq("grade", pool.studentSchoolGrade),
+        q.eq("grade", budgetGrade),
       )
       .collect();
     const asOfYmd = ymdFromMs(poolAsOfMs);
@@ -1514,7 +1528,7 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     // ── 7. Phase-of-term + ratios ───────────────────────────────────────
     const phaseInfo = await determinePhase(
       ctx,
-      pool.studentSchoolGrade,
+      budgetGrade,
       args.dateStr,
     );
 
@@ -1608,6 +1622,15 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       if (!conceptById.has(id)) conceptById.set(id, c.concept);
     }
     const orderedConcepts = Array.from(conceptById.values()).sort((a, b) => {
+      // Track ordering (Phase 1): when the student rides a track, a single
+      // global rank from the track's orderedUnitIds replaces the
+      // per-(grade,term) teaching-path key. Units off the track sort last.
+      if (trackRank) {
+        const ta = trackRank.get(a.unitId) ?? Number.POSITIVE_INFINITY;
+        const tb = trackRank.get(b.unitId) ?? Number.POSITIVE_INFINITY;
+        if (ta !== tb) return ta - tb;
+        return a.order - b.order;
+      }
       if (a.grade !== b.grade) return a.grade - b.grade;
       if (a.term !== b.term) return a.term - b.term;
       const ra = unitRank(a);
@@ -1616,7 +1639,14 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       return a.order - b.order;
     });
     // "New" = never attempted (prereq-gapped concepts are already absent).
-    const orderedNew = orderedConcepts.filter((c) => c.attemptCount === 0);
+    // Track restriction (Phase 1): new-concept Main candidates must lie on the
+    // track. No-op when the student has no track. Revision/warm-up/exam-prep
+    // pools draw from `enriched` directly and are deliberately NOT restricted.
+    const orderedNew = orderedConcepts.filter(
+      (c) =>
+        c.attemptCount === 0 &&
+        (trackUnitSet === null || trackUnitSet.has(c.unitId)),
+    );
     // How many new concepts to introduce:
     //   Phase 7: if the unit of the next new concept has a teacher-set pace,
     //            use round(conceptsPerHour * sessionHours).
