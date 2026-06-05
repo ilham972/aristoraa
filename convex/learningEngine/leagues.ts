@@ -149,6 +149,7 @@ export async function trackProgressForStudent(
 export type LeagueStudent = {
   studentId: Id<"students">;
   name: string;
+  centerId: Id<"centers"> | null; // lets the board filter by centre client-side (mirrors /leaderboard)
   pointsNew: number;
   pointsOld: number;
   clearedUnits: number;
@@ -249,6 +250,7 @@ async function computeCohort(
     league.students.push({
       studentId: s._id,
       name: s.name,
+      centerId: s.centerId ?? null,
       pointsNew: pts.pointsNew,
       pointsOld: pts.pointsOld,
       clearedUnits: progress?.clearedUnits ?? 0,
