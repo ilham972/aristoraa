@@ -37,6 +37,7 @@ import type * as learningEngine_planner from "../learningEngine/planner.js";
 import type * as learningEngine_profile from "../learningEngine/profile.js";
 import type * as learningEngine_sheets from "../learningEngine/sheets.js";
 import type * as learningEngine_studentDashboard from "../learningEngine/studentDashboard.js";
+import type * as learningEngine_tracks from "../learningEngine/tracks.js";
 import type * as lib_naming from "../lib/naming.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_roster from "../lib/roster.js";
@@ -121,6 +122,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/profile": typeof learningEngine_profile;
   "learningEngine/sheets": typeof learningEngine_sheets;
   "learningEngine/studentDashboard": typeof learningEngine_studentDashboard;
+  "learningEngine/tracks": typeof learningEngine_tracks;
   "lib/naming": typeof lib_naming;
   "lib/phone": typeof lib_phone;
   "lib/roster": typeof lib_roster;
