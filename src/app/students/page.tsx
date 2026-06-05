@@ -15,6 +15,7 @@ import { CURRICULUM_MODULES, getOrderedUnits } from '@/lib/curriculum-data';
 import { getTotalScoreable } from '@/lib/sub-questions';
 import { resolveAssignedGrades, hasModuleOverride } from '@/lib/student-grades';
 import { GradeAssignmentDialog } from '@/components/grade-assignment-dialog';
+import { TrackPicker } from '@/components/algorithm/track-picker';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import type { Id } from '@/lib/convex';
@@ -28,6 +29,7 @@ type StudentDoc = {
   centerId?: Id<'centers'>;
   assignedGrades?: number[];
   assignedGradesByModule?: Record<string, number[]>;
+  trackId?: Id<'tracks'>;
 };
 
 export default function StudentsPage() {
@@ -296,6 +298,12 @@ export default function StudentsPage() {
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   </div>
+                </div>
+
+                {/* Track assignment (Phase 1 — track model) */}
+                <div className="flex items-center gap-2 mb-2.5">
+                  <span className="text-[10px] text-muted-foreground shrink-0">Track</span>
+                  <TrackPicker studentId={student._id} trackId={student.trackId} />
                 </div>
 
                 {/* Per-module progress chips: 2-column grid */}
