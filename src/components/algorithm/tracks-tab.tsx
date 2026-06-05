@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { Route, Sprout, Plus, Check } from 'lucide-react';
+import { Route, Sprout, Plus, Check, Users } from 'lucide-react';
 import { api } from '@/lib/convex';
 import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
 import { toast } from 'sonner';
@@ -25,9 +25,11 @@ function naturalUnits(grade: number, term: number) {
 export function TracksTab() {
   const tracks = useQuery(api.learningEngine.tracks.listTracks);
   const seed = useMutation(api.learningEngine.tracks.seedOnLevelTracks);
+  const backfill = useMutation(api.learningEngine.tracks.backfillStudentTracks);
   const createTrack = useMutation(api.learningEngine.tracks.createTrack);
 
   const [seeding, setSeeding] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [targetGrade, setTargetGrade] = useState(9);
   const [startGrade, setStartGrade] = useState(7);
@@ -66,6 +68,24 @@ export function TracksTab() {
       setSeeding(false);
     }
   }, [seed]);
+
+  const onBackfill = useCallback(async () => {
+    const ok = window.confirm(
+      'Assign every plain on-level student (no track yet, no grade downgrade) to their grade’s On-level track? Downgraded/custom-grade students are skipped and stay on legacy. Seed on-level tracks first if you haven’t.',
+    );
+    if (!ok) return;
+    setBackfilling(true);
+    try {
+      const res = await backfill({});
+      toast.success(
+        `Backfill done — ${res.assigned} assigned, ${res.skippedCustomGrade} downgraded skipped, ${res.skippedAlreadyAssigned} already had a track, ${res.skippedNoTrack} no on-level track`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Backfill failed');
+    } finally {
+      setBackfilling(false);
+    }
+  }, [backfill]);
 
   // Seed `included` from suggestions when candidates load.
   const candSig = candidates?.map((c) => `${c.unitId}:${c.suggestedInclude ? 1 : 0}`).join('|') ?? '';
@@ -116,6 +136,15 @@ export function TracksTab() {
           <Plus className="w-3.5 h-3.5" /> New remedial track
         </button>
       </div>
+
+      <button
+        onClick={onBackfill}
+        disabled={backfilling}
+        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-border text-xs font-semibold text-foreground disabled:opacity-50"
+      >
+        <Users className="w-3.5 h-3.5" />
+        {backfilling ? 'Assigning…' : 'Backfill students → on-level tracks'}
+      </button>
 
       {builderOpen && (
         <div className="rounded-xl border border-border bg-card p-3 space-y-3">
