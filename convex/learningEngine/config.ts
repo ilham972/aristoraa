@@ -271,3 +271,36 @@ export const UNDERFILL_REASONS = {
 // Track builder: units whose summed concept-importance for the TARGET exam is
 // below this are proposed for skipping in a remedial track (e.g. "time" unit).
 export const TRACK_SKIP_THRESHOLD = 0.01;
+
+// ─── Phase 2 (sheet-synced scoring): difficulty × section weighted points ──
+// Computed from the SAME sheet marks as the legacy triangular points and
+// stored alongside them in `sessionPoints` for a parallel-run comparison —
+// the public board is NOT changed by this phase (founder-gated cutover).
+//
+// pointsNew = Σ over correct questions of
+//   BASE_POINTS · diffMult(difficulty) · SECTION_MULT[section] + streakBonus
+// where streakBonus = min(STREAK_STEP·(streak-2), STREAK_CAP) once the
+// in-session consecutive-correct run passes 2 (resets to 0 on any non-correct).
+export const BASE_POINTS = 5;
+
+// Section weighting. Revision and Exam-prep are worth more (harder, higher
+// stakes); Warm-up/mistake is NOT bonused so deliberately failing to farm a
+// fat warm-up next session earns nothing extra.
+export const SECTION_MULT = {
+  warmup: 1.0,
+  main: 1.0,
+  revision: 1.3,
+  examPrep: 1.5,
+} as const;
+
+// Streak bonus: +STREAK_STEP per consecutive correct beyond the 2nd in a
+// session, capped at STREAK_CAP per question.
+export const STREAK_STEP = 1;
+export const STREAK_CAP = 5;
+
+// Difficulty multiplier on the 1..5 scale: d=1 → 0.8, d=3 → 1.2, d=5 → 1.6.
+// Unknown/zero difficulty falls back to 3 (the midpoint), matching the
+// engine's weightFor() convention in memory.ts.
+export function diffMult(d: number): number {
+  return 0.6 + 0.2 * (d || 3);
+}
