@@ -1,153 +1,156 @@
-# Phase 2 — Sheet-Synced Scoring + Difficulty/Section Points (Design Spec)
+# Phase 2 — Sheet-Synced Scoring + Points (Single-Agent Execution Brief)
 
-> **Status:** Drafted by orchestrator 2026-06-05, pending founder confirm on the flagged calls in §7.
-> **Audience:** the build agent(s) + orchestrator. Read this whole file, then `sheet_scoring_plan.md` (repo root — the detailed System B build spec this wraps), then `algorithm_plan.md` §H.1.
-> **Prereq:** Phase 1 (tracks) is code-complete + deployed to prod inert. Phase 2 does NOT depend on the Phase 1 *migration* being run — scoring works whether or not students ride tracks.
+> **This file is a complete, self-contained brief for ONE agent to build all of Phase 2 in a single pass.** Everything specified here is **purely additive** — it must NOT change anything a student or parent currently sees. Read this whole file, then `sheet_scoring_plan.md` (repo root, the detailed System-B reference). Build Part A then Part B. Report to the orchestrator when done; do NOT deploy or run mutations.
 
 ---
 
-## 0. Why this exists + the honest staging
+## 0. Agent execution rules (read first)
 
-The learning engine is **blind today**: sheets are generated, but per-question correct/wrong results never reach `memoryState`, because the live Score tab writes the legacy `entries` table and never calls `recordAttempt`. So the sheet's **Revision** and **Warm-up (mistakes)** sections stay empty — the loop is open. Phase 2 closes it, and rebuilds points on top.
-
-Phase 2 splits into two stages by risk. **The agent builds Stage 2a now. Stage 2b is specified here for context but is founder-gated and gets confirmed before build.**
-
-| Stage | What | Risk | Touches |
-|---|---|---|---|
-| **2a — Engine scoring loop** | Score a sheet once → `recordAttempt` per question → engine fills Revision/Mistakes. Idempotent finalize. New sheet-scoped scoring surface. | **Low** — purely additive; does not touch the live `entries` points/leaderboard/position. | new functions + UI only |
-| **2b — Points migration** | Compute difficulty+section points from the same sheet marks; new `sessionPoints` record; migrate the leaderboard data source; parallel-run old vs new for one term; retire the legacy Score tab. | **High** — touches the live parent-facing leaderboard + the `entries`-derived "position". | leaderboard, scoring tab, position |
-
-**2a is the unblocker and is safe. 2b is the motivator change and must be deliberate.** Do not collapse them.
+- **Branch:** work in your own git worktree off `feat/track-model-phase1` (it has this spec and the deployed Phase-1 code; Phase 2 is additive on top). One commit per numbered task, messages `feat(score-X): …`.
+- **Convex:** the only deployment is prod `loris` (rapid-loris-309). Use it for `npx convex codegen` + typecheck ONLY. **Do NOT run any mutation, do NOT `convex deploy`, do NOT `next build`-deploy.** You write code; the founder runs data + deploys.
+- **Verify after every task:** `npx tsc --noEmit -p tsconfig.json` AND `npx tsc --noEmit -p convex/tsconfig.json` both exit 0. No test framework exists — do not add one.
+- **Hard boundary (the safety of this whole build):** you may CREATE new tables, functions, and UI. You may NOT modify the existing public leaderboard behaviour, the legacy `entries` Score tab, `src/lib/scoring.ts`'s existing exports, or the position dialog. New points are computed and shown only in a NEW admin-only surface. See §7.
 
 ---
 
-## 1. Locked decisions (from the founder brainstorm)
+## 1. Context — why this exists
 
-1. **Score once, on the sheet, per SESSION** (not per day — unequal weekly class counts). Scoring is a session ritual logged like attendance; the Sheets tab is the scoring surface. (Full effect lands in 2b; 2a introduces the sheet-scoped scoring surface.)
-2. **Points = difficulty × section weighted** (Stage 2b). Section multipliers: Main 1.0, Revision 1.3, Exam-prep 1.5, **Warm-up/mistake 1.0** (NOT bonused — prevents deliberate-fail farming). Difficulty multiplier reuses the engine's `weight(q) = 0.6 + 0.2·d`. Plus a light per-session streak bonus.
-3. **Parallel-run** old vs new points for one term before switching the public leaderboard (founder's de-risk call). Both computed from the SAME sheet marks — no double entry.
-4. **Idempotent corrections:** re-marking a question must not double-apply engine updates.
-5. Mobile-first, dark-navy + teal. Dual typecheck. App LIVE on prod `loris` — additive only, founder-gated cutovers.
+The learning engine is **blind**: sheets are generated, but per-question results never reach `memoryState`, because the live Score tab writes the legacy `entries` table and never calls `recordAttempt`. So the sheet's **Revision** and **Warm-up (mistakes)** sections stay empty. Part A closes that loop. Part B computes the new difficulty+section points from the same sheet marks, stored alongside the old points for a future parallel-run comparison — without disturbing the live motivator.
 
 ---
 
-## 2. Stage 2a — Engine scoring loop (BUILD THIS)
+## 2. Locked decisions (all resolved — do not re-litigate)
 
-This stage IS `sheet_scoring_plan.md` "System B". Follow that file's Phases B1–B4 in full. This section captures the decisions + deltas; do not re-derive what's already there.
+1. Score once, on the sheet, per **session**. The Sheets tab is the scoring surface.
+2. Points = **difficulty × section weighted**. `BASE_POINTS = 5`. `diffMult(d) = 0.6 + 0.2·d` (d∈1..5). Section multipliers: **Main 1.0, Revision 1.3, Exam-prep 1.5, Warm-up/mistake 1.0** (mistake NOT bonused — prevents deliberate-fail farming). Streak bonus: `+1` per consecutive correct beyond the 2nd in a session, capped at `+5`/session. Unknown difficulty → d=3.
+3. Both old (triangular) and new (weighted) points are computed from the SAME sheet marks and stored — **no double entry, no public change yet**.
+4. Finalize is **idempotent**: re-marking only re-applies the changed question.
+5. Mobile-first, dark-navy + teal. Additive only.
 
-### 2a.1 Schema (additive on `generatedSheets`)
+---
+
+## 3. Part A — Engine scoring loop (build first)
+
+Implements `sheet_scoring_plan.md` System B. Follow that file's B1–B4 for full detail; the deltas/decisions are here.
+
+### A1. Schema (additive on `generatedSheets`, `convex/schema.ts`)
 ```ts
-// generatedSheets — all optional, backward compatible:
 results: v.optional(v.record(v.string(), v.string())),        // questionId(string) -> "correct"|"wrong"|"skipped"
 committedMarks: v.optional(v.record(v.string(), v.string())), // last-applied mark per question (idempotency)
 scoredAt: v.optional(v.number()),
 ```
 
-### 2a.2 Backend (`convex/learningEngine/scoring.ts`)
-- `setSheetMark(sheetId, questionId, mark)` — live mark; patches `results`; **no engine write** (idempotency lives at finalize).
-- `finalizeSheetScoring(sheetId)` — for each question whose mark **changed** vs `committedMarks`, call `applyAttempt` (from `memory.ts`) with `response = correct→"good" | wrong→"again" | skipped→skip`, `occurredAt = sheet.date@12:00Z`, `source:"sheet-score"`; update `committedMarks`; set `status:"completed"`. Re-finalizing an unchanged sheet is a no-op; correcting one mark commits only that delta.
-- `getSheetForScoring(sheetId)` — reuse `pdfHelpers.getSheetForRender` shape: per section (warmup/main/revision/examPrep) the questionId, cropBox, pageImageUrl, conceptNames, marks tag, plus the current mark from `results`; + student, date, status, short id.
+### A2. Backend — `convex/learningEngine/scoring.ts`
+- `setSheetMark(sheetId, questionId, mark)` — patches `results[questionId]` (delete on "unmarked"). **No engine write.**
+- `finalizeSheetScoring(sheetId)` — for each question whose mark **differs from** `committedMarks`: map `correct→"good" | wrong→"again" | skipped→skip`; for non-skip call `applyAttempt(ctx, {studentId: sheet.studentId, questionId, response, occurredAt: Date.parse(sheet.date+"T12:00:00.000Z"), source:"sheet-score"})` (from `memory.ts`); set `committedMarks[questionId]=mark`. Then set `status:"completed"`, `scoredAt:Date.now()`, plus the Part B points (B2). Idempotent: unchanged marks do nothing.
+- `getSheetForScoring(sheetId)` — reuse `pdfHelpers.getSheetForRender` shape: per section (warmup/main/revision/examPrep) → questionId, cropBox, pageImageUrl, conceptNames, marksAvailable, questionNumberInPaper, + current mark from `results`; + student, date, status, short id.
 
-### 2a.3 UI — sheet-scoped scoring surface
-- New full-screen drawer opened from a **"Score" action on each student row in the Sheets tab** (`src/components/session/sheets-tab.tsx`), bound to one `generatedSheets._id` (solves "scored the wrong sheet" by construction).
-- Four sections in order (Warm-up · Main · Revision · Exam-prep); each question row: number, crop image (reuse `CropThumbnail` from `sheet-preview.tsx`), concept names, marks/paper tag.
+### A3. UI — sheet-scoped scoring drawer
+- A **"Score" action per student row in `src/components/session/sheets-tab.tsx`**, opening a full-screen drawer bound to one `generatedSheets._id`.
+- Four sections in order (Warm-up · Main · Revision · Exam-prep); each question row: number, crop image (reuse `CropThumbnail` from `src/components/algorithm/sheet-preview.tsx`), concept names, marks/paper tag.
 - Tap cycles unmarked → correct → wrong → skipped → unmarked; each change calls `setSheetMark` (live-save).
-- Sticky footer: correct/wrong/skipped tallies + "Finalize & record" → `finalizeSheetScoring` → toast + mark complete. Disabled until ≥1 mark. Re-open + re-finalize allowed (only deltas re-commit).
-
-### 2a.4 Interim reality (acknowledged, not a bug)
-During 2a the legacy `entries` Score tab **keeps running untouched** (it still powers points/leaderboard/position). So a teacher who wants both engine data and points scores in two places for now. That double-entry is **resolved in 2b**, not here. Do NOT touch `entries`, points, or the leaderboard in 2a.
-
-### 2a.5 Edge cases
-- Question tagged to no concept (some past-paper crops) → `applyAttempt` no-ops on concepts; optionally show "won't affect mastery" hint.
-- Question removed from the sheet after scoring → ignore stale `results` keys not in any section array.
-- Re-open completed sheet, flip one mark, finalize → exactly one new `attemptLog` row.
-
-### 2a.6 Verification (the loop closes — this is the proof)
-1. Score a sheet (some correct, some wrong) → `setSheetMark` persists; reload keeps marks.
-2. Finalize → `memoryState` updates for tagged concepts; `attemptLog` has `source:"sheet-score"` rows; sheet → `completed`.
-3. **Generate that student's NEXT sheet → the wrong-marked concepts now appear in Warm-up (mistakes); previously-correct concepts begin appearing in Revision as they age.** Loop closed end-to-end.
-4. Re-open, flip one mark, finalize → exactly one new `attemptLog` row (idempotency holds).
-5. Legacy `entries` points/leaderboard untouched. Both typechecks pass.
+- Sticky footer: correct/wrong/skipped tallies + "Finalize & record" → `finalizeSheetScoring` → toast + complete. Disabled until ≥1 mark. Re-open + re-finalize allowed (only deltas re-commit).
 
 ---
 
-## 3. Stage 2b — Points migration (SPEC ONLY; founder-gated, confirm §7 first)
+## 4. Part B — Points (additive; computed + stored + admin-only view)
 
-### 3.1 Points formula (per correct answer on a finalized sheet)
+### B1. Config — `convex/learningEngine/config.ts` (append)
+```ts
+export const BASE_POINTS = 5;
+export const SECTION_MULT = { warmup: 1.0, main: 1.0, revision: 1.3, examPrep: 1.5 } as const;
+export const STREAK_STEP = 1;
+export const STREAK_CAP = 5;
+export function diffMult(d: number): number { return 0.6 + 0.2 * (d || 3); }
 ```
-BASE_POINTS = 5
-diffMult(d)   = 0.6 + 0.2 * d            # d in 1..5 → 0.8 .. 1.6  (mirrors engine weight)
-sectionMult   = { main:1.0, revision:1.3, examPrep:1.5, warmup:1.0 }
-points(q)     = BASE_POINTS * diffMult(d) * sectionMult[section]
-# streak bonus: +STREAK_STEP per consecutive correct beyond the 2nd in a session,
-#   capped at STREAK_CAP. wrong/skipped reset the streak and earn 0.
-```
-Defaults (tunable, flagged §7): `STREAK_STEP = 1`, `STREAK_CAP = 5`. Unknown difficulty → d=3.
 
-### 3.2 New table `sessionPoints` (one row per finalized sheet)
+### B2. Schema — new `sessionPoints` table (`convex/schema.ts`)
 ```ts
 sessionPoints: defineTable({
   studentId: v.id("students"),
   sheetId: v.id("generatedSheets"),
-  date: v.string(),                 // YYYY-MM-DD (sheet.date)
+  date: v.string(),
   slotId: v.optional(v.id("scheduleSlots")),
   correctCount: v.number(),
   totalQuestions: v.number(),
-  pointsOld: v.number(),            // legacy triangular, per session: 5*C*(C+1)/2
-  pointsNew: v.number(),            // difficulty+section weighted + streak
+  pointsOld: v.number(),   // legacy triangular per session: 5*C*(C+1)/2
+  pointsNew: v.number(),   // Σ BASE_POINTS·diffMult(d)·SECTION_MULT[section] + streak
   computedAt: v.number(),
 })
   .index("by_student_date", ["studentId", "date"])
   .index("by_sheet", ["sheetId"])
   .index("by_date", ["date"]);
 ```
-Computed inside `finalizeSheetScoring` (extends 2a). Idempotent: upsert by `sheetId`.
 
-### 3.3 Leaderboard migration + parallel run
-- Leaderboard reads `sessionPoints` summed per student over the period (still **grade-filtered — cohort ranking is Phase 3**).
-- A config flag `LEADERBOARD_SCORING_MODE: "old" | "new"` (default `"old"` for the trial term) controls which column the public board shows. Admin view shows both side-by-side.
-- The legacy `entries`-based leaderboard path stays available as a fallback until the founder flips the mode after one term.
+### B3. Compute in `finalizeSheetScoring` (extends A2)
+After committing engine attempts, compute from the sheet's `results` + each question's section + difficulty:
+```
+C = count(correct)
+pointsOld = 5 * C * (C+1) / 2
+pointsNew = 0; streak = 0
+for q in sheet questions in render order:
+  if results[q]=="correct":
+     streak += 1
+     base = BASE_POINTS * diffMult(q.difficulty) * SECTION_MULT[q.section]
+     bonus = streak > 2 ? min(STREAK_STEP*(streak-2), STREAK_CAP) : 0
+     pointsNew += base + bonus
+  else: streak = 0
+upsert sessionPoints by sheetId with {correctCount:C, totalQuestions, pointsOld, pointsNew, computedAt}
+```
+Section per question: warmup/main/revision/examPrep from which array the questionId is in (reuse the resolution in `getSheetForScoring`). Difficulty from `questionBank.difficulty ?? 3`.
 
-### 3.4 Retire legacy Score tab + position note
-- Once 2b is verified, hide the legacy `entries` Score tab in the session workspace (scoring happens on the Sheets tab).
-- **Position caveat:** the next-exercise pointer + progress grid (`position-dialog.tsx`) read `entries`. Retiring `entries` writes affects position. In the track world, position = track position (Phase 1) + mastery. **Position migration is its own task — flag it; do not silently break the position dialog.** Simplest interim: keep writing a minimal `entries` row from sheet scoring for position continuity, OR migrate position to read track+mastery. Decide at 2b build time.
-
-### 3.5 Edge cases
-- Past-paper question, no `linkedExerciseId`: still earns points via its difficulty + Exam-prep section (no exercise link needed for points).
-- Multi-session day: `sessionPoints` is per session; the leaderboard sums them — matches the per-session model.
-- Old `entries` history pre-Phase-2: leaderboard over historical dates falls back to the `entries` computation; `sessionPoints` only exists from 2a-scoring onward.
-
----
-
-## 4. Out of scope (Phase 3+/explicitly NOT here)
-- Cohort/track-based leaderboard ranking + promotion/leagues (Phase 3).
-- Railway map (Phase 4).
-- Deleting the `entries` table (kept for history).
-- Auto-difficulty Elo (algorithm_plan §H.2).
+### B4. Read query + admin-only compare view
+- `convex/learningEngine/scoring.ts` → `pointsLeaderboard(period, dates, gradeFilter?)`: sum `sessionPoints.pointsOld` and `pointsNew` per student over `dates`, return both columns ranked. **Grade-filtered only — cohort ranking is Phase 3.**
+- New admin page `src/app/algorithm/scoring/page.tsx` (or a tab) showing the two columns **side by side (Old vs New)** for a period — this is the parallel-run comparison surface. **Do NOT modify `src/app/leaderboard/page.tsx`.**
 
 ---
 
-## 5. Key files
-- `sheet_scoring_plan.md` (repo root) — the System B build detail for Stage 2a.
-- `convex/learningEngine/memory.ts` — `applyAttempt`/`recordAttempt` (engine entry; additive, not idempotent — guard at finalize).
-- `convex/learningEngine/pdfHelpers.ts` — `getSheetForRender` shape to reuse.
-- `convex/learningEngine/planner.ts` — `generatedSheets` question arrays + `markCompleted`.
-- `src/components/session/sheets-tab.tsx` — where the Score action mounts.
+## 5. Edge cases
+- Question tagged to no concept → `applyAttempt` no-ops on mastery; still earns points by difficulty+section. Optional "won't affect mastery" hint.
+- Past-paper question, no `linkedExerciseId` → earns points via difficulty + Exam-prep section (no exercise link needed).
+- Question removed from sheet after scoring → ignore stale `results` keys absent from all section arrays.
+- Re-open completed sheet, flip one mark, finalize → exactly one new `attemptLog` row; `sessionPoints` recomputed wholesale for that sheet.
+- Sheet with zero marks → Finalize disabled.
+
+---
+
+## 6. Verification (the proofs)
+1. Score a sheet, reload → marks persist (`results`).
+2. Finalize → `memoryState` updates; `attemptLog` has `source:"sheet-score"` rows; sheet `completed`; one `sessionPoints` row with sane `pointsOld`/`pointsNew`.
+3. **Loop closes:** generate that student's NEXT sheet → wrong-marked concepts appear in Warm-up; aged correct concepts appear in Revision.
+4. Idempotency: re-finalize unchanged → no new `attemptLog` rows; flip one mark + finalize → exactly one new row; `sessionPoints` updated not duplicated.
+5. **Nothing live changed:** `/leaderboard` still reads `entries` and looks identical; the legacy Score tab still works; position dialog unchanged. Both typechecks pass.
+
+---
+
+## 7. Explicit DO-NOT — founder-gated cutover (NOT in this build)
+Leave ALL of these untouched; they are deliberate switches the founder throws after review:
+- Do NOT modify or retire the legacy `entries` Score tab in the session workspace.
+- Do NOT change `src/app/leaderboard/page.tsx` or `src/lib/scoring.ts` existing exports — the public board keeps reading `entries`.
+- Do NOT migrate or alter the position dialog (`position-dialog.tsx`) or stop `entries` writes.
+- Do NOT delete the `entries` table.
+- Do NOT add cohort/track ranking (that is Phase 3).
+The new points live ONLY in `sessionPoints` + the new admin compare view. The public flip happens later.
+
+---
+
+## 8. Key files
+- `sheet_scoring_plan.md` — System B detail for Part A.
+- `convex/learningEngine/memory.ts` — `applyAttempt` (engine entry; additive — guard at finalize).
+- `convex/learningEngine/pdfHelpers.ts` — `getSheetForRender` shape to reuse for sections/difficulty/cropBox.
+- `convex/learningEngine/planner.ts` — `generatedSheets` arrays (warmup/main/revision/examPrep) + `markCompleted`.
+- `src/components/session/sheets-tab.tsx` — mount the Score action.
 - `src/components/algorithm/sheet-preview.tsx` — `CropThumbnail` reuse.
-- `src/lib/scoring.ts` + `src/app/leaderboard/page.tsx` — legacy points/leaderboard (Stage 2b touches these).
-- `convex/schema.ts` — `generatedSheets` (2a fields) + `sessionPoints` (2b).
+- `convex/schema.ts` — `generatedSheets` (A1) + `sessionPoints` (B2).
+- `convex/learningEngine/config.ts` — points constants (B1).
 
 ---
 
-## 6. Build order
-1. **Stage 2a** (engine loop): schema → `scoring.ts` (`setSheetMark`, `finalizeSheetScoring`, `getSheetForScoring`) → scoring UI → verify the loop closes (§2a.6). Ship + deploy inert (additive).
-2. **Stage 2b** (points) — only after founder confirms §7: `sessionPoints` + dual-compute in finalize → leaderboard reads sessionPoints behind the mode flag → parallel-run a term → retire Score tab + handle position → flip mode.
-
----
-
-## 7. Open calls for the founder to confirm before Stage 2b build
-1. **Section multipliers** — Main 1.0 / Revision 1.3 / Exam-prep 1.5 / Warm-up 1.0. Good, or different weights?
-2. **Streak bonus** — keep it (STREAK_STEP=1, cap 5/session), or drop the streak entirely for simplicity?
-3. **BASE_POINTS = 5** — preserves today's "5 per question" feel. Keep?
-4. **Position during 2b** — keep writing a shim `entries` row for the position dialog, or migrate position to read track+mastery now? (Affects scope.)
-These do NOT block Stage 2a — it can be built and shipped while these are decided.
+## 9. Build order (one pass)
+1. A1 schema → codegen → BE tsc. Commit.
+2. A2 `scoring.ts` (setSheetMark, finalizeSheetScoring, getSheetForScoring) → BE tsc. Commit.
+3. A3 scoring drawer + Sheets-tab Score action → FE tsc. Commit.
+4. B1 config + B2 `sessionPoints` schema → codegen → BE tsc. Commit.
+5. B3 points compute inside finalize → BE tsc. Commit.
+6. B4 `pointsLeaderboard` query + admin compare page → FE tsc. Commit.
+7. Final: both typechecks 0; report to orchestrator with the §6 proofs argued (you can't run mutations — argue idempotency + additivity from the code).
