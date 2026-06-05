@@ -16,6 +16,10 @@ export default defineSchema({
     // value = grade list. When a module has its own override, it takes
     // precedence over the global assignedGrades for that module.
     assignedGradesByModule: v.optional(v.any()),
+    // Phase 1 (track model): the single track this student rides, spanning all
+    // six modules. Optional — a student with no trackId falls back to the
+    // legacy schoolGrade + teachingPath behaviour in the planner.
+    trackId: v.optional(v.id("tracks")),
     // ─── Phase D.3: sheet-planner per-student knobs ────────────────────────
     // Off-days for THIS student. Lowercase weekday names: "sunday", "monday",
     // … "saturday". Different students may have different off-days (e.g.
@@ -700,6 +704,27 @@ export default defineSchema({
     updatedAt: v.number(),
     updatedByTeacherId: v.optional(v.id("teachers")),
   }).index("by_grade_term", ["grade", "term"]),
+
+  // ─── Phase 1 (track model): named cross-grade learning tracks (levels) ───
+  // A track is a flat, teacher-curated, importance-filtered route through the
+  // curriculum. `orderedUnitIds` may span multiple grades (e.g. a remedial
+  // G7→G9 track). A unit is "skipped" for the track simply by being ABSENT
+  // from orderedUnitIds. One track per student (students.trackId). The planner
+  // walks this list for the Main block; ranking/promotion/map are later phases.
+  tracks: defineTable({
+    name: v.string(),                              // "On-level G9", "Remedial G7→G9 (core)"
+    targetGrade: v.number(),                       // 6..11 — the exam this track aims at
+    targetTerm: v.number(),                        // 1 | 2 | 3 — current target term
+    orderedUnitIds: v.array(v.string()),           // cross-grade route, teaching order; ids "M{n}-G{g}-T{t}-{i}"
+    level: v.number(),                             // promotion rank (lower = more remedial); used by Phase 3
+    mergesIntoTrackId: v.optional(v.id("tracks")), // promote-into pointer; stored now, used by Phase 3/4
+    active: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    updatedByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_target_grade_term", ["targetGrade", "targetTerm"])
+    .index("by_level", ["level"]),
 
   // ─── Sheet redesign (Phase 7): per-unit teaching pace ────────────────────
   // Teacher's estimate of how many NEW concepts fit per session-hour for a
