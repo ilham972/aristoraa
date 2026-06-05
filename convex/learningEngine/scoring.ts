@@ -253,3 +253,103 @@ export const getSheetForScoring = query({
     };
   },
 });
+
+// ── Admin-only parallel-run leaderboard (Old vs New) ───────────────────────
+// Sums sessionPoints over the given dates per student, joins the student row
+// for name + grade, and returns both point columns ranked. Grade-filtered
+// only — cross-cohort ranking is Phase 3, and this query NEVER feeds the live
+// board (it reads sessionPoints, which the public leaderboard does not).
+
+export type PointsLeaderboardRow = {
+  studentId: Id<"students">;
+  name: string;
+  schoolGrade: number;
+  pointsOld: number;
+  pointsNew: number;
+  correctCount: number;
+  sheetCount: number;
+  rankOld: number;
+  rankNew: number;
+};
+
+export const pointsLeaderboard = query({
+  args: {
+    dates: v.array(v.string()),
+    gradeFilter: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<PointsLeaderboardRow[] | null> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    type Agg = {
+      studentId: Id<"students">;
+      pointsOld: number;
+      pointsNew: number;
+      correctCount: number;
+      sheetCount: number;
+    };
+    const perStudent = new Map<string, Agg>();
+    for (const date of args.dates) {
+      const rows = await ctx.db
+        .query("sessionPoints")
+        .withIndex("by_date", (q) => q.eq("date", date))
+        .collect();
+      for (const r of rows) {
+        const key = r.studentId as unknown as string;
+        const agg =
+          perStudent.get(key) ??
+          ({
+            studentId: r.studentId,
+            pointsOld: 0,
+            pointsNew: 0,
+            correctCount: 0,
+            sheetCount: 0,
+          } as Agg);
+        agg.pointsOld += r.pointsOld;
+        agg.pointsNew += r.pointsNew;
+        agg.correctCount += r.correctCount;
+        agg.sheetCount += 1;
+        perStudent.set(key, agg);
+      }
+    }
+
+    const enriched: Array<Omit<PointsLeaderboardRow, "rankOld" | "rankNew">> =
+      [];
+    for (const agg of Array.from(perStudent.values())) {
+      const student = await ctx.db.get(agg.studentId);
+      if (!student) continue;
+      if (
+        args.gradeFilter != null &&
+        student.schoolGrade !== args.gradeFilter
+      ) {
+        continue;
+      }
+      enriched.push({
+        studentId: agg.studentId,
+        name: student.name,
+        schoolGrade: student.schoolGrade,
+        pointsOld: agg.pointsOld,
+        pointsNew: agg.pointsNew,
+        correctCount: agg.correctCount,
+        sheetCount: agg.sheetCount,
+      });
+    }
+
+    // Rank in each ordering (1-based, stable). Returned sorted by the NEW
+    // points so the page leads with the proposed board; rankOld lets the UI
+    // show how each student would move under the new scheme.
+    const rankOldOf = new Map<string, number>();
+    [...enriched]
+      .sort((a, b) => b.pointsOld - a.pointsOld)
+      .forEach((r, i) =>
+        rankOldOf.set(r.studentId as unknown as string, i + 1),
+      );
+    const byNew = [...enriched].sort((a, b) => b.pointsNew - a.pointsNew);
+
+    return byNew.map((r, i) => ({
+      ...r,
+      rankOld: rankOldOf.get(r.studentId as unknown as string) ?? i + 1,
+      rankNew: i + 1,
+    }));
+  },
+});
