@@ -191,7 +191,27 @@ export const seedOnLevelTracks = mutation({
   },
 });
 
-// Assign every student lacking a trackId to their schoolGrade's On-level track.
+// A student carries a CUSTOM grade assignment when their assignedGrades is set
+// to anything other than exactly [schoolGrade], or any per-module override
+// exists. For these students the schoolGrade On-level track is the WRONG track
+// (it would override their downgrade and push them to harder material), and the
+// byte-identical regression guarantee does NOT hold. The backfill must leave
+// them on legacy until a teacher assigns them a proper (remedial) track by hand.
+function hasCustomGradeAssignment(s: Doc<"students">): boolean {
+  const ag = s.assignedGrades;
+  if (ag && ag.length > 0 && !(ag.length === 1 && ag[0] === s.schoolGrade)) {
+    return true; // downgraded or multi-grade
+  }
+  const byMod = s.assignedGradesByModule as Record<string, unknown> | undefined;
+  if (byMod && typeof byMod === "object" && Object.keys(byMod).length > 0) {
+    return true; // per-module grade override
+  }
+  return false;
+}
+
+// Assign every PLAIN on-level student (no trackId, no custom grade assignment)
+// to their schoolGrade's On-level track. Downgraded / custom-grade students are
+// skipped and reported, so they stay on legacy until given a remedial track.
 export const backfillStudentTracks = mutation({
   args: {},
   handler: async (ctx) => {
@@ -204,14 +224,33 @@ export const backfillStudentTracks = mutation({
     }
     const students = await ctx.db.query("students").collect();
     let assigned = 0;
+    let skippedCustomGrade = 0;
+    let skippedAlreadyAssigned = 0;
+    let skippedNoTrack = 0;
     for (const s of students) {
-      if (s.trackId) continue;
+      if (s.trackId) {
+        skippedAlreadyAssigned++;
+        continue;
+      }
+      if (hasCustomGradeAssignment(s)) {
+        skippedCustomGrade++;
+        continue;
+      }
       const tid = onLevelByGrade.get(s.schoolGrade);
-      if (!tid) continue;
+      if (!tid) {
+        skippedNoTrack++;
+        continue;
+      }
       await ctx.db.patch(s._id, { trackId: tid });
       assigned++;
     }
-    return { ok: true as const, assigned };
+    return {
+      ok: true as const,
+      assigned,
+      skippedCustomGrade,
+      skippedAlreadyAssigned,
+      skippedNoTrack,
+    };
   },
 });
 
