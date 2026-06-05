@@ -35,6 +35,7 @@ import type * as learningEngine_pdf from "../learningEngine/pdf.js";
 import type * as learningEngine_pdfHelpers from "../learningEngine/pdfHelpers.js";
 import type * as learningEngine_planner from "../learningEngine/planner.js";
 import type * as learningEngine_profile from "../learningEngine/profile.js";
+import type * as learningEngine_scoring from "../learningEngine/scoring.js";
 import type * as learningEngine_sheets from "../learningEngine/sheets.js";
 import type * as learningEngine_studentDashboard from "../learningEngine/studentDashboard.js";
 import type * as learningEngine_tracks from "../learningEngine/tracks.js";
@@ -120,6 +121,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/pdfHelpers": typeof learningEngine_pdfHelpers;
   "learningEngine/planner": typeof learningEngine_planner;
   "learningEngine/profile": typeof learningEngine_profile;
+  "learningEngine/scoring": typeof learningEngine_scoring;
   "learningEngine/sheets": typeof learningEngine_sheets;
   "learningEngine/studentDashboard": typeof learningEngine_studentDashboard;
   "learningEngine/tracks": typeof learningEngine_tracks;

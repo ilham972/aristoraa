@@ -662,6 +662,17 @@ export default defineSchema({
     pdfStorageId: v.optional(v.id("_storage")),
     printedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
+    // ─── Phase 2 (sheet-synced scoring): per-sheet marking state ────────────
+    // Live marks the teacher enters on the scoring drawer, keyed by
+    // questionBank id (as string) → "correct" | "wrong" | "skipped". Old
+    // sheets have neither field; readers treat absence as {}.
+    results: v.optional(v.record(v.string(), v.string())),
+    // What finalize has already pushed to the engine (memoryState), so
+    // re-finalizing is idempotent: applyAttempt fires only for questions
+    // whose mark differs from committedMarks. questionId(string) → last mark.
+    committedMarks: v.optional(v.record(v.string(), v.string())),
+    // When the sheet was last finalized (committed to the engine).
+    scoredAt: v.optional(v.number()),
   })
     .index("by_student_date", ["studentId", "date"])
     .index("by_date", ["date"])
@@ -686,6 +697,29 @@ export default defineSchema({
     reason: v.optional(v.string()),
     at: v.number(),
   }).index("by_sheet", ["sheetId"]),
+
+  // ─── Phase 2 (sheet-synced scoring): per-session points, dual-tracked ─────
+  // One row per finalized sheet. Both the legacy triangular points (pointsOld =
+  // 5·C·(C+1)/2) and the new difficulty×section weighted points (pointsNew) are
+  // computed from the SAME sheet marks and stored side by side, so the founder
+  // can compare them in the admin scoring view before flipping the public
+  // board. This table is NOT read by the live leaderboard/position — it is the
+  // parallel-run surface only (see sheet_scoring_plan.md / Phase 2 spec §7).
+  // Upserted by sheetId on every finalizeSheetScoring (recomputed wholesale).
+  sessionPoints: defineTable({
+    studentId: v.id("students"),
+    sheetId: v.id("generatedSheets"),
+    date: v.string(),                                 // YYYY-MM-DD (the sheet's practice day)
+    slotId: v.optional(v.id("scheduleSlots")),
+    correctCount: v.number(),
+    totalQuestions: v.number(),
+    pointsOld: v.number(),                            // legacy triangular: 5·C·(C+1)/2
+    pointsNew: v.number(),                            // Σ BASE_POINTS·diffMult(d)·SECTION_MULT[section] + streak
+    computedAt: v.number(),
+  })
+    .index("by_student_date", ["studentId", "date"])
+    .index("by_sheet", ["sheetId"])
+    .index("by_date", ["date"]),
 
   // ─── Sheet redesign (Phase 1): teacher-curated teaching path ─────────────
   // The teacher's chosen order of units to TEACH within a (grade, term),
