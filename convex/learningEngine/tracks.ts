@@ -6,6 +6,7 @@ import { mutation, query } from "../_generated/server";
 import { v } from "convex/values";
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
+import { resolveTeachingPath } from "./path";
 
 type QueryCtx = GenericQueryCtx<DataModel>;
 type MutationCtx = GenericMutationCtx<DataModel>;
@@ -117,5 +118,98 @@ export const setStudentTrack = mutation({
     if (!identity) throw new Error("Unauthenticated");
     await ctx.db.patch(studentId, { trackId: trackId ?? undefined });
     return { ok: true as const };
+  },
+});
+
+// ── Seed on-level tracks + backfill student assignment (Task 3) ────────────
+
+// Apply saved teaching-path order to a (grade,term)'s natural unit list, then
+// append any units missing from the saved order (new/unsaved) in natural order.
+function orderUnitsBySavedPath(naturalUnitIds: string[], saved: string[] | null): string[] {
+  if (!saved || saved.length === 0) return naturalUnitIds.slice();
+  const rank = new Map<string, number>();
+  saved.forEach((id, i) => rank.set(id, i));
+  const BIG = saved.length + naturalUnitIds.length;
+  return naturalUnitIds
+    .map((id, natIdx) => ({ id, key: rank.get(id) ?? BIG + natIdx }))
+    .sort((a, b) => a.key - b.key)
+    .map((x) => x.id);
+}
+
+// Seed/refresh one "On-level G{grade}" track per grade. Idempotent: upserts by
+// name. Client provides per-(grade,term) natural unit ids. level = grade*10 so
+// remedial levels can slot between grades later.
+export const seedOnLevelTracks = mutation({
+  args: {
+    perGradeTerm: v.array(
+      v.object({ grade: v.number(), term: v.number(), naturalUnitIds: v.array(v.string()) }),
+    ),
+  },
+  handler: async (ctx, { perGradeTerm }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    // Group incoming (grade,term) → naturalUnitIds.
+    const byGrade = new Map<number, Map<number, string[]>>();
+    for (const r of perGradeTerm) {
+      if (!byGrade.has(r.grade)) byGrade.set(r.grade, new Map());
+      byGrade.get(r.grade)!.set(r.term, r.naturalUnitIds);
+    }
+
+    const now = Date.now();
+    let created = 0;
+    let updated = 0;
+    for (const [grade, terms] of Array.from(byGrade)) {
+      const orderedUnitIds: string[] = [];
+      for (const term of [1, 2, 3]) {
+        const natural = terms.get(term);
+        if (!natural || natural.length === 0) continue;
+        const saved = await resolveTeachingPath(ctx, grade, term);
+        orderedUnitIds.push(...orderUnitsBySavedPath(natural, saved));
+      }
+      const name = `On-level G${grade}`;
+      const existing = (await ctx.db.query("tracks").collect()).find((t) => t.name === name);
+      if (existing) {
+        await ctx.db.patch(existing._id, { orderedUnitIds, updatedAt: now });
+        updated++;
+      } else {
+        await ctx.db.insert("tracks", {
+          name,
+          targetGrade: grade,
+          targetTerm: 1,
+          orderedUnitIds,
+          level: grade * 10,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+        created++;
+      }
+    }
+    return { ok: true as const, created, updated };
+  },
+});
+
+// Assign every student lacking a trackId to their schoolGrade's On-level track.
+export const backfillStudentTracks = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const tracks = await ctx.db.query("tracks").collect();
+    const onLevelByGrade = new Map<number, Id<"tracks">>();
+    for (const t of tracks) {
+      if (t.name === `On-level G${t.targetGrade}`) onLevelByGrade.set(t.targetGrade, t._id);
+    }
+    const students = await ctx.db.query("students").collect();
+    let assigned = 0;
+    for (const s of students) {
+      if (s.trackId) continue;
+      const tid = onLevelByGrade.get(s.schoolGrade);
+      if (!tid) continue;
+      await ctx.db.patch(s._id, { trackId: tid });
+      assigned++;
+    }
+    return { ok: true as const, assigned };
   },
 });
