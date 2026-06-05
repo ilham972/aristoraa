@@ -15,6 +15,7 @@ import { Train, X } from 'lucide-react';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
+import { ParentShareButton } from './railway-share';
 
 // ── Geometry constants ──────────────────────────────────────────────────────
 const ROW_H = 92;
@@ -83,6 +84,9 @@ export function RailwayMap() {
   const [tapped, setTapped] = useState<
     { trackName: string; station: Station; status: StationStatus } | null
   >(null);
+
+  const studentName =
+    students?.find((s: { _id: string; name: string }) => s._id === studentId)?.name ?? '';
 
   const clearedSet = useMemo(
     () => new Set(pos && 'clearedUnitIds' in pos ? pos.clearedUnitIds : []),
@@ -349,6 +353,10 @@ export function RailwayMap() {
         </div>
       )}
 
+      {/* Parent share (§4.4) */}
+      {studentId && studentName && (
+        <ParentShareButton studentId={studentId as Id<'students'>} studentName={studentName} />
+      )}
     </div>
   );
 }
@@ -369,7 +377,7 @@ function StationNode({
       {/* Larger invisible hit target for touch */}
       <circle cx={cx} cy={cy} r={R + 8} fill="transparent" />
       {status === 'current' && (
-        <circle cx={cx} cy={cy} r={R + 5} fill="none" stroke="var(--primary)" strokeWidth={2} className="animate-ping" opacity={0.7} />
+        <circle cx={cx} cy={cy} r={R + 5} fill="none" stroke="var(--primary)" strokeWidth={2} className="animate-pulse" opacity={0.7} />
       )}
       {status === 'cleared' && <circle cx={cx} cy={cy} r={R} fill="var(--primary)" stroke="var(--primary)" strokeWidth={2} />}
       {status === 'current' && <circle cx={cx} cy={cy} r={R} fill="var(--card)" stroke="var(--primary)" strokeWidth={3} />}

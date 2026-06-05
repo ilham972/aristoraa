@@ -13,8 +13,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation } from 'convex/react';
 import { Download, Route, ArrowUpCircle, TrendingUp } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
