@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Pencil,
   Loader2,
+  ClipboardCheck,
 } from 'lucide-react';
 import type { Row } from './shared';
 import { rowStatus } from './shared';
@@ -32,6 +33,7 @@ export function StudentRow({
   onRender,
   onForceRender,
   onMarkPrinted,
+  onScore,
 }: {
   row: Row;
   busyLabel: string | null;
@@ -41,6 +43,10 @@ export function StudentRow({
   onRender: () => void;
   onForceRender: () => void;
   onMarkPrinted: () => void;
+  // Phase 2: opens the sheet-scoped scoring drawer. Optional — only the
+  // session Sheets tab wires it; other StudentRow consumers omit it and the
+  // Score button simply doesn't render.
+  onScore?: () => void;
 }) {
   const status = rowStatus(row);
 
@@ -96,6 +102,7 @@ export function StudentRow({
             onRender={onRender}
             onForceRender={onForceRender}
             onMarkPrinted={onMarkPrinted}
+            onScore={onScore}
           />
         )}
       </div>
@@ -111,6 +118,7 @@ function RowActions({
   onRender,
   onForceRender,
   onMarkPrinted,
+  onScore,
 }: {
   status: SheetRowStatus;
   row: Row;
@@ -119,10 +127,28 @@ function RowActions({
   onRender: () => void;
   onForceRender: () => void;
   onMarkPrinted: () => void;
+  onScore?: () => void;
 }) {
   const editBtn =
     (status === 'draft-no-pdf' || status === 'draft-with-pdf' || status === 'printed') ? (
       <ActionBtn icon={<Pencil className="w-3 h-3" />} label="Edit" onClick={onOpenEdit} tone="ghost" />
+    ) : null;
+
+  // Phase 2: Score the sheet into the learning engine. Available wherever a
+  // saved sheet exists (draft → printed → completed). Re-scoring a completed
+  // sheet is allowed; finalize only re-commits changed marks.
+  const scoreBtn =
+    onScore &&
+    (status === 'draft-no-pdf' ||
+      status === 'draft-with-pdf' ||
+      status === 'printed' ||
+      status === 'completed') ? (
+      <ActionBtn
+        icon={<ClipboardCheck className="w-3 h-3" />}
+        label={status === 'completed' ? 'Re-score' : 'Score'}
+        onClick={onScore}
+        tone="primary"
+      />
     ) : null;
 
   if (status === 'off-day') {
@@ -140,6 +166,7 @@ function RowActions({
         <ActionBtn icon={<Zap className="w-3 h-3" />} label="Force render" onClick={onForceRender} tone="amber" />
         {editBtn}
         <ActionBtn icon={<Save className="w-3 h-3" />} label="Re-generate" onClick={onGenerate} tone="ghost" />
+        {scoreBtn}
       </>
     );
   }
@@ -161,6 +188,7 @@ function RowActions({
         <ActionBtn icon={<RefreshCw className="w-3 h-3" />} label="Re-render" onClick={onRender} tone="ghost" />
         <ActionBtn icon={<Zap className="w-3 h-3" />} label="Force re-render" onClick={onForceRender} tone="ghost" />
         <ActionBtn icon={<Printer className="w-3 h-3" />} label="Mark printed" onClick={onMarkPrinted} tone="primary" />
+        {scoreBtn}
       </>
     );
   }
@@ -179,6 +207,7 @@ function RowActions({
           </a>
         )}
         {editBtn}
+        {scoreBtn}
         <span className="text-[10px] text-muted-foreground">
           Locked — printed. Delete the row to regenerate.
         </span>
@@ -199,6 +228,7 @@ function RowActions({
           Open PDF
         </a>
       )}
+      {scoreBtn}
     </>
   );
 }

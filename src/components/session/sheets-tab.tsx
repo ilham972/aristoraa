@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { SheetPreviewDrawer } from '@/components/algorithm/sheet-preview';
+import { SheetScoringDrawer } from '@/components/session/sheet-scoring-drawer';
 import {
   STATUS_OPTIONS,
   type SheetRowStatus,
@@ -59,6 +60,7 @@ export function SheetsTab({
   const [lastZip, setLastZip] = useState<LastZip>(null);
   const [openStudentId, setOpenStudentId] = useState<Id<'students'> | null>(null);
   const [editSheetId, setEditSheetId] = useState<Id<'generatedSheets'> | null>(null);
+  const [scoreSheetId, setScoreSheetId] = useState<Id<'generatedSheets'> | null>(null);
 
   const setRow = useCallback(
     (id: string, label: string | null) =>
@@ -381,6 +383,7 @@ export function SheetsTab({
                   onRender={() => actRender(r, false)}
                   onForceRender={() => actRender(r, true)}
                   onMarkPrinted={() => actMarkPrinted(r)}
+                  onScore={r.sheet ? () => setScoreSheetId(r.sheet!._id) : undefined}
                 />
               ))}
             </div>
@@ -412,6 +415,13 @@ export function SheetsTab({
         <SheetPreviewDrawer
           sheetId={editSheetId}
           onClose={() => setEditSheetId(null)}
+        />
+      )}
+
+      {scoreSheetId && (
+        <SheetScoringDrawer
+          sheetId={scoreSheetId}
+          onClose={() => setScoreSheetId(null)}
         />
       )}
     </div>

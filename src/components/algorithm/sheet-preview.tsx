@@ -798,7 +798,9 @@ function FactorBarFull({ factors }: { factors: Factors }) {
 
 // ── Crop thumbnail + full preview (same approach as difficulty-tab) ──────
 
-function CropThumbnail({
+// Exported so the Phase-2 sheet-scoring drawer reuses the exact crop-clip
+// thumbnail (with its tap-to-zoom full preview) instead of duplicating it.
+export function CropThumbnail({
   imageUrl,
   cropBox,
   maxSide,
