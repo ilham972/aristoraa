@@ -6,6 +6,7 @@ import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart, MessageSq
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
+import { PRIMARY_BOARD_HREF } from '@/lib/leaderboard-link';
 
 type NavItem = { href: string; label: string; icon: typeof Trophy; leadOnly?: boolean };
 
@@ -14,7 +15,9 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/analytics', label: 'Analytics', icon: LineChart, leadOnly: true },
   { href: '/algorithm', label: 'Insights', icon: BarChart3, leadOnly: true },
   { href: '/messaging', label: 'Messages', icon: MessageSquare, leadOnly: true },
-  { href: '/leaderboard', label: 'Board', icon: Trophy },
+  // Board href is founder-gated: PRIMARY_BOARD_HREF stays '/leaderboard' until
+  // LEADERBOARD_PRIMARY flips to 'cohort', then points at the leagues board.
+  { href: PRIMARY_BOARD_HREF, label: 'Board', icon: Trophy },
   { href: '/students', label: 'Students', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
