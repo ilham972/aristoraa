@@ -73,7 +73,8 @@ export default defineSchema({
     .index("by_date", ["date"])
     .index("by_student", ["studentId"])
     .index("by_student_date", ["studentId", "date"])
-    .index("by_center", ["centerId"]),
+    .index("by_center", ["centerId"])
+    .index("by_slot", ["slotId"]),
 
   settings: defineTable({
     tuitionName: v.optional(v.string()),
