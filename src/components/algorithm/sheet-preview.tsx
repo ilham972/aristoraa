@@ -135,9 +135,14 @@ function unitIdsForScope(gradeByModule: Record<string, number[]>): string[] {
 export function SheetPreviewDrawer({
   sheetId,
   onClose,
+  readOnly = false,
 }: {
   sheetId: Id<'generatedSheets'>;
   onClose: () => void;
+  // When true, the drawer is a pure viewer: Swap / Remove / Add and the
+  // "PDF stale" reminder are hidden. Used as the scoring tab's "View sheet"
+  // surface, where editing isn't the intent.
+  readOnly?: boolean;
 }) {
   const data = useQuery(api.learningEngine.sheets.getSheetWithCrops, { sheetId });
   const overrideSheet = useMutation(api.learningEngine.planner.overrideSheet);
@@ -222,7 +227,7 @@ export function SheetPreviewDrawer({
         className="w-full max-w-2xl rounded-2xl bg-card border border-border shadow-2xl mt-2 sm:mt-6 mb-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <DrawerHeader data={data} onClose={onClose} />
+        <DrawerHeader data={data} onClose={onClose} readOnly={readOnly} />
 
         {data === undefined && (
           <div className="p-6 space-y-2 animate-pulse">
@@ -253,6 +258,7 @@ export function SheetPreviewDrawer({
                 qs={data.warmup}
                 pendingQ={pendingQ}
                 isLocked={isCompleted}
+                readOnly={readOnly}
                 onWhyToggle={undefined}
                 onSwap={(qid) =>
                   setPicker({ mode: 'swap', slot: 'warmup', questionIdBefore: qid })
@@ -273,6 +279,7 @@ export function SheetPreviewDrawer({
                 qs={data.main}
                 pendingQ={pendingQ}
                 isLocked={isCompleted}
+                readOnly={readOnly}
                 onWhyToggle={undefined}
                 onSwap={(qid) =>
                   setPicker({ mode: 'swap', slot: 'main', questionIdBefore: qid })
@@ -293,6 +300,7 @@ export function SheetPreviewDrawer({
                 qs={data.revision}
                 pendingQ={pendingQ}
                 isLocked={isCompleted}
+                readOnly={readOnly}
                 onWhyToggle={undefined}
                 onSwap={(qid) =>
                   setPicker({ mode: 'swap', slot: 'revision', questionIdBefore: qid })
@@ -313,6 +321,7 @@ export function SheetPreviewDrawer({
                 qs={data.examPrep}
                 pendingQ={pendingQ}
                 isLocked={isCompleted}
+                readOnly={readOnly}
                 onWhyToggle={undefined}
                 onSwap={(qid) =>
                   setPicker({
@@ -420,12 +429,14 @@ function IntegrityBanner({
 function DrawerHeader({
   data,
   onClose,
+  readOnly = false,
 }: {
   data:
     | { sheet: { date: string; status: string | undefined }; student: { name: string; schoolGrade: number } }
     | null
     | undefined;
   onClose: () => void;
+  readOnly?: boolean;
 }) {
   const status = data?.sheet.status ?? 'draft';
   const statusLabel =
@@ -463,10 +474,12 @@ function DrawerHeader({
           <X className="w-4 h-4" />
         </button>
       </div>
-      <div className="mx-3 mb-3 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[10px] text-muted-foreground flex items-center gap-1.5">
-        <RefreshCw className="w-3 h-3" />
-        PDF will be marked stale on every change — press <strong className="text-foreground">Render</strong> in the dashboard when done.
-      </div>
+      {!readOnly && (
+        <div className="mx-3 mb-3 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[10px] text-muted-foreground flex items-center gap-1.5">
+          <RefreshCw className="w-3 h-3" />
+          PDF will be marked stale on every change — press <strong className="text-foreground">Render</strong> in the dashboard when done.
+        </div>
+      )}
     </div>
   );
 }
@@ -479,6 +492,7 @@ function Section({
   qs,
   pendingQ,
   isLocked,
+  readOnly = false,
   onSwap,
   onRemove,
   onAdd,
@@ -488,6 +502,7 @@ function Section({
   qs: SheetQ[];
   pendingQ: Id<'questionBank'> | null;
   isLocked: boolean;
+  readOnly?: boolean;
   onWhyToggle?: undefined;
   onSwap: (qid: Id<'questionBank'>) => void;
   onRemove: (qid: Id<'questionBank'>) => void;
@@ -516,19 +531,22 @@ function Section({
             q={q}
             isBusy={pendingQ === q.questionId}
             isLocked={isLocked}
+            readOnly={readOnly}
             onSwap={() => onSwap(q.questionId)}
             onRemove={() => onRemove(q.questionId)}
           />
         ))}
       </div>
-      <button
-        onClick={onAdd}
-        disabled={isLocked}
-        className="w-full px-3 py-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-40 border-t border-border"
-      >
-        <Plus className="w-3.5 h-3.5" />
-        Add Q to {slot === 'examPrep' ? 'exam prep' : slot}
-      </button>
+      {!readOnly && (
+        <button
+          onClick={onAdd}
+          disabled={isLocked}
+          className="w-full px-3 py-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-40 border-t border-border"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add Q to {slot === 'examPrep' ? 'exam prep' : slot}
+        </button>
+      )}
     </section>
   );
 }
@@ -540,6 +558,7 @@ function QRow({
   q,
   isBusy,
   isLocked,
+  readOnly = false,
   onSwap,
   onRemove,
 }: {
@@ -547,6 +566,7 @@ function QRow({
   q: SheetQ;
   isBusy: boolean;
   isLocked: boolean;
+  readOnly?: boolean;
   onSwap: () => void;
   onRemove: () => void;
 }) {
@@ -612,7 +632,7 @@ function QRow({
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <div className={`mt-2 flex flex-wrap items-center gap-1.5 ${readOnly ? 'hidden' : ''}`}>
         {isBusy ? (
           <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
             <Loader2 className="w-3 h-3 animate-spin" />

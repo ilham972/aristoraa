@@ -69,7 +69,8 @@ export function SessionLauncher() {
   // Manual pill override; cleared when switching sub-tab so Today/Tomorrow
   // re-run their auto-selection.
   const [override, setOverride] = useState<{ slotId: Id<'scheduleSlots'>; date: string } | null>(null);
-  const [workspaceTab, setWorkspaceTab] = useState<SessionTab>('sheets');
+  // Default to the merged Sheets/scoring tab (id 'score').
+  const [workspaceTab, setWorkspaceTab] = useState<SessionTab>('score');
 
   // Tick every minute so pill live/past state stays fresh while the tab is
   // open. (Selection is intentionally NOT recomputed on tick — see below.)

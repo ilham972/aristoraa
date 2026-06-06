@@ -71,6 +71,10 @@ export type SheetRowForDashboard = {
         pdfUrl: string | null;
         alertCount: number;
         questionCount: number;
+        // Count of teacher-entered marks (sheet.results keys). Lets the
+        // scoring tab's pills distinguish "in-progress" (some marks, not
+        // finalized) from a draft/printed sheet with nothing entered yet.
+        markedCount: number;
         generatedAt: number;
       }
     | null;
@@ -126,6 +130,7 @@ async function buildRowsForSlotDate(
               : null,
             alertCount,
             questionCount: qCount,
+            markedCount: Object.keys(sheet.results ?? {}).length,
             generatedAt: sheet.generatedAt,
           }
         : null,
@@ -217,6 +222,7 @@ export const listSavedSheetHeadersForStudentIds = query({
                 : null,
               alertCount,
               questionCount: qCount,
+              markedCount: Object.keys(sheet.results ?? {}).length,
               generatedAt: sheet.generatedAt,
             }
           : null,

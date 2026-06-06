@@ -21,6 +21,7 @@ export type Row = {
     pdfUrl: string | null;
     alertCount: number;
     questionCount: number;
+    markedCount: number;
     generatedAt: number;
   } | null;
 };
@@ -68,3 +69,66 @@ export function countByStatus(rows: Row[]): Counts {
   }
   return c;
 }
+
+// ── Scoring-tab pill status ──────────────────────────────────────────────
+// Coarser, scoring-centric view of a roster row used by the merged Sheets
+// tab's pills header. Collapses the dashboard's draft-no-pdf/draft-with-pdf
+// distinction (irrelevant while scoring) and instead surfaces whether the
+// teacher has started marking (`in-progress`) — derived from sheet.markedCount.
+
+export type PillStatus =
+  | 'off-day'
+  | 'no-sheet'
+  | 'draft'
+  | 'printed'
+  | 'in-progress'
+  | 'completed';
+
+export function pillStatus(r: Row): PillStatus {
+  if (r.isOffDay) return 'off-day';
+  if (!r.sheet) return 'no-sheet';
+  if (r.sheet.status === 'completed') return 'completed';
+  if (r.sheet.markedCount > 0) return 'in-progress';
+  if (r.sheet.status === 'printed') return 'printed';
+  return 'draft';
+}
+
+// "Needs action first" ordering for the pills queue: students with no sheet
+// and printed-but-unscored sheets float to the front; finished + off-day sink.
+export const PILL_SORT_RANK: Record<PillStatus, number> = {
+  'no-sheet': 0,
+  printed: 1,
+  draft: 2,
+  'in-progress': 3,
+  completed: 4,
+  'off-day': 5,
+};
+
+// Tailwind classes for each pill state. Mirrors the StatusBadge palette on
+// the legacy /sheets row so the two surfaces stay visually consistent.
+export const PILL_STYLES: Record<PillStatus, { label: string; cls: string }> = {
+  'off-day': {
+    label: 'Off day',
+    cls: 'bg-muted text-muted-foreground border border-transparent',
+  },
+  'no-sheet': {
+    label: 'No sheet',
+    cls: 'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/30',
+  },
+  draft: {
+    label: 'Draft',
+    cls: 'bg-muted text-muted-foreground border border-border',
+  },
+  printed: {
+    label: 'Printed',
+    cls: 'bg-primary/15 text-primary border border-primary/30',
+  },
+  'in-progress': {
+    label: 'Scoring',
+    cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30',
+  },
+  completed: {
+    label: 'Done',
+    cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30',
+  },
+};

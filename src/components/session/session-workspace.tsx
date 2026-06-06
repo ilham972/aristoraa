@@ -1,35 +1,45 @@
 'use client';
 
-// SessionWorkspace — the shared 4-tab body for a single session (slot+date):
-// the Score / Lead / Sheets / Attendance strip plus the active tab's body.
+// SessionWorkspace — the shared 3-tab body for a single session (slot+date):
+// the Sheets / Lead / Attendance strip plus the active tab's body.
+//
+// "Sheets" (tab id 'score', kept for URL back-compat) is the merged
+// sheet-management + scoring surface — it folds in what used to be two
+// separate Score and Sheets tabs.
 //
 // Both the standalone /session/[slotId]/[date] page and the embedded Session
 // tab on /groups mount this, so the tab set never drifts between the two
-// surfaces. The four body components own their own data fetching + loading
-// states, so this component is pure tab routing — it deliberately does NOT
-// render the page header (group name / date / back arrow / navigation),
-// because that chrome differs per surface (back-arrow + group stepper on the
-// page; Today/Tomorrow + pill strip on the embedded launcher).
+// surfaces. The body components own their own data fetching + loading states,
+// so this component is pure tab routing — it deliberately does NOT render the
+// page header (group name / date / back arrow / navigation), because that
+// chrome differs per surface (back-arrow + group stepper on the page;
+// Today/Tomorrow + pill strip on the embedded launcher).
 
 import { cn } from '@/lib/utils';
 import type { Id } from '@/lib/convex';
-import { ClipboardCheck, ClipboardPen, FileSpreadsheet, Radio } from 'lucide-react';
+import { ClipboardCheck, FileSpreadsheet, Radio } from 'lucide-react';
 import { AttendanceTab } from './attendance-tab';
-import { SheetsTab } from './sheets-tab';
-import { ScoreTab } from './score-tab';
+import { ScoreSheetTab } from './score-sheet-tab';
 import { LeadTab } from './lead-tab';
 
-export type SessionTab = 'score' | 'lead' | 'sheets' | 'attendance';
-export const ALL_SESSION_TABS: SessionTab[] = ['score', 'lead', 'sheets', 'attendance'];
+export type SessionTab = 'score' | 'lead' | 'attendance';
+export const ALL_SESSION_TABS: SessionTab[] = ['score', 'lead', 'attendance'];
 
 export function isSessionTab(v: string | null): v is SessionTab {
-  return v !== null && (ALL_SESSION_TABS as string[]).includes(v);
+  // 'sheets' is the old id for the now-merged tab — normalize it to 'score'
+  // so bookmarked ?tab=sheets links keep working.
+  return v !== null && ((ALL_SESSION_TABS as string[]).includes(v) || v === 'sheets');
 }
 
-const TABS: Array<{ id: SessionTab; label: string; icon: typeof ClipboardPen }> = [
-  { id: 'score', label: 'Score', icon: ClipboardPen },
+// Map a (possibly legacy) tab string onto a current SessionTab.
+export function normalizeSessionTab(v: string | null): SessionTab | null {
+  if (v === 'sheets') return 'score';
+  return isSessionTab(v) ? (v as SessionTab) : null;
+}
+
+const TABS: Array<{ id: SessionTab; label: string; icon: typeof FileSpreadsheet }> = [
+  { id: 'score', label: 'Sheets', icon: FileSpreadsheet },
   { id: 'lead', label: 'Lead', icon: Radio },
-  { id: 'sheets', label: 'Sheets', icon: FileSpreadsheet },
   { id: 'attendance', label: 'Attendance', icon: ClipboardCheck },
 ];
 
@@ -75,10 +85,8 @@ export function SessionWorkspace({
       <div className="flex-1 min-h-0">
         {tab === 'attendance' ? (
           <AttendanceTab slotId={slotId} date={date} />
-        ) : tab === 'sheets' ? (
-          <SheetsTab slotId={slotId} sessionDate={date} />
         ) : tab === 'score' ? (
-          <ScoreTab lockedSlotId={slotId} lockedDate={date} />
+          <ScoreSheetTab slotId={slotId} date={date} />
         ) : tab === 'lead' ? (
           <LeadTab lockedSlotId={slotId} lockedDate={date} />
         ) : null}

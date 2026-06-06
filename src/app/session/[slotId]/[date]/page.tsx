@@ -39,12 +39,12 @@ import { groupColor } from '@/lib/groups/color';
 import { fmtTime12 } from '@/lib/groups/time-grid';
 import {
   SessionWorkspace,
-  isSessionTab,
+  normalizeSessionTab,
   type SessionTab,
 } from '@/components/session/session-workspace';
 
 const DEFAULT_TAB: SessionTab = 'attendance';
-const STEPPER_TABS: SessionTab[] = ['score', 'sheets'];
+const STEPPER_TABS: SessionTab[] = ['score'];
 
 function fmtDateLong(ymd: string): string {
   const d = new Date(ymd + 'T00:00:00');
@@ -140,7 +140,7 @@ function SessionPageInner() {
   const searchParams = useSearchParams();
 
   const tabParam = searchParams.get('tab');
-  const tab: SessionTab = isSessionTab(tabParam) ? tabParam : DEFAULT_TAB;
+  const tab: SessionTab = normalizeSessionTab(tabParam) ?? DEFAULT_TAB;
   const originParam = searchParams.get('origin');
 
   // First-visit seed: stamp the URL with the entry session as origin so the
