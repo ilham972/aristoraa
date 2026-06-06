@@ -1,6 +1,9 @@
 import { mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { tryNormalizeToE164SL } from "./lib/phone";
+import { findContiguousRuns, type RoomedSlot } from "./lib/slotNormalize";
+import { absorbSlotData } from "./lib/slotMerge";
 
 // Day-of-week to moduleId mapping (the default timetable)
 const DAY_TO_MODULE: Record<string, string> = {
@@ -124,6 +127,121 @@ export const normalizeParentPhones = mutation({
       alreadyNormalized,
       rejectedCount: rejected.length,
       rejected,
+    };
+  },
+});
+
+/**
+ * Fuse contiguous same-room slots of the same group on the same day into a
+ * single multi-hour scheduleSlot, so a 3–5pm class is one row (one Day-view
+ * card, one attendance/payment/submit pass) instead of two 1-hour atoms.
+ *
+ * Dry-run by default — returns a report without mutating. Pass
+ * '{"commit": true}' to apply. See design spec §3 for conflict rules:
+ *   - attendance: present wins; payments summed; sessionLogs held>cancelled
+ *     (all handled by absorbSlotData)
+ *   - submission: the fused block counts as submitted only if EVERY atom was
+ *     submitted for that date, else the merged submission row is dropped so
+ *     the block re-prompts.
+ *
+ * Run via:
+ *   npx convex run migrations:fuseContiguousSlots            (dry-run)
+ *   npx convex run migrations:fuseContiguousSlots '{"commit": true}'
+ */
+export const fuseContiguousSlots = mutation({
+  args: { commit: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    // No auth gate — run from the CLI (`npx convex run`), which is gated by
+    // Convex deploy credentials, matching the other migrations in this file.
+    const commit = args.commit === true;
+    const allSlots = await ctx.db.query("scheduleSlots").collect();
+
+    // Bucket live (group-owned) slots by group|day.
+    const buckets = new Map<string, RoomedSlot[]>();
+    for (const s of allSlots) {
+      if (!s.groupId) continue;
+      const key = `${s.groupId}|${s.dayOfWeek}`;
+      const arr = buckets.get(key) ?? [];
+      arr.push({ id: s._id, startTime: s.startTime, endTime: s.endTime, roomId: s.roomId });
+      buckets.set(key, arr);
+    }
+
+    let runsToFuse = 0;
+    let slotsAbsorbed = 0;
+    let submissionConflicts = 0; // (run, date) pairs where not all atoms submitted
+    const examples: string[] = [];
+
+    for (const [key, slots] of Array.from(buckets.entries())) {
+      const runs = findContiguousRuns(slots);
+      for (const run of runs) {
+        if (run.length < 2) continue;
+        runsToFuse += 1;
+        slotsAbsorbed += run.length - 1;
+
+        const ordered = run
+          .map((id) => slots.find((s: RoomedSlot) => s.id === id)!)
+          .sort((a, b) => a.startTime.localeCompare(b.startTime));
+        const canonical = ordered[0];
+        const runEnd = ordered[ordered.length - 1].endTime;
+
+        if (examples.length < 10) {
+          examples.push(`${key}: ${canonical.startTime}-${runEnd} (${run.length} atoms)`);
+        }
+
+        // Per-date count of how many atoms in this run carry a submission.
+        const subCountByDate = new Map<string, number>();
+        for (const s of ordered) {
+          const subs = await ctx.db
+            .query("sessionSubmissions")
+            .withIndex("by_slot_date", (q) =>
+              q.eq("slotId", s.id as Id<"scheduleSlots">),
+            )
+            .collect();
+          const datesSeen = new Set<string>();
+          for (const sub of subs) {
+            if (datesSeen.has(sub.date)) continue;
+            datesSeen.add(sub.date);
+            subCountByDate.set(sub.date, (subCountByDate.get(sub.date) ?? 0) + 1);
+          }
+        }
+        for (const count of Array.from(subCountByDate.values())) {
+          if (count < ordered.length) submissionConflicts += 1;
+        }
+
+        if (commit) {
+          // Extend canonical to cover the whole run.
+          await ctx.db.patch(canonical.id as Id<"scheduleSlots">, { endTime: runEnd });
+          // Absorb + delete the rest.
+          for (let i = 1; i < ordered.length; i++) {
+            await absorbSlotData(
+              ctx,
+              ordered[i].id as Id<"scheduleSlots">,
+              canonical.id as Id<"scheduleSlots">,
+            );
+            await ctx.db.delete(ordered[i].id as Id<"scheduleSlots">);
+          }
+          // Enforce the all-atoms submission rule: drop the canonical's merged
+          // submission row for any date where not every atom was submitted.
+          for (const [date, count] of Array.from(subCountByDate.entries())) {
+            if (count >= ordered.length) continue;
+            const rows = await ctx.db
+              .query("sessionSubmissions")
+              .withIndex("by_slot_date", (q) =>
+                q.eq("slotId", canonical.id as Id<"scheduleSlots">).eq("date", date),
+              )
+              .collect();
+            for (const r of rows) await ctx.db.delete(r._id);
+          }
+        }
+      }
+    }
+
+    return {
+      mode: commit ? "committed" : "dry-run",
+      runsToFuse,
+      slotsAbsorbed,
+      submissionConflicts,
+      examples,
     };
   },
 });
