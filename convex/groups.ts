@@ -13,6 +13,8 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
+import { toggleBand, type SlotRange } from "./lib/slotNormalize";
+import { absorbSlotData } from "./lib/slotMerge";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -908,71 +910,102 @@ export const toggleSession = mutation({
     const group = await ctx.db.get(args.groupId);
     if (!group) throw new ConvexError("Group not found");
 
-    // Existing session for this group at this slot?
-    const owned = await ctx.db
-      .query("scheduleSlots")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .collect();
-    const existing = owned.find(
-      (s) =>
-        s.dayOfWeek === args.dayOfWeek &&
-        s.startTime === args.startTime &&
-        s.endTime === args.endTime,
-    );
-    if (existing) {
-      await ctx.db.patch(existing._id, { groupId: undefined });
-      return { action: "removed" as const, slotId: existing._id };
-    }
-
     const roomId = args.roomId ?? group.defaultRoomId;
     if (!roomId) {
       throw new ConvexError("No room: set a default room on the group first");
     }
 
-    // Hard block: another LIVE group already in that exact (day, time, room).
-    // A row whose groupId points at a deleted group is an orphan — treat it
-    // as free, otherwise a stale ownership would permanently block the slot.
-    const roomSlots = await ctx.db
+    // This group's slots on this day, in this room — the input to toggleBand.
+    const owned = await ctx.db
       .query("scheduleSlots")
-      .withIndex("by_room", (q) => q.eq("roomId", roomId))
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
       .collect();
-    const orphanSlotIds = new Set<Id<"scheduleSlots">>();
-    for (const s of roomSlots) {
-      if (!s.groupId || s.groupId === args.groupId) continue;
-      const owner = await ctx.db.get(s.groupId);
-      if (!owner) {
-        orphanSlotIds.add(s._id);
-        continue;
-      }
-      if (
-        s.dayOfWeek === args.dayOfWeek &&
-        rangesOverlap(s.startTime, s.endTime, args.startTime, args.endTime)
-      ) {
-        throw new ConvexError("Room already booked at this time by another group");
+    const sameDayRoom = owned.filter(
+      (s) => s.dayOfWeek === args.dayOfWeek && s.roomId === roomId,
+    );
+    const existing: SlotRange[] = sameDayRoom.map((s) => ({
+      id: s._id,
+      startTime: s.startTime,
+      endTime: s.endTime,
+    }));
+
+    const band = { start: args.startTime, end: args.endTime };
+    const isAdding = !existing.some(
+      (s) => s.startTime <= band.start && s.endTime >= band.end,
+    );
+
+    // Hard block (adds only): another LIVE group overlapping this band in the
+    // same room. A row whose groupId points at a deleted group is an orphan —
+    // treat it as free, otherwise a stale ownership would permanently block.
+    if (isAdding) {
+      const roomSlots = await ctx.db
+        .query("scheduleSlots")
+        .withIndex("by_room", (q) => q.eq("roomId", roomId))
+        .collect();
+      for (const s of roomSlots) {
+        if (!s.groupId || s.groupId === args.groupId) continue;
+        const owner = await ctx.db.get(s.groupId);
+        if (!owner) continue; // orphan — free
+        if (
+          s.dayOfWeek === args.dayOfWeek &&
+          rangesOverlap(s.startTime, s.endTime, args.startTime, args.endTime)
+        ) {
+          throw new ConvexError("Room already booked at this time by another group");
+        }
       }
     }
 
-    // Reuse an exact-time slot if one happens to match — either a true empty
-    // (groupId=undefined) or an orphan claimed from a deleted group.
-    const reusable = roomSlots.find(
-      (s) =>
-        s.dayOfWeek === args.dayOfWeek &&
-        s.startTime === args.startTime &&
-        s.endTime === args.endTime &&
-        (!s.groupId || orphanSlotIds.has(s._id)),
+    const { result, toggled } = toggleBand(existing, band);
+
+    // Apply the desired end-state:
+    //  • result slot WITH sourceId → patch that slot's range.
+    //  • result slot WITHOUT sourceId → insert a new slot.
+    //  • existing slot absent from result → either absorbed into a fused slot
+    //    (move its data, then delete) or fully removed (orphan it so its
+    //    history survives and the row stays reusable, matching prior behavior).
+    const keptIds = new Set(
+      result.map((r) => r.sourceId).filter((x): x is string => x != null),
     );
-    if (reusable) {
-      await ctx.db.patch(reusable._id, { groupId: args.groupId });
-      return { action: "added" as const, slotId: reusable._id };
+
+    let primarySlotId: Id<"scheduleSlots"> | undefined;
+    for (const r of result) {
+      if (r.sourceId) {
+        await ctx.db.patch(r.sourceId as Id<"scheduleSlots">, {
+          startTime: r.startTime,
+          endTime: r.endTime,
+        });
+        if (!primarySlotId) primarySlotId = r.sourceId as Id<"scheduleSlots">;
+      } else {
+        const newId = await ctx.db.insert("scheduleSlots", {
+          dayOfWeek: args.dayOfWeek,
+          startTime: r.startTime,
+          endTime: r.endTime,
+          roomId,
+          groupId: args.groupId,
+        });
+        if (!primarySlotId) primarySlotId = newId;
+      }
     }
-    const newId = await ctx.db.insert("scheduleSlots", {
-      dayOfWeek: args.dayOfWeek,
-      startTime: args.startTime,
-      endTime: args.endTime,
-      roomId,
-      groupId: args.groupId,
-    });
-    return { action: "added" as const, slotId: newId };
+
+    for (const s of sameDayRoom) {
+      if (keptIds.has(s._id)) continue;
+      // Absorbed → its old span now sits inside a kept (fused) slot.
+      const target = result.find(
+        (r) =>
+          r.sourceId != null &&
+          r.startTime <= s.startTime &&
+          r.endTime >= s.endTime,
+      );
+      if (target && target.sourceId) {
+        await absorbSlotData(ctx, s._id, target.sourceId as Id<"scheduleSlots">);
+        await ctx.db.delete(s._id);
+      } else {
+        // Fully removed — preserve history, keep the row reusable.
+        await ctx.db.patch(s._id, { groupId: undefined });
+      }
+    }
+
+    return { action: toggled, slotId: primarySlotId };
   },
 });
 
