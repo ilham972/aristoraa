@@ -63,6 +63,10 @@ function addDays(dateYmd: string, n: number): string {
 export default function GroupsPage() {
   const router = useRouter();
   const [view, setView] = useState<'week' | 'day' | 'session'>('day');
+  // Which day the Session view targets. Lives here (not in SessionLauncher) so
+  // the Yesterday/Today/Tomorrow selector can sit on the right of the
+  // Day/Week/Session toggle row. Today is the default.
+  const [sessionDay, setSessionDay] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [unassignedOpen, setUnassignedOpen] = useState(false);
@@ -170,31 +174,70 @@ export default function GroupsPage() {
           <button
             onClick={() => setView('day')}
             className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
               view === 'day' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
             )}
           >
-            <CalendarDays className="w-3.5 h-3.5" /> Day
+            <CalendarDays className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Day</span>
           </button>
           <button
             onClick={() => setView('week')}
             className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
               view === 'week' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
             )}
           >
-            <LayoutGrid className="w-3.5 h-3.5" /> Week
+            <LayoutGrid className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Week</span>
           </button>
           <button
             onClick={() => setView('session')}
             className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
               view === 'session' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
             )}
           >
-            <Clock className="w-3.5 h-3.5" /> Session
+            <Clock className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Session</span>
           </button>
         </div>
+
+        {/* Yesterday / Today / Tomorrow — Session view only. Chevrons select
+            the adjacent day; "Today" is the anchor + default. */}
+        {view === 'session' && (
+          <div className="ml-auto flex items-center gap-1 p-1 bg-muted rounded-xl">
+            <button
+              onClick={() => setSessionDay('yesterday')}
+              title="Yesterday"
+              aria-label="Yesterday"
+              className={cn(
+                'flex items-center justify-center w-7 py-1.5 rounded-lg transition-all',
+                sessionDay === 'yesterday' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              )}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setSessionDay('today')}
+              title="Today"
+              className={cn(
+                'px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                sessionDay === 'today' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              )}
+            >
+              Today
+            </button>
+            <button
+              onClick={() => setSessionDay('tomorrow')}
+              title="Tomorrow"
+              aria-label="Tomorrow"
+              className={cn(
+                'flex items-center justify-center w-7 py-1.5 rounded-lg transition-all',
+                sessionDay === 'tomorrow' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              )}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Right-side roster strip — Week view only.
               • "in groups" pill is always shown so the Lead has a constant
@@ -233,7 +276,7 @@ export default function GroupsPage() {
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Session view owns its own loading + empty states (its own
             time-aware queries), so it sits outside the week/day gating. */}
-        {view === 'session' && <SessionLauncher />}
+        {view === 'session' && <SessionLauncher day={sessionDay} />}
 
         {view !== 'session' && loading && (
           <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">

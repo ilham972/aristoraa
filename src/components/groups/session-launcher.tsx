@@ -5,11 +5,13 @@
 // no back button (the Day / Week / Session top tabs stay visible above it,
 // so switching context is one tap).
 //
-//   • Today / Tomorrow sub-tabs (Today is the default).
+//   • Targets one day, controlled by the `day` prop (Yesterday / Today /
+//     Tomorrow). The selector lives in the page header next to the
+//     Day/Week/Session toggle; Today is the default.
 //   • Today is TIME-AWARE: it auto-opens the *current* session — live now →
 //     else the next upcoming → else the last session of the day (so you can
-//     still finish entry after the last class). Tomorrow opens its first
-//     session.
+//     still finish entry after the last class). Yesterday / Tomorrow open
+//     their first session.
 //   • A pressable pill strip (see SessionPills) lets you jump between the
 //     day's sessions; the chosen workspace tab is preserved across jumps.
 //   • Default workspace tab is Sheets.
@@ -22,7 +24,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { CalendarOff } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
-import { cn } from '@/lib/utils';
 import { groupColor } from '@/lib/groups/color';
 import { fmtTime12 } from '@/lib/groups/time-grid';
 import { isLive, isPast } from '@/lib/groups/session-time';
@@ -64,11 +65,17 @@ function pickCurrent(sessions: DaySession[], now: Date): DaySession | null {
   return base[base.length - 1];
 }
 
-export function SessionLauncher() {
-  const [sub, setSub] = useState<'today' | 'tomorrow'>('today');
-  // Manual pill override; cleared when switching sub-tab so Today/Tomorrow
-  // re-run their auto-selection.
+export function SessionLauncher({
+  day,
+}: {
+  day: 'yesterday' | 'today' | 'tomorrow';
+}) {
+  // Manual pill override; cleared when the day changes so each day re-runs its
+  // auto-selection.
   const [override, setOverride] = useState<{ slotId: Id<'scheduleSlots'>; date: string } | null>(null);
+  useEffect(() => {
+    setOverride(null);
+  }, [day]);
   // Default to the merged Sheets/scoring tab (id 'score').
   const [workspaceTab, setWorkspaceTab] = useState<SessionTab>('score');
 
@@ -81,14 +88,16 @@ export function SessionLauncher() {
   }, []);
 
   const today = todayYmd();
+  const yesterday = addDays(today, -1);
   const tomorrow = addDays(today, 1);
-  const activeDate = sub === 'today' ? today : tomorrow;
+  const activeDate = day === 'today' ? today : day === 'yesterday' ? yesterday : tomorrow;
 
-  // Today and tomorrow can fall in different weeks (Sun→Mon); query both.
-  // Convex caches identical args, so when they share a week it's one query.
+  // Adjacent days can fall in different weeks (Sun↔Mon); query each. Convex
+  // caches identical args, so when they share a week it collapses to one query.
+  const weekYesterday = useQuery(api.sessionRecords.weekSessions, { weekStartDate: mondayOf(yesterday) });
   const weekToday = useQuery(api.sessionRecords.weekSessions, { weekStartDate: mondayOf(today) });
   const weekTomorrow = useQuery(api.sessionRecords.weekSessions, { weekStartDate: mondayOf(tomorrow) });
-  const activeWeek = sub === 'today' ? weekToday : weekTomorrow;
+  const activeWeek = day === 'today' ? weekToday : day === 'yesterday' ? weekYesterday : weekTomorrow;
 
   const daySessions = useMemo<DaySession[]>(() => {
     return (activeWeek?.sessions ?? [])
@@ -106,12 +115,12 @@ export function SessionLauncher() {
       }));
   }, [activeWeek, activeDate]);
 
-  // Auto-selection is computed when the data or sub-tab changes — NOT on the
+  // Auto-selection is computed when the data or day changes — NOT on the
   // minute tick — so a passing clock edge never yanks the open session out
   // from under the user. The pills below still reflect live time via `now`.
   const autoSelected = useMemo(
-    () => (sub === 'tomorrow' ? (daySessions[0] ?? null) : pickCurrent(daySessions, new Date())),
-    [daySessions, sub],
+    () => (day === 'today' ? pickCurrent(daySessions, new Date()) : (daySessions[0] ?? null)),
+    [daySessions, day],
   );
 
   const selected = useMemo(() => {
@@ -126,39 +135,18 @@ export function SessionLauncher() {
     [daySessions, selected],
   );
 
-  const switchSub = (s: 'today' | 'tomorrow') => {
-    setSub(s);
-    setOverride(null);
-  };
-
   const loading = activeWeek === undefined;
   const color = selectedSession ? groupColor(selectedSession.groupId) : null;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {/* Today / Tomorrow sub-tabs. */}
-      <div className="shrink-0 flex items-center gap-1 p-1 bg-muted rounded-xl w-fit mb-3">
-        {(['today', 'tomorrow'] as const).map((s) => (
-          <button
-            key={s}
-            onClick={() => switchSub(s)}
-            className={cn(
-              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize',
-              sub === s ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
-            )}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-
       {loading ? (
         <div className="flex-1 min-h-0 animate-pulse space-y-3">
           <div className="h-8 w-48 rounded-lg bg-muted/40" />
           <div className="h-16 rounded-xl bg-muted/30" />
         </div>
       ) : daySessions.length === 0 ? (
-        <EmptyDay sub={sub} />
+        <EmptyDay day={day} />
       ) : (
         <>
           {/* Pill strip — pressable, grouped by time band. */}
@@ -196,17 +184,25 @@ export function SessionLauncher() {
   );
 }
 
-function EmptyDay({ sub }: { sub: 'today' | 'tomorrow' }) {
+function EmptyDay({ day }: { day: 'yesterday' | 'today' | 'tomorrow' }) {
+  const title =
+    day === 'today'
+      ? 'No sessions today'
+      : day === 'yesterday'
+        ? 'No sessions yesterday'
+        : 'No classes tomorrow';
+  const sub =
+    day === 'today'
+      ? 'Nothing scheduled for today.'
+      : day === 'yesterday'
+        ? 'Nothing was scheduled yesterday.'
+        : 'Enjoy the day off.';
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">
       <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
         <CalendarOff className="w-6 h-6 text-muted-foreground/50 mx-auto mb-2" />
-        <p className="text-sm text-muted-foreground mb-1">
-          {sub === 'today' ? 'No sessions today' : 'No classes tomorrow'}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {sub === 'today' ? 'Nothing scheduled for today.' : 'Enjoy the day off.'}
-        </p>
+        <p className="text-sm text-muted-foreground mb-1">{title}</p>
+        <p className="text-xs text-muted-foreground">{sub}</p>
       </div>
     </div>
   );

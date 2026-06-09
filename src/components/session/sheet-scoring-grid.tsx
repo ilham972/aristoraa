@@ -49,11 +49,13 @@ type SlotName = 'warmup' | 'main' | 'revision' | 'examPrep';
 type Mark = 'correct' | 'wrong' | 'skipped' | null;
 type ViewMode = 'grid' | 'sheet';
 
-const SECTIONS: Array<{ slot: SlotName; title: string }> = [
-  { slot: 'warmup', title: 'Warm-up' },
-  { slot: 'main', title: 'Main' },
-  { slot: 'revision', title: 'Revision' },
-  { slot: 'examPrep', title: 'Exam prep' },
+// `short` labels keep the tab row on a single line on mobile (full name lives
+// in the tab's tooltip).
+const SECTIONS: Array<{ slot: SlotName; title: string; short: string }> = [
+  { slot: 'warmup', title: 'Warm-up', short: 'Warm' },
+  { slot: 'main', title: 'Main', short: 'Main' },
+  { slot: 'revision', title: 'Revision', short: 'Rev' },
+  { slot: 'examPrep', title: 'Exam prep', short: 'Exam' },
 ];
 
 // Tap order: unmarked → correct → wrong → skipped → unmarked.
@@ -331,13 +333,15 @@ export function SheetScoringGrid({
         </div>
       )}
 
-      {/* Section tabs (left) + grid/sheet view toggle (right). */}
-      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-        <div className="flex items-center gap-1 flex-wrap">
-          {SECTIONS.map(({ slot, title }) => (
+      {/* Section tabs (left, scroll if cramped) + grid/sheet view toggle
+          (right). Single row — never wraps. */}
+      <div className="flex items-center gap-1.5 mb-3">
+        <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+          {SECTIONS.map(({ slot, title, short }) => (
             <SectionTab
               key={slot}
               title={title}
+              short={short}
               meta={sectionMeta[slot]}
               active={slot === activeSlot}
               onClick={() => setActiveSlot(slot)}
@@ -348,17 +352,17 @@ export function SheetScoringGrid({
           type="button"
           onClick={() => setViewMode((m) => (m === 'grid' ? 'sheet' : 'grid'))}
           title={viewMode === 'grid' ? 'Show the question images' : 'Back to the scoring grid'}
-          className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted text-foreground text-[11px] font-semibold hover:bg-muted/80"
+          className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-muted text-foreground text-[11px] font-semibold hover:bg-muted/80"
         >
           {viewMode === 'grid' ? (
             <>
               <Eye className="w-3 h-3" />
-              View sheet
+              Sheet
             </>
           ) : (
             <>
               <LayoutGrid className="w-3 h-3" />
-              Score grid
+              Grid
             </>
           )}
         </button>
@@ -453,11 +457,13 @@ const DOT_CLS: Record<SectionState, string> = {
 
 function SectionTab({
   title,
+  short,
   meta,
   active,
   onClick,
 }: {
   title: string;
+  short: string;
   meta: { marked: number; total: number; state: SectionState };
   active: boolean;
   onClick: () => void;
@@ -473,7 +479,7 @@ function SectionTab({
           ? `${title} — no questions`
           : `${title} — ${meta.marked}/${meta.total} marked`
       }
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors ${
+      className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors ${
         empty
           ? 'border-transparent bg-muted/40 text-muted-foreground/50 cursor-not-allowed'
           : active
@@ -482,9 +488,9 @@ function SectionTab({
       }`}
     >
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${DOT_CLS[meta.state]}`} />
-      {title}
+      {short}
       {!empty && (
-        <span className="tabular-nums text-muted-foreground/80">
+        <span className="tabular-nums text-[10px] text-muted-foreground/80">
           {meta.marked}/{meta.total}
         </span>
       )}
