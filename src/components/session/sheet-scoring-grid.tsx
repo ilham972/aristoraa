@@ -1,6 +1,6 @@
 'use client';
 
-// SheetScoringGrid — the fixed, compact-cell scoring grid for ONE
+// SheetScoringGrid — the section-tabbed scoring surface for ONE
 // generatedSheet, bound by sheetId. Replaces the legacy exercise-centric
 // score grid: it marks the sheet's exact questions in print order
 // (Warm-up · Main · Revision · Exam-prep), live-saving each tap via
@@ -8,16 +8,21 @@
 // finalizeSheetScoring.
 //
 // Design (founder decisions):
-//   • Fixed grid — compact numbered cells in a CSS grid per section. Tapping
-//     a cell cycles unmarked → correct → wrong → skipped → unmarked. The grid
-//     never reflows (no accordion / inline expansion); the actual question
-//     images live behind the host tab's "View sheet" drawer.
+//   • Section tabs — Warm-up / Main / Revision / Exam-prep as a button group
+//     in the header. One section is scored at a time; tabs carry a marked/
+//     total count and a status dot (green = all corrected, amber = still has
+//     unmarked questions, muted+disabled = empty section).
+//   • Fixed grid — compact numbered cells for the active section. Tapping a
+//     cell cycles unmarked → correct → wrong → skipped → unmarked.
+//   • "View sheet" is an inline toggle (NOT a dialog): it swaps the same
+//     content area between the scoring grid and the active section's question
+//     images (read-only crops). Switching tabs switches which questions show.
 //   • A wrong cell shows a small flag toggle that raises / clears a "needs
 //     explanation" doubt (reuses the existing doubts pipeline, keyed by the
 //     question's first tagged concept exercise).
-//   • Bulk quick-actions (All ✓ / Rest ✓) batch-mark for strong students.
-//   • Finalize records points + pushes attempts to the engine, then shows an
-//     inline points/streak summary (not just a toast).
+//   • Bulk quick-actions (All ✓ / Rest ✓) batch-mark the ACTIVE section.
+//   • Finalize records the WHOLE sheet's points + pushes attempts to the
+//     engine, then shows an inline points/streak summary (not just a toast).
 //
 // Used by the merged Sheets tab's detail pane. `onFirstMark` lets the host
 // auto-mark the student present on the first real mark of the session.
@@ -34,11 +39,15 @@ import {
   CheckCircle2,
   Flag,
   Sparkles,
+  Eye,
+  LayoutGrid,
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
+import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 
 type SlotName = 'warmup' | 'main' | 'revision' | 'examPrep';
 type Mark = 'correct' | 'wrong' | 'skipped' | null;
+type ViewMode = 'grid' | 'sheet';
 
 const SECTIONS: Array<{ slot: SlotName; title: string }> = [
   { slot: 'warmup', title: 'Warm-up' },
@@ -65,6 +74,28 @@ type ScoringQ = {
   mark: string | null;
 };
 
+// One section's correction state, used by the tab dot + count.
+type SectionState = 'empty' | 'partial' | 'done';
+
+function tallyOf(qs: ScoringQ[]) {
+  let correct = 0;
+  let wrong = 0;
+  let skipped = 0;
+  for (const q of qs) {
+    if (q.mark === 'correct') correct += 1;
+    else if (q.mark === 'wrong') wrong += 1;
+    else if (q.mark === 'skipped') skipped += 1;
+  }
+  const marked = correct + wrong + skipped;
+  return { correct, wrong, skipped, marked, total: qs.length };
+}
+
+function sectionStateOf(qs: ScoringQ[]): SectionState {
+  if (qs.length === 0) return 'empty';
+  const { marked, total } = tallyOf(qs);
+  return marked >= total ? 'done' : 'partial';
+}
+
 export function SheetScoringGrid({
   sheetId,
   slotId,
@@ -88,6 +119,17 @@ export function SheetScoringGrid({
     studentId ? { studentId } : 'skip',
   );
 
+  // Which section is being scored / viewed, and grid-vs-sheet view mode.
+  const [activeSlot, setActiveSlot] = useState<SlotName>('warmup');
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+
+  // Question crops for the inline "View sheet" mode — only fetched while the
+  // sheet view is open (skipped otherwise to avoid the heavier query).
+  const crops = useQuery(
+    api.learningEngine.sheets.getSheetWithCrops,
+    viewMode === 'sheet' ? { sheetId } : 'skip',
+  );
+
   // Questions currently mid-save (disables re-tap until the patch lands).
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [finalizing, setFinalizing] = useState(false);
@@ -102,7 +144,22 @@ export function SheetScoringGrid({
   useEffect(() => {
     firstMarkFired.current = false;
     setLastResult(null);
+    setViewMode('grid');
   }, [sheetId]);
+
+  // Keep the active tab on a section that actually has questions. Only moves
+  // off the current tab when that tab is empty, so a refetch (after a mark)
+  // never yanks the teacher to a different section mid-scoring.
+  useEffect(() => {
+    if (!data) return;
+    setActiveSlot((cur) => {
+      if ((data[cur] as ScoringQ[]).length > 0) return cur;
+      const firstNonEmpty = SECTIONS.find(
+        (s) => (data[s.slot] as ScoringQ[]).length > 0,
+      );
+      return firstNonEmpty ? firstNonEmpty.slot : cur;
+    });
+  }, [data]);
 
   // questionId(string) → true for every pending "needs explanation" doubt.
   const flaggedKeys = useMemo(() => {
@@ -113,22 +170,38 @@ export function SheetScoringGrid({
     return s;
   }, [doubts]);
 
-  const tallies = useMemo(() => {
-    let correct = 0;
-    let wrong = 0;
-    let skipped = 0;
+  // Per-section count + state for the tab bar.
+  const sectionMeta = useMemo(() => {
+    const out = {} as Record<
+      SlotName,
+      { marked: number; total: number; state: SectionState }
+    >;
+    for (const { slot } of SECTIONS) {
+      const qs = (data?.[slot] as ScoringQ[] | undefined) ?? [];
+      const t = tallyOf(qs);
+      out[slot] = { marked: t.marked, total: t.total, state: sectionStateOf(qs) };
+    }
+    return out;
+  }, [data]);
+
+  const activeQs = useMemo(
+    () => ((data?.[activeSlot] as ScoringQ[] | undefined) ?? []),
+    [data, activeSlot],
+  );
+  const activeTally = useMemo(() => tallyOf(activeQs), [activeQs]);
+
+  // Whole-sheet marked/total (shown next to Finalize, which records all).
+  const sheetTotal = useMemo(() => {
+    let marked = 0;
     let total = 0;
     if (data) {
       for (const { slot } of SECTIONS) {
-        for (const q of data[slot]) {
-          total += 1;
-          if (q.mark === 'correct') correct += 1;
-          else if (q.mark === 'wrong') wrong += 1;
-          else if (q.mark === 'skipped') skipped += 1;
-        }
+        const t = tallyOf(data[slot] as ScoringQ[]);
+        marked += t.marked;
+        total += t.total;
       }
     }
-    return { correct, wrong, skipped, total, marked: correct + wrong + skipped };
+    return { marked, total };
   }, [data]);
 
   const writeMark = useCallback(
@@ -194,27 +267,24 @@ export function SheetScoringGrid({
     [data, flaggedKeys, flagQuestion, removeFlag, slotId],
   );
 
-  // Bulk: mark every question correct, or only the still-unmarked ones.
+  // Bulk: mark the ACTIVE section correct, or only its still-unmarked ones.
   const bulkCorrect = useCallback(
     async (onlyUnmarked: boolean) => {
-      if (!data) return;
       const targets: Id<'questionBank'>[] = [];
-      for (const { slot } of SECTIONS) {
-        for (const q of data[slot]) {
-          if (onlyUnmarked && q.mark) continue;
-          if (q.mark === 'correct') continue;
-          targets.push(q.questionId);
-        }
+      for (const q of activeQs) {
+        if (onlyUnmarked && q.mark) continue;
+        if (q.mark === 'correct') continue;
+        targets.push(q.questionId);
       }
       for (const questionId of targets) {
         await writeMark(questionId, 'correct');
       }
     },
-    [data, writeMark],
+    [activeQs, writeMark],
   );
 
   const onFinalize = useCallback(async () => {
-    if (finalizing || tallies.marked === 0) return;
+    if (finalizing || sheetTotal.marked === 0) return;
     setFinalizing(true);
     try {
       const res = await finalize({ sheetId });
@@ -231,7 +301,7 @@ export function SheetScoringGrid({
     } finally {
       setFinalizing(false);
     }
-  }, [finalizing, tallies.marked, finalize, sheetId]);
+  }, [finalizing, sheetTotal.marked, finalize, sheetId]);
 
   if (data === undefined) {
     return (
@@ -261,35 +331,69 @@ export function SheetScoringGrid({
         </div>
       )}
 
-      <div className="space-y-3 pb-2">
-        {SECTIONS.map(({ slot, title }) => (
-          <Section
-            key={slot}
-            title={title}
-            qs={data[slot] as ScoringQ[]}
-            pending={pending}
-            flaggedKeys={flaggedKeys}
-            onTap={onTap}
-            onToggleFlag={onToggleFlag}
+      {/* Section tabs (left) + grid/sheet view toggle (right). */}
+      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
+          {SECTIONS.map(({ slot, title }) => (
+            <SectionTab
+              key={slot}
+              title={title}
+              meta={sectionMeta[slot]}
+              active={slot === activeSlot}
+              onClick={() => setActiveSlot(slot)}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setViewMode((m) => (m === 'grid' ? 'sheet' : 'grid'))}
+          title={viewMode === 'grid' ? 'Show the question images' : 'Back to the scoring grid'}
+          className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted text-foreground text-[11px] font-semibold hover:bg-muted/80"
+        >
+          {viewMode === 'grid' ? (
+            <>
+              <Eye className="w-3 h-3" />
+              View sheet
+            </>
+          ) : (
+            <>
+              <LayoutGrid className="w-3 h-3" />
+              Score grid
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Active section content — grid or inline sheet view. */}
+      {viewMode === 'grid' ? (
+        <ActiveGrid
+          qs={activeQs}
+          pending={pending}
+          flaggedKeys={flaggedKeys}
+          onTap={onTap}
+          onToggleFlag={onToggleFlag}
+        />
+      ) : (
+        <SheetSectionView crops={crops} slot={activeSlot} />
+      )}
+
+      {/* Bulk quick-actions — active section only, grid mode only. */}
+      {viewMode === 'grid' && activeQs.length > 0 && (
+        <div className="flex items-center gap-1.5 pt-2">
+          <BulkBtn
+            label="All ✓"
+            title="Mark this section's questions correct"
+            onClick={() => bulkCorrect(false)}
           />
-        ))}
-      </div>
+          <BulkBtn
+            label="Rest ✓"
+            title="Mark this section's remaining unmarked questions correct"
+            onClick={() => bulkCorrect(true)}
+          />
+        </div>
+      )}
 
-      {/* Bulk quick-actions */}
-      <div className="flex items-center gap-1.5 pt-1">
-        <BulkBtn
-          label="All ✓"
-          title="Mark every question correct"
-          onClick={() => bulkCorrect(false)}
-        />
-        <BulkBtn
-          label="Rest ✓"
-          title="Mark the remaining unmarked questions correct"
-          onClick={() => bulkCorrect(true)}
-        />
-      </div>
-
-      {/* Footer: tallies + finalize + inline summary */}
+      {/* Footer: active-section tallies + whole-sheet total + finalize. */}
       <div className="sticky bottom-0 mt-3 -mx-1 px-1 pt-2 pb-1 bg-gradient-to-t from-background via-background to-transparent">
         {lastResult && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
@@ -302,85 +406,223 @@ export function SheetScoringGrid({
           <div className="flex items-center gap-3 text-[11px] font-semibold tabular-nums">
             <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
               <Check className="w-3.5 h-3.5" />
-              {tallies.correct}
+              {activeTally.correct}
             </span>
             <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
               <X className="w-3.5 h-3.5" />
-              {tallies.wrong}
+              {activeTally.wrong}
             </span>
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <SkipForward className="w-3.5 h-3.5" />
-              {tallies.skipped}
+              {activeTally.skipped}
             </span>
             <span className="text-muted-foreground/70">
-              {tallies.marked}/{tallies.total}
+              {activeTally.marked}/{activeTally.total} here
             </span>
           </div>
-          <button
-            onClick={onFinalize}
-            disabled={finalizing || tallies.marked === 0}
-            className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-40"
-          >
-            {finalizing ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <CheckCircle2 className="w-3.5 h-3.5" />
-            )}
-            {finalizing ? 'Recording…' : isCompleted ? 'Re-record' : 'Finalize & record'}
-          </button>
+          <div className="ml-auto flex items-center gap-2.5">
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              sheet {sheetTotal.marked}/{sheetTotal.total}
+            </span>
+            <button
+              onClick={onFinalize}
+              disabled={finalizing || sheetTotal.marked === 0}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-40"
+            >
+              {finalizing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              )}
+              {finalizing ? 'Recording…' : isCompleted ? 'Re-record' : 'Finalize & record'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Section ───────────────────────────────────────────────────────────────
+// ── Section tab ─────────────────────────────────────────────────────────────
 
-function Section({
+const DOT_CLS: Record<SectionState, string> = {
+  empty: 'bg-muted-foreground/30',
+  partial: 'bg-amber-500',
+  done: 'bg-emerald-500',
+};
+
+function SectionTab({
   title,
+  meta,
+  active,
+  onClick,
+}: {
+  title: string;
+  meta: { marked: number; total: number; state: SectionState };
+  active: boolean;
+  onClick: () => void;
+}) {
+  const empty = meta.state === 'empty';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={empty}
+      title={
+        empty
+          ? `${title} — no questions`
+          : `${title} — ${meta.marked}/${meta.total} marked`
+      }
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors ${
+        empty
+          ? 'border-transparent bg-muted/40 text-muted-foreground/50 cursor-not-allowed'
+          : active
+            ? 'border-primary bg-primary/10 text-foreground'
+            : 'border-border bg-card text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${DOT_CLS[meta.state]}`} />
+      {title}
+      {!empty && (
+        <span className="tabular-nums text-muted-foreground/80">
+          {meta.marked}/{meta.total}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ── Active section grid ─────────────────────────────────────────────────────
+
+function ActiveGrid({
   qs,
   pending,
   flaggedKeys,
   onTap,
   onToggleFlag,
 }: {
-  title: string;
   qs: ScoringQ[];
   pending: Set<string>;
   flaggedKeys: Set<string>;
   onTap: (q: ScoringQ) => void;
   onToggleFlag: (q: ScoringQ) => void;
 }) {
-  return (
-    <section className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="px-3 py-1.5 border-b border-border bg-muted/30 flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
-          {title}
-        </span>
-        <span className="ml-auto text-[10px] text-muted-foreground tabular-nums">
-          {qs.length} Q{qs.length === 1 ? '' : 's'}
-        </span>
+  if (qs.length === 0) {
+    return (
+      <div className="rounded-xl border border-border bg-card px-3 py-6 text-center text-[11px] text-muted-foreground">
+        No questions in this section.
       </div>
-      {qs.length === 0 ? (
-        <div className="px-3 py-3 text-center text-[11px] text-muted-foreground">
-          No questions in this section.
+    );
+  }
+  return (
+    <div className="rounded-xl border border-border bg-card p-2 grid grid-cols-6 sm:grid-cols-8 gap-1.5">
+      {qs.map((q, i) => (
+        <Cell
+          key={q.questionId as unknown as string}
+          label={i + 1}
+          q={q}
+          isBusy={pending.has(q.questionId as unknown as string)}
+          isFlagged={flaggedKeys.has(q.questionId as unknown as string)}
+          onTap={() => onTap(q)}
+          onToggleFlag={() => onToggleFlag(q)}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── Inline sheet view (read-only crops for the active section) ───────────────
+
+type CropQ = {
+  questionId: Id<'questionBank'>;
+  cropBox: { x: number; y: number; w: number; h: number } | null;
+  pageImageUrl: string | null;
+  conceptNames: string[];
+  source: string;
+  questionNumberInPaper: string | null;
+  marksAvailable: number | null;
+};
+
+function SheetSectionView({
+  crops,
+  slot,
+}: {
+  crops:
+    | { warmup: CropQ[]; main: CropQ[]; revision: CropQ[]; examPrep: CropQ[] }
+    | null
+    | undefined;
+  slot: SlotName;
+}) {
+  if (crops === undefined) {
+    return (
+      <div className="space-y-2 animate-pulse">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-20 bg-muted rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+  if (crops === null) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-4 text-center text-[12px] text-muted-foreground">
+        Sheet not found, or you are not signed in.
+      </div>
+    );
+  }
+  const qs = crops[slot];
+  if (qs.length === 0) {
+    return (
+      <div className="rounded-xl border border-border bg-card px-3 py-6 text-center text-[11px] text-muted-foreground">
+        No questions in this section.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden divide-y divide-border">
+      {qs.map((q, i) => (
+        <div key={q.questionId as unknown as string} className="px-3 py-2.5 flex gap-2.5">
+          <CropThumbnail imageUrl={q.pageImageUrl} cropBox={q.cropBox} maxSide={96} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-xs font-bold text-foreground shrink-0">
+                Q{i + 1}
+              </span>
+              {q.source === 'past-paper' && q.questionNumberInPaper && (
+                <span className="text-[10px] text-muted-foreground">
+                  paper {q.questionNumberInPaper}
+                </span>
+              )}
+              {q.marksAvailable !== null && (
+                <span className="text-[10px] text-muted-foreground">
+                  [{q.marksAvailable}m]
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {q.conceptNames.length === 0 ? (
+                <span className="text-[10px] text-muted-foreground italic">
+                  untagged
+                </span>
+              ) : (
+                q.conceptNames.slice(0, 3).map((name, j) => (
+                  <span
+                    key={j}
+                    className="text-[9px] px-1.5 py-0.5 rounded-md bg-muted text-foreground"
+                  >
+                    {name}
+                  </span>
+                ))
+              )}
+              {q.conceptNames.length > 3 && (
+                <span className="text-[9px] text-muted-foreground self-center">
+                  +{q.conceptNames.length - 3}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-      ) : (
-        <div className="p-2 grid grid-cols-6 sm:grid-cols-8 gap-1.5">
-          {qs.map((q, i) => (
-            <Cell
-              key={q.questionId as unknown as string}
-              label={i + 1}
-              q={q}
-              isBusy={pending.has(q.questionId as unknown as string)}
-              isFlagged={flaggedKeys.has(q.questionId as unknown as string)}
-              onTap={() => onTap(q)}
-              onToggleFlag={() => onToggleFlag(q)}
-            />
-          ))}
-        </div>
-      )}
-    </section>
+      ))}
+    </div>
   );
 }
 

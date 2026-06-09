@@ -10,11 +10,12 @@
 //     student.
 //   • A compact controls row (Generate all · Render all · ZIP) for the whole
 //     roster, lifted from the old Sheets tab.
-//   • Detail pane — the selected student's fixed 4-section scoring grid
+//   • Detail pane — the selected student's section-tabbed scoring grid
 //     (SheetScoringGrid), or an inline "Generate sheet" CTA when they have no
-//     sheet yet, or an off-day note.
-//   • A "View sheet" button opens the full rendered question list in a
-//     read-only side drawer (SheetPreviewDrawer) on demand.
+//     sheet yet, or an off-day note. The grid owns its own section tabs and an
+//     inline "View sheet" toggle (question crops shown in place — no drawer).
+//   • A per-student action toolbar (Open PDF · Render · Re-generate · Mark
+//     printed) sits above the grid.
 //
 // Scoring writes only to generatedSheets / sessionPoints / the engine — the
 // legacy `entries` table is no longer touched here. Marking a question also
@@ -27,7 +28,6 @@ import { toast } from 'sonner';
 import {
   Coffee,
   ExternalLink,
-  Eye,
   FileDown,
   Loader2,
   Printer,
@@ -38,7 +38,6 @@ import {
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
-import { SheetPreviewDrawer } from '@/components/algorithm/sheet-preview';
 import { SheetScoringGrid } from '@/components/session/sheet-scoring-grid';
 import {
   PILL_SORT_RANK,
@@ -63,9 +62,6 @@ export function ScoreSheetTab({
 }) {
   const [selectedStudentId, setSelectedStudentId] =
     useState<Id<'students'> | null>(null);
-  const [viewSheetId, setViewSheetId] = useState<Id<'generatedSheets'> | null>(
-    null,
-  );
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState<{
     kind: string;
@@ -383,20 +379,9 @@ export function ScoreSheetTab({
             onRender={() => doRender(selectedRow, false)}
             onForceRender={() => doRender(selectedRow, true)}
             onMarkPrinted={() => doMarkPrinted(selectedRow)}
-            onViewSheet={() =>
-              selectedRow.sheet && setViewSheetId(selectedRow.sheet._id)
-            }
           />
         )}
       </div>
-
-      {viewSheetId && (
-        <SheetPreviewDrawer
-          sheetId={viewSheetId}
-          onClose={() => setViewSheetId(null)}
-          readOnly
-        />
-      )}
     </div>
   );
 }
@@ -412,7 +397,6 @@ function DetailPane({
   onRender,
   onForceRender,
   onMarkPrinted,
-  onViewSheet,
 }: {
   row: Row;
   rowBusy: string | null;
@@ -422,7 +406,6 @@ function DetailPane({
   onRender: () => void;
   onForceRender: () => void;
   onMarkPrinted: () => void;
-  onViewSheet: () => void;
 }) {
   const status = rowStatus(row);
   const hasPdf = !!row.sheet?.pdfStorageId;
@@ -516,7 +499,8 @@ function DetailPane({
       {/* Per-student sheet actions — always available while a sheet exists, so
           the teacher can Re-generate (e.g. after changing the student's path),
           Re-render the PDF, or mark it printed without leaving the scoring
-          grid. Grouped next to "View sheet". */}
+          grid. The section tabs + inline "View sheet" toggle live in the grid
+          header below. */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
         {row.sheet?.pdfUrl && (
           <a
@@ -528,15 +512,6 @@ function DetailPane({
             <ExternalLink className="w-3 h-3" />
             Open PDF
           </a>
-        )}
-        {row.sheet && (
-          <button
-            onClick={onViewSheet}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted text-foreground text-[11px] font-semibold hover:bg-muted/80"
-          >
-            <Eye className="w-3 h-3" />
-            View sheet
-          </button>
         )}
         {row.sheet && (
           <>
