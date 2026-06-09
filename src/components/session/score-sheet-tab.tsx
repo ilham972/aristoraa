@@ -425,6 +425,22 @@ function DetailPane({
   onViewSheet: () => void;
 }) {
   const status = rowStatus(row);
+  const hasPdf = !!row.sheet?.pdfStorageId;
+  const markedCount = row.sheet?.markedCount ?? 0;
+
+  // Re-generate replaces the sheet (new question selection) — warn first if
+  // marks already exist, since a fresh selection orphans those marks.
+  const handleRegenerate = () => {
+    if (
+      markedCount > 0 &&
+      !window.confirm(
+        `${row.studentName} already has ${markedCount} marked question${markedCount === 1 ? '' : 's'}. Re-generating builds a new sheet and discards those marks. Continue?`,
+      )
+    ) {
+      return;
+    }
+    onGenerate();
+  };
 
   // Header line: name · grade · marked tally.
   const header = (
@@ -497,6 +513,10 @@ function DetailPane({
     <div>
       {header}
 
+      {/* Per-student sheet actions — always available while a sheet exists, so
+          the teacher can Re-generate (e.g. after changing the student's path),
+          Re-render the PDF, or mark it printed without leaving the scoring
+          grid. Grouped next to "View sheet". */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
         {row.sheet?.pdfUrl && (
           <a
@@ -518,14 +538,39 @@ function DetailPane({
             View sheet
           </button>
         )}
-        {status === 'draft-no-pdf' && (
+        {row.sheet && (
           <>
-            <ToolbarBtn icon={<RefreshCw className="w-3 h-3" />} label="Render" tone="primary" onClick={onRender} disabled={!!rowBusy} />
-            <ToolbarBtn icon={<Zap className="w-3 h-3" />} label="Force" tone="amber" onClick={onForceRender} disabled={!!rowBusy} />
+            <ToolbarBtn
+              icon={<RefreshCw className="w-3 h-3" />}
+              label={hasPdf ? 'Re-render' : 'Render'}
+              tone={hasPdf ? 'ghost' : 'primary'}
+              onClick={onRender}
+              disabled={!!rowBusy}
+            />
+            <ToolbarBtn
+              icon={<Zap className="w-3 h-3" />}
+              label="Force"
+              tone="amber"
+              onClick={onForceRender}
+              disabled={!!rowBusy}
+            />
+            <ToolbarBtn
+              icon={<Sparkles className="w-3 h-3" />}
+              label="Re-generate"
+              tone="ghost"
+              onClick={handleRegenerate}
+              disabled={!!rowBusy}
+            />
+            {status !== 'printed' && status !== 'completed' && (
+              <ToolbarBtn
+                icon={<Printer className="w-3 h-3" />}
+                label="Mark printed"
+                tone="primary"
+                onClick={onMarkPrinted}
+                disabled={!!rowBusy}
+              />
+            )}
           </>
-        )}
-        {status === 'draft-with-pdf' && (
-          <ToolbarBtn icon={<Printer className="w-3 h-3" />} label="Mark printed" tone="primary" onClick={onMarkPrinted} disabled={!!rowBusy} />
         )}
       </div>
 
@@ -550,7 +595,7 @@ function ToolbarBtn({
 }: {
   icon: React.ReactNode;
   label: string;
-  tone: 'primary' | 'amber';
+  tone: 'primary' | 'amber' | 'ghost';
   onClick: () => void;
   disabled?: boolean;
 }) {
@@ -558,6 +603,8 @@ function ToolbarBtn({
     primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
     amber:
       'bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20',
+    ghost:
+      'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80',
   }[tone];
   return (
     <button
