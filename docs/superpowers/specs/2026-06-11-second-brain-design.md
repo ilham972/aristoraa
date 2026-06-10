@@ -21,6 +21,8 @@ A layered documentation system in the repo. The AI never reads the whole brain �
 CLAUDE.md                      ← entry door, auto-loaded every session. ≤ 50 lines. Points, never explains.
 docs/brain/
   overview.md                  ← what Math Tracker is, in founder language
+  purpose.md                   ← WHY the app exists: mission, who the students/teachers
+                                 are, business model, what success looks like, vision
   architecture.md              ← tech map: stack, folder map, what talks to what
   domain.md                    ← concepts: tracks, sheets, slots, sessions, scoring,
                                  groups, points, SR/learning engine
@@ -47,6 +49,16 @@ Result: total brain may be ~1,500 lines, but any single session loads ~150.
   Unreachable = listed in `legacy-map.md`.
 - Dead code is identified by evidence (reachability), never by what plan docs say.
 - **Nothing is deleted or moved in this phase.** Zero risk to the live site.
+
+## Founder interview (the purpose layer)
+
+The founder's explicit goal: the AI should know the app AND its purpose better than
+the founder himself. Code cannot reveal purpose, so the audit includes a short
+founder interview (plain-language questions, one at a time) covering: mission, who
+the students and teachers are, how the business earns/grows, what success looks
+like in 1–2 years, and non-negotiables. Answers are distilled into `purpose.md`.
+Every improvement suggestion in `ideas-backlog.md` must be justified against
+`purpose.md` — ideas serve the mission, not just code quality.
 
 ## Plan-file triage
 
@@ -80,3 +92,5 @@ from the backlog + feature files, ranked by impact.
 2. Typical task context cost drops from tens of thousands of tokens to a few thousand.
 3. `legacy-map.md` covers every unwired file in the repo with a verdict.
 4. Founder can request improvement ideas and get specific, app-aware suggestions.
+5. The AI can answer "why does this feature exist?" and evaluate any new idea
+   against the app's mission — i.e., it knows the purpose, not just the code.
