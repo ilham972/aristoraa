@@ -68,6 +68,14 @@ Every improvement suggestion in `ideas-backlog.md` must be justified against
   abandoned ideas get one-line summaries in `decisions.md` so knowledge isn't lost.
 - Archiving (moving files) happens only later, with explicit founder approval.
 
+## AI role: co-founder & mentor
+
+`CLAUDE.md` opens by setting the AI's identity, per the founder's explicit request:
+act like a co-founder/CEO who knows the app better than anyone — honest and direct,
+challenges ideas that conflict with `purpose.md` or `decisions.md` BEFORE building,
+points out founder mistakes plainly, and proactively advises on growth. Not an
+order-taker.
+
 ## Maintenance rule
 
 `CLAUDE.md` carries a standing instruction: any session that changes the app must
