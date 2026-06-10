@@ -1,0 +1,48 @@
+# Audit working file — findings (dead-code candidates + improvement ideas)
+
+Working evidence file. Not a brain file; no size cap. Consolidated into
+legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
+
+## Dead-code candidates from tooling (Task 2 evidence)
+
+### Frontend files imported by nothing live (knip, 14 files)
+- src/components/flag-toggle.tsx
+- src/components/groups/attendance-tab.tsx
+- src/components/learning/student-league-card.tsx
+- src/components/pinch-zoom-area.tsx
+- src/components/position-dialog.tsx
+- src/components/settings/past-paper-pill-header.tsx
+- src/components/sheets/bulk-actions.tsx
+- src/components/sheets/inspector-body.tsx
+- src/components/sheets/inspector-drawer.tsx
+- src/components/sheets/student-row.tsx
+- src/components/sheets/summary-strip.tsx
+- src/components/top-header.tsx
+- src/lib/phone.ts
+- src/lib/store.ts
+
+### Convex modules with NO real callers (only referenced by generated api.d.ts)
+- convex/groupMigration.ts            (possibly intentional one-off migration tool)
+- convex/learningEngine/backfill.ts   (possibly intentional one-off backfill tool — track model founder-gated step)
+- convex/lib/naming.ts
+- convex/messaging/testSend.ts        (note: messaging/sendTest.ts EXISTS too and IS called — near-duplicate names)
+- convex/sessionSubmissions.ts
+- convex/studentModulePositions.ts
+
+### Unused dependencies (knip)
+- html2canvas, shadcn, sharp, tw-animate-css, uuid (deps)
+- @types/uuid, tailwindcss (devDeps — tailwindcss likely false positive, used via PostCSS)
+
+### Unused exports (knip — within live files; symptom of iteration layers)
+- src/lib/scoring.ts: 12 unused exports (calculateDailyPoints, getDailyScore, …) — old points system remnants
+- src/lib/sub-questions.ts: 7 unused exports — pre-stem/leaf model remnants
+- src/lib/types.ts: formatMinutesToTime, MODULE_DAYS, getTodayModule, getDayName — weekday→module system remnants (killed by path redesign)
+- src/components/sheets/filters-bar.tsx: FiltersBar itself unused — superseded sheets UI
+- src/components/session/session-workspace.tsx: ALL_SESSION_TABS, isSessionTab — tab-merge remnants
+
+### Notes
+- convex/seeds/* have 0 api callers — run manually via `npx convex run`; KEEP as tools.
+- convex/lib/* are direct-import helpers; all alive except lib/naming.ts.
+
+## Improvement ideas (seeded during audit; justify against purpose.md)
+(appended by Tasks 4–9)
