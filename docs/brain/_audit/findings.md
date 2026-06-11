@@ -92,3 +92,18 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - Client JS total 3.3MB, largest chunk 419KB (likely Clerk); pdf libs are backend-only (not in bundle). Dead deps still installed.
 - /groups fires ~6 queries on open; no aggregate home-screen query.
 - Plan (founder-facing, 5 phases): SW cache-first; skeleton-not-blank auth; merged home query; optimistic UI/skeletons; bundle trim.
+
+## Deep performance audit round 2 (2026-06-12)
+TIER 1 (felt daily):
+- Sheet-scoring CropThumbnail (sheet-preview.tsx:823) downloads the FULL textbook page scan per 96px thumbnail (CSS-crop via background-position). A 20-question sheet can pull tens of MB on mobile data. Fix: server-side pre-generated crop thumbnails (pdf pipeline already renders server-side). Convex storage URLs are stable + browser-cached, so repeats are OK; first view per page is the hit.
+- /groups home fires 8 useQuery on open; merged homeScreen query = phase 3.
+- /progress + /leaderboard full-table client aggregation (dies with track flip).
+TIER 2:
+- lead-tab.tsx: 10 useQuery; per-student expand panels fire 4 more queries each (RTT-visible lag on expand). lead.studentContext aggregate already exists — extend it to cover the 639-642 block.
+- Settings tabs: data-entry 8 / difficulty 7 / content 6 queries (admin-only, low priority).
+- Bundle: 3.3MB total JS, 419KB top chunk (Clerk). Dead deps removable (sharp, html2canvas, uuid, shadcn, tw-animate-css). Lazy-load candidates: railway-map, sheet-preview.
+- PWA icons heavy: icon-512 = 510KB AND logo.png = identical 510KB duplicate; resize/compress.
+TIER 3 (scale-only): no list virtualization; client date filtering — fine at 40 students.
+STRUCTURAL: 230-780ms SL->US RTT + Clerk handshake ~1s — can only be masked (skeletons, optimistic UI, caching), never removed.
+ALREADY GOOD: all routes prerendered static; pdfjs-dist lazy-loaded only in settings content-tab; fonts self-hosted via next/font; no pdf libs in client bundle; Convex dedupes identical subscriptions.
+Roadmap: P3 merged home query; P4 optimistic UI + skeletons; P5 bundle/icon trim + lazy-load; P6 crop thumbnails (daily-loop win); P7 scale items.
