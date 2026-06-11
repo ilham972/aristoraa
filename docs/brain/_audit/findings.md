@@ -53,3 +53,9 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - Unused exports in src/lib/groups/time-grid.ts (WEEKDAY_BANDS, bandsForDay, jsDowToDayNum) — old weekday-band system leftovers.
 - IDEA: /groups page.tsx is 1030 lines and edit-group-dialog 816 — split candidates for maintainability (serves scale-readiness, secondary to engine).
 - IDEA: Phase F.6–F.8 unfinished (old scheduling tab still wired) — finishing it removes a whole legacy surface (serves teacher efficiency + dead-code reduction).
+
+## Task 5 findings (session/sheets/scoring)
+- DEAD cluster: src/components/sheets/{inspector-drawer,inspector-body,student-row,bulk-actions,summary-strip}.tsx + FiltersBar — pre-merge standalone Sheets UI (~1.6k lines total).
+- DEAD: convex/sessionSubmissions.ts — zero callers; superseded by learningEngine scoring path.
+- IDEA: lead-tab.tsx is 1487 lines — split candidate.
+- IDEA: scoring finalize is the single SR/points entry point — good place for engine-quality metrics (serves learning engine / moat).
