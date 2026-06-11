@@ -46,12 +46,12 @@ src/lib/scoring.ts (12), src/lib/sub-questions.ts (7), src/lib/types.ts
 (FiltersBar), session-workspace.tsx (2), shared.ts, scope.ts, curriculum-data
 (getAllUnitIds), groups/color.ts (GROUP_PALETTE_SIZE).
 
-## Dependencies (package.json)
+## Dependencies (package.json) — actioned 2026-06-12
 | Dep | Verdict | Why |
 |---|---|---|
-| sharp | SAFE-DELETE | abandoned for pdf-lib (decisions.md) |
-| html2canvas | FOUNDER-DECIDES | old leaderboard-image era; unused now |
-| shadcn, tw-animate-css, uuid, @types/uuid | SAFE-DELETE | unreferenced |
+| sharp | DONE: moved to devDeps | used only by scripts/ icon tools |
+| html2canvas, uuid, @types/uuid | DONE: removed | zero references |
+| shadcn, tw-animate-css | KEEP | knip false positives — imported in globals.css |
 | tailwindcss (devDep) | KEEP | knip false positive (PostCSS pipeline) |
 
 ## Cleanup ground rules (when founder approves a cleanup phase)

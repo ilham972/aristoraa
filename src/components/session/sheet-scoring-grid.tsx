@@ -28,7 +28,10 @@
 // auto-mark the student present on the first real mark of the session.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery } from 'convex/react';
+import { useMutation } from 'convex/react';
+// Cached drop-in for useQuery: last result renders instantly from device
+// storage while the live subscription refreshes (perf phase 3).
+import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
 import {
   Check,
@@ -110,7 +113,28 @@ export function SheetScoringGrid({
   onFirstMark?: () => void;
 }) {
   const data = useQuery(api.learningEngine.scoring.getSheetForScoring, { sheetId });
-  const setSheetMark = useMutation(api.learningEngine.scoring.setSheetMark);
+  // Optimistic: the tapped cell recolors instantly from the local store while
+  // the mutation travels (perf phase 4). Convex rolls the local change back
+  // automatically if the server rejects it, and the subscription re-syncs.
+  const setSheetMark = useMutation(
+    api.learningEngine.scoring.setSheetMark,
+  ).withOptimisticUpdate((localStore, args) => {
+    const q = api.learningEngine.scoring.getSheetForScoring;
+    const current = localStore.getQuery(q, { sheetId: args.sheetId });
+    if (!current) return;
+    const newMark = args.mark === 'unmarked' ? null : args.mark;
+    const apply = <T extends { questionId: string; mark: string | null }>(qs: T[]): T[] =>
+      qs.map((row) =>
+        row.questionId === args.questionId ? { ...row, mark: newMark } : row,
+      );
+    localStore.setQuery(q, { sheetId: args.sheetId }, {
+      ...current,
+      warmup: apply(current.warmup),
+      main: apply(current.main),
+      revision: apply(current.revision),
+      examPrep: apply(current.examPrep),
+    });
+  });
   const finalize = useMutation(api.learningEngine.scoring.finalizeSheetScoring);
   const flagQuestion = useMutation(api.doubts.flagQuestion);
   const removeFlag = useMutation(api.doubts.removePendingForQuestion);
@@ -209,7 +233,9 @@ export function SheetScoringGrid({
   const writeMark = useCallback(
     async (questionId: Id<'questionBank'>, mark: string) => {
       const key = questionId as unknown as string;
-      if (pending.has(key)) return;
+      // No pending early-return: marks apply optimistically, so rapid
+      // cycle-taps must keep flowing. Convex runs this client's mutations in
+      // order — last tap wins, same as the server would resolve it.
       setPending((s) => new Set(s).add(key));
       try {
         await setSheetMark({ sheetId, questionId, mark });
@@ -659,22 +685,22 @@ function Cell({
   const canFlag = q.conceptIds.length > 0;
   return (
     <div className="relative">
+      {/* Never disabled while saving: marks render optimistically, so the
+          cell must stay tappable for fast cycle-taps (perf phase 4). isBusy
+          is intentionally ignored — the optimistic mark IS the feedback. */}
       <button
         type="button"
         onClick={onTap}
-        disabled={isBusy}
         title={
           q.source === 'past-paper' && q.questionNumberInPaper
             ? `paper ${q.questionNumberInPaper}`
             : undefined
         }
-        className={`w-full h-11 rounded-xl text-sm font-bold flex items-center justify-center transition-colors disabled:opacity-60 ${
+        className={`w-full h-11 rounded-xl text-sm font-bold flex items-center justify-center transition-colors ${
           mark ? CELL_STYLES[mark] : 'bg-muted text-muted-foreground hover:bg-muted/70'
         }`}
       >
-        {isBusy ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : mark === 'correct' ? (
+        {mark === 'correct' ? (
           <Check className="w-4 h-4" />
         ) : mark === 'wrong' ? (
           <X className="w-4 h-4" />

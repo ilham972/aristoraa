@@ -21,7 +21,9 @@
 // Day view) is untouched and keeps its own back arrow + group stepper.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from 'convex/react';
+// Cached drop-in for useQuery: last result renders instantly from device
+// storage while the live subscription refreshes (perf phase 3).
+import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { CalendarOff } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { groupColor } from '@/lib/groups/color';

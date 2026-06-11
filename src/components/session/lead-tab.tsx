@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useQuery, useMutation } from 'convex/react';
+import { useMutation } from 'convex/react';
+// Cached drop-in for useQuery: last result renders instantly from device
+// storage while the live subscription refreshes (perf phase 3).
+import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import {
   Radio,
   Video,

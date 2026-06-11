@@ -47,6 +47,9 @@ summary-strip + FiltersBar export. Only `shared.ts` (partially) and
 `scope.ts` stay referenced. `sessionSubmissions` convex module: zero callers.
 
 ## Invariants
+- Mark taps apply OPTIMISTICALLY (withOptimisticUpdate on setSheetMark;
+  cells never disable mid-save) and reads use useCachedQuery — keep both if
+  touching the grid.
 - Scoring happens ONLY through sheets (no sheet → no score entry).
 - Finalize is the single point where marks become memory/points effects.
 - Session identity = slot + date string (YYYY-MM-DD), never a session id.

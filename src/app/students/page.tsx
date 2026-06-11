@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useQuery, useMutation } from 'convex/react';
+import { useMutation } from 'convex/react';
+// Cached drop-in for useQuery: last result renders instantly from device
+// storage while the live subscription refreshes (perf phase 3).
+import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

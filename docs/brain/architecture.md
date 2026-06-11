@@ -8,8 +8,8 @@
 - **Tailwind + shadcn/Base UI** (`src/components/ui` = generated primitives,
   treat as library code), lucide icons, sonner toasts, vaul drawers.
 - **PDF**: pure-JS `pdf-lib` (+fontkit) for sheet rendering/clipping,
-  `pdfjs-dist` for viewing. `sharp` is in package.json but UNUSED (legacy of an
-  abandoned approach — see decisions.md).
+  `pdfjs-dist` for viewing (lazy-loaded, settings content-tab only). `sharp`
+  is a devDependency only — used by icon scripts, never at runtime.
 - **Tests**: vitest (pure logic) + convex-test (DB integration), in `tests/`.
 
 ## Folder map
@@ -17,6 +17,9 @@
 - `src/components/<area>/` — components per area; root-level files = shared/shell.
 - `src/lib/` — pure client logic (no React): scoring, sheets, groups, curriculum.
 - `src/contexts/`, `src/hooks/` — app-wide state and helpers.
+  `hooks/use-cached-query.ts` — drop-in useQuery replacement: persists last
+  result to localStorage, renders it instantly, live data replaces it (the
+  native-feel layer; used on /groups, /students and all session tabs).
 - `convex/<module>.ts` — backend, one module per domain (students, groups, …).
 - `convex/learningEngine/` — the planner/SR/mastery/tracks engine (the moat).
 - `convex/messaging/` — messaging hub backend.

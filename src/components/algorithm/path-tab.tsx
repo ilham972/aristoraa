@@ -22,7 +22,19 @@ import { CURRICULUM_MODULES } from '@/lib/curriculum-data';
 import { MODULE_COLORS } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { RailwayMap } from './railway-map';
+import dynamic from 'next/dynamic';
+
+// Heavy and rarely opened — load only when the Map sub-tab is selected so it
+// never weighs down the /algorithm page bundle.
+const RailwayMap = dynamic(
+  () => import('./railway-map').then((m) => m.RailwayMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-64 rounded-2xl bg-muted animate-pulse" aria-hidden />
+    ),
+  },
+);
 
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];

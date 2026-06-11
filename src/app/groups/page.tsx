@@ -7,7 +7,10 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQuery } from 'convex/react';
+import { useMutation } from 'convex/react';
+// Cached drop-in for useQuery: last result renders instantly from device
+// storage while the live subscription refreshes (perf phase 3).
+import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
 import {
   CalendarDays,
