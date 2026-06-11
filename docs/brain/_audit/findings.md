@@ -46,3 +46,10 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 
 ## Improvement ideas (seeded during audit; justify against purpose.md)
 (appended by Tasks 4–9)
+
+## Task 4 findings (groups & scheduling)
+- DEAD: src/components/groups/attendance-tab.tsx (536 lines) — analytics moved to /analytics, this stayed behind.
+- DEAD-ish: convex/lib/naming.ts — backend twin of src/lib/groups/naming.ts, zero importers.
+- Unused exports in src/lib/groups/time-grid.ts (WEEKDAY_BANDS, bandsForDay, jsDowToDayNum) — old weekday-band system leftovers.
+- IDEA: /groups page.tsx is 1030 lines and edit-group-dialog 816 — split candidates for maintainability (serves scale-readiness, secondary to engine).
+- IDEA: Phase F.6–F.8 unfinished (old scheduling tab still wired) — finishing it removes a whole legacy surface (serves teacher efficiency + dead-code reduction).
