@@ -59,3 +59,9 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - DEAD: convex/sessionSubmissions.ts — zero callers; superseded by learningEngine scoring path.
 - IDEA: lead-tab.tsx is 1487 lines — split candidate.
 - IDEA: scoring finalize is the single SR/points entry point — good place for engine-quality metrics (serves learning engine / moat).
+
+## Task 6 findings (learning engine)
+- planner.ts (2309) and pdf.ts (1230) are huge but ALIVE and well-commented — split only with great care, the comments are load-bearing docs.
+- backfill.ts unwired but KEEP — needed for founder-gated track seed/backfill step (project_track_model).
+- IDEA (high): cumulative-exam holdout validation loop is the plan centerpiece — verify it has a UI/report surface; if not, build one (serves: learning engine, predicted-time promise).
+- IDEA: predicted-time-to-A is the brand promise but no module computes a per-student ETA — candidate flagship feature (serves: mission promise directly).
