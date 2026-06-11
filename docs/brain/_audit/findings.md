@@ -83,3 +83,4 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - DEAD: convex/messaging/{policy,provider,recipients,templates}.ts are direct-import ALIVE — earlier zero-api-callers signal was false for these; keep.
 - src/components/settings/past-paper-pill-header.tsx — dead draft (knip).
 - IDEA: messaging settings page shows gateway connection status — add a CLAUDE-visible smoke check before relying on sends (serves: teacher trust).
+- CORRECTION 2: Open-WA gateway IS live (DigitalOcean droplet); W.1-W.5 shipped to prod 2026-05-30. Real blockers: founder acceptance tests + empty parentPhone on all prod students.

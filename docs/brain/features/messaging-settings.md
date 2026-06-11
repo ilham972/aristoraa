@@ -15,9 +15,13 @@ Cloud API by replacing one file. No caller may hit the API directly.
 **Dev-mode safety:** `WHATSAPP_DEV_MODE=true` (default) rewrites every
 recipient to `WHATSAPP_DEV_NUMBER` at the provider layer with a "[DEV → orig]"
 prefix — no accidental real-parent sends. Spec: whatsapp_integration_plan.md
-(root). The external Open-WA gateway is a separate server process; hub
-features only deliver for real when it is running + connected (see
-/messaging/settings connection status). Human-mimic send pacing per spec.
+(root; its gitignored Section 17 holds infra credentials). The Open-WA gateway
+runs on a DigitalOcean droplet and W.1–W.5 are shipped to prod (2026-05-30).
+Remaining: founder acceptance tests, and a DATA blocker — students'
+parentPhone is empty on prod (normalize via /messaging/settings button).
+**NO cron jobs in messaging BY DESIGN** — every batch is human-triggered;
+human-mimic pacing via scheduler self-chaining inside a triggered batch.
+Sessions drop to qr_ready often — re-scan QR at the gateway dashboard.
 Tables: parentContacts, studentParents, whatsappGroups, messageTemplates,
 messageQueue, messageLog, conversations.
 Near-duplicate modules: `sendTest.ts` is WIRED, `testSend.ts` is DEAD.
