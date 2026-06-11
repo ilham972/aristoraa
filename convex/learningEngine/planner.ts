@@ -88,7 +88,6 @@ import {
   SESSION_MIN_CEILING,
   SHEET_LEN_FLOOR,
   SHEET_LEN_CEILING,
-  EXAM_WEEK_DAYS,
   LATE_TERM_DAYS,
   PHASE_RATIOS,
   DEFAULT_RATIOS,
@@ -1080,11 +1079,16 @@ async function determinePhase(
     .withIndex("by_grade", (q) => q.eq("grade", studentSchoolGrade))
     .collect();
 
-  let next: { examDate: string; term: number } | null = null;
+  let next: { examDate: string; term: number; examModeActive: boolean } | null =
+    null;
   for (const r of examRows) {
     if (r.examDate < dateStr) continue;
     if (!next || r.examDate < next.examDate) {
-      next = { examDate: r.examDate, term: r.term };
+      next = {
+        examDate: r.examDate,
+        term: r.term,
+        examModeActive: r.examModeActive === true,
+      };
     }
   }
   if (!next) {
@@ -1102,7 +1106,12 @@ async function determinePhase(
   const asOfMs = parseYmdToMs(dateStr);
   const daysToExam = Math.round((examMs - asOfMs) / MS_PER_DAY);
 
-  if (daysToExam <= EXAM_WEEK_DAYS) {
+  // Exam-week mode is now MANUAL (Founder, 2026-06-11): it fires only when the
+  // teacher flips the exam's "Exam mode" switch on the Exam Calendar — never
+  // automatically from proximity. The early/late ratio buckets below still key
+  // off daysToExam; only this disruptive term-lock branch is gated. The 14-day
+  // window now only drives the "exam approaching" reminder (convex/examAlerts).
+  if (next.examModeActive) {
     return {
       phase: `examWeek-T${next.term}` as PhaseKey,
       ratios: { ...EXAM_WEEK_RATIOS },

@@ -594,6 +594,11 @@ export default defineSchema({
     examDate: v.string(), // YYYY-MM-DD
     totalMarks: v.optional(v.number()),
     notes: v.optional(v.string()),
+    // Manual "exam mode" switch (Founder, 2026-06-11). When true, the sheet
+    // planner enters exam-week mode for this exam's term (Main block locks to
+    // the exam term). Absent/false = off — exam-week is NEVER auto-triggered by
+    // proximity anymore. See determinePhase in learningEngine/planner.ts.
+    examModeActive: v.optional(v.boolean()),
   })
     .index("by_grade_term_year", ["grade", "term", "year"])
     .index("by_examDate", ["examDate"])

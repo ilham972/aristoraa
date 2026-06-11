@@ -30,6 +30,7 @@ type ExamRow = {
   examDate: string;
   totalMarks?: number;
   notes?: string;
+  examModeActive?: boolean;
 };
 
 interface DraftForm {
@@ -75,6 +76,7 @@ export default function ExamCalendarPage() {
   const upsert = useMutation(api.learningEngine.calendar.upsert);
   const updateById = useMutation(api.learningEngine.calendar.updateById);
   const remove = useMutation(api.learningEngine.calendar.remove);
+  const setExamMode = useMutation(api.learningEngine.calendar.setExamMode);
 
   const [openGrade, setOpenGrade] = useState<number | null>(7);
   const [draft, setDraft] = useState<DraftForm | null>(null);
@@ -172,6 +174,22 @@ export default function ExamCalendarPage() {
     [remove],
   );
 
+  const onToggleExamMode = useCallback(
+    async (row: ExamRow, next: boolean) => {
+      try {
+        await setExamMode({ id: row._id, active: next });
+        toast.success(
+          next
+            ? `Exam mode ON — sheets focus on G${row.grade} Term ${row.term}`
+            : 'Exam mode off — normal teaching order',
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to update');
+      }
+    },
+    [setExamMode],
+  );
+
   return (
     <div className="px-4 pt-5 pb-24 max-w-lg mx-auto">
       <div className="flex items-center gap-2 mb-4">
@@ -251,6 +269,7 @@ export default function ExamCalendarPage() {
                         row={row}
                         onEdit={() => openEdit(row)}
                         onDelete={() => onDelete(row)}
+                        onToggleExamMode={(next) => onToggleExamMode(row, next)}
                       />
                     ))}
                   </div>
@@ -279,10 +298,12 @@ function ExamRowItem({
   row,
   onEdit,
   onDelete,
+  onToggleExamMode,
 }: {
   row: ExamRow;
   onEdit: () => void;
   onDelete: () => void;
+  onToggleExamMode: (next: boolean) => void;
 }) {
   const dDays = daysFromNow(row.examDate);
   let relLabel: string;
@@ -303,38 +324,78 @@ function ExamRowItem({
     relLabel = `in ${dDays}d`;
     relClass = 'text-foreground';
   }
+  const examModeOn = row.examModeActive === true;
+  // Upcoming-and-soon but switch still off → hint that turning it on is due.
+  const suggestOn =
+    !examModeOn && dDays !== null && dDays >= 0 && dDays <= 14;
   return (
-    <div className="px-3 py-2.5 flex items-center gap-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-semibold text-foreground">
-          Term {row.term} · {row.year}
-        </div>
-        <div className="text-[11px] text-muted-foreground">
-          {row.examDate} · <span className={relClass}>{relLabel}</span>
-          {row.totalMarks != null && (
-            <span> · {row.totalMarks} marks</span>
+    <div className="px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold text-foreground">
+            Term {row.term} · {row.year}
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            {row.examDate} · <span className={relClass}>{relLabel}</span>
+            {row.totalMarks != null && <span> · {row.totalMarks} marks</span>}
+          </div>
+          {row.notes && (
+            <div className="text-[10px] text-muted-foreground truncate mt-0.5">
+              {row.notes}
+            </div>
           )}
         </div>
-        {row.notes && (
-          <div className="text-[10px] text-muted-foreground truncate mt-0.5">
-            {row.notes}
-          </div>
-        )}
+        <button
+          onClick={onEdit}
+          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+          aria-label="Edit"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={onDelete}
+          className="p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500"
+          aria-label="Delete"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
       </div>
-      <button
-        onClick={onEdit}
-        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
-        aria-label="Edit"
-      >
-        <Pencil className="w-3.5 h-3.5" />
-      </button>
-      <button
-        onClick={onDelete}
-        className="p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500"
-        aria-label="Delete"
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
+
+      {/* Manual exam-mode switch. ON = sheets lock to this exam's term. */}
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold text-foreground">
+            Exam mode {examModeOn ? 'on' : 'off'}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {examModeOn
+              ? 'Sheets focus on this term'
+              : suggestOn
+                ? 'Exam is near — turn on to focus sheets'
+                : 'Normal teaching order'}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={examModeOn}
+          aria-label="Toggle exam mode"
+          onClick={() => onToggleExamMode(!examModeOn)}
+          className={`relative shrink-0 inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            examModeOn
+              ? 'bg-primary'
+              : suggestOn
+                ? 'bg-amber-500/60'
+                : 'bg-border'
+          }`}
+        >
+          <span
+            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+              examModeOn ? 'translate-x-[22px]' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
     </div>
   );
 }

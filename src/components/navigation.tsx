@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart, MessageSquare } from 'lucide-react';
+import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart, MessageSquare, Bell } from 'lucide-react';
+import { useQuery } from 'convex/react';
+import { api } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
@@ -18,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   // Board href is founder-gated: PRIMARY_BOARD_HREF stays '/leaderboard' until
   // LEADERBOARD_PRIMARY flips to 'cohort', then points at the leagues board.
   { href: PRIMARY_BOARD_HREF, label: 'Board', icon: Trophy },
+  { href: '/notifications', label: 'Alerts', icon: Bell },
   { href: '/students', label: 'Students', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -26,6 +29,9 @@ export function BottomNav() {
   const pathname = usePathname();
   const { hideBottomNav } = useNavVisibility();
   const { role, teacher } = useCurrentTeacher();
+  // Unread-count badge for the Alerts item only.
+  const unseen = useQuery(api.notifications.unseenCount);
+  const unseenCount = typeof unseen === 'number' ? unseen : 0;
 
   if (hideBottomNav) return null;
 
@@ -66,6 +72,11 @@ export function BottomNav() {
                     isActive ? 'stroke-[2.5]' : 'stroke-[1.75]'
                   )}
                 />
+                {item.href === '/notifications' && unseenCount > 0 && (
+                  <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
+                    {unseenCount > 99 ? '99+' : unseenCount}
+                  </span>
+                )}
               </div>
               <span className={cn(
                 'text-[9.5px] leading-none transition-all',

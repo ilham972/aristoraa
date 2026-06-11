@@ -240,6 +240,22 @@ export const remove = mutation({
   },
 });
 
+// Manual exam-mode toggle (Founder, 2026-06-11). Flipping this on puts the
+// sheet planner into exam-week mode for this exam's term (Main block locks to
+// the exam term). Off = normal teaching order. Replaces the old automatic
+// 14-day proximity trigger in determinePhase.
+export const setExamMode = mutation({
+  args: { id: v.id("examCalendar"), active: v.boolean() },
+  handler: async (ctx, { id, active }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(id);
+    if (!row) throw new Error("Exam row not found");
+    await ctx.db.patch(id, { examModeActive: active });
+    return id;
+  },
+});
+
 // Re-export the date helper so profile.ts can compute "days to exam" without
 // going through a Convex query.
 export { daysBetweenYmd };
@@ -252,4 +268,5 @@ export type ExamCalendarRow = {
   examDate: string;
   totalMarks?: number;
   notes?: string;
+  examModeActive?: boolean;
 };
