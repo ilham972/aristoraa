@@ -38,7 +38,7 @@
 - `/messaging` + 8 subpages (today, tomorrow, inbox, outbox, broadcasts,
   templates, weekly-cards, settings) — messaging hub.
 - `/settings` + `/crop/[unitId]` + `/past-paper-crop/[paperId]` — config + PDF
-  crop tools. `/more`, `/sign-in/[[...sign-in]]` — shell/auth.
+  crop tools. `/more`, `/notifications`, `/sign-in/[[...sign-in]]` — shell/auth.
 
 ## Data flow (typical)
 page.tsx → `useQuery/useMutation(api.<module>.<fn>)` → convex module →

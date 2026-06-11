@@ -41,6 +41,13 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
 ## App shell
 - `src/components/navigation.tsx` — bottom nav (transit-app aesthetic, dark
   navy + teal — founder's locked-in theme, feedback_theme_preference).
+  `/notifications` page hosts the bell's feed.
+- `src/components/auth-layout.tsx` — renders an instant ShellSkeleton while
+  Clerk verifies (never a blank screen — perf phase 2). Skeleton is visual
+  only: no queries, no real nav.
+- `public/sw.js` — PWA worker: cache-first for /_next/static (immutable),
+  network-first for navigations, stale-while-revalidate for the rest;
+  cross-origin (Clerk/Convex) NEVER intercepted. Bump CACHE_NAME on change.
 - `src/app/more/page.tsx` — overflow menu to secondary pages.
 - `src/contexts/`, `src/hooks/` — app-wide state/helpers.
 - Auth: Clerk (`/sign-in`, `src/middleware.ts`, `convex/auth.config.ts`).
