@@ -1,0 +1,62 @@
+# Decisions — why things are the way they are
+
+Check this BEFORE proposing anything. If an idea appears here as abandoned,
+don't re-propose it without new evidence. Format: decision — chose X over Y
+because Z.
+
+## The big pivot
+- **Learning engine over operations-only** — the app started as score
+  tracking + leaderboard (app_prompt.md). Founder realized operations alone
+  give no result guarantee: "we don't have standard SOP for service delivery"
+  (convesation_about_engine.md). Pivot: SR/AR/interleaving engine that hands
+  each student a personal SHEET instead of page+exercise numbers. This became
+  the moat and the priority compass (purpose.md).
+
+## Superseded designs (do NOT resurrect)
+- **Weekday→module mapping** (Mon=Numbers … 6 modules, 6 days) — original
+  backbone, killed by the path-driven redesign: teacher-curated unit path,
+  then track-driven Main block after the exam-mode change. Remnants:
+  MODULE_DAYS/getTodayModule in src/lib/types.ts (unused).
+- **Per-exercise Score tab** — merged into the sheet-based Sheets tab
+  (2026-06-07). Scoring is sheet-only; no sheet → no score.
+- **sharp for PDF imaging** — abandoned for pure-JS pdf-lib (serverless
+  compatibility); sharp still sits in package.json, dead.
+- **Grade-based points/position** — replaced by cross-grade named TRACKS +
+  leagues + railway map. Legacy still primary until LEADERBOARD_PRIMARY flips
+  (founder-gated; see tracks-leaderboard.md).
+- **Daily leaderboard images to WhatsApp groups** (app_prompt era) —
+  superseded by Phase W messaging hub + weekly cards.
+- **Automatic exam-week detection** — exam mode is a MANUAL switch
+  (examModeActive) + daily alert; auto-detection rejected.
+- **Standalone Sheets management UI** (inspector drawer/body, student rows,
+  bulk actions) — superseded by the merged session Sheets tab; files dead.
+
+## Standing constraints (decided, still binding)
+- **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
+  render; noStem flag for instruction-less leaves.
+- **repeatCount remedy**: TEMPORARY count-based cooldown stopgap; must NOT
+  touch SR/mastery; don't extend it.
+- **Messaging: NO cron** — every batch human-triggered; all WhatsApp I/O via
+  provider.ts chokepoint; Open-WA chosen over Meta Cloud (free, ban risk
+  accepted, swap = one file).
+- **Day-of-week = 1=Mon..7=Sun** everywhere (a 0-based assumption once
+  silently dropped Sunday slots).
+- **Deferred, not abandoned**: student tablet app + concept videos
+  (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
+  reminders, weekly-card image variant.
+
+## Plan-file verdicts (root *.md)
+| File | Verdict |
+|---|---|
+| learning_engine_plan.md | **CURRENT** strategy — NEVER delete |
+| algorithm_plan.md | **CURRENT** tactical spec — NEVER delete |
+| whatsapp_integration_plan.md | ACTIVE spec (W.1–W.5 shipped; §17 has infra creds) |
+| sheet_structure_redesign_plan.md | ACTIVE spec (path-driven sheets) |
+| sheet_scoring_plan.md | ACTIVE spec (sheet-synced scoring) |
+| business_strategy.txt | REFERENCE — "Factory Model" 4-role business plan |
+| curriculum context.md | REFERENCE — raw Tamil unit lists (seed input) |
+| app_prompt.md | HISTORICAL — original spec; Score section already obsolete |
+| new_change.md | HISTORICAL — Lead dashboard (built) + tablet app (deferred) |
+| convesation_about_engine.md | HISTORICAL — raw pivot conversation |
+| phase_0_4/0_5/0_6_plan.md | HISTORICAL — executed build plans |
+| open-wa-intro.md | HISTORICAL — vendor docs copy |
