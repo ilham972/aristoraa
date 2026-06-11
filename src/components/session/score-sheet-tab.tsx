@@ -39,6 +39,7 @@ import {
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { SheetScoringGrid } from '@/components/session/sheet-scoring-grid';
+import { SheetPlannerPanel } from '@/components/session/sheet-planner-panel';
 import {
   PILL_SORT_RANK,
   PILL_STYLES,
@@ -68,6 +69,8 @@ export function ScoreSheetTab({
     total: number;
     done: number;
   } | null>(null);
+  // Generate-time control panel target (null = closed).
+  const [plannerRow, setPlannerRow] = useState<Row | null>(null);
 
   // ── Data ────────────────────────────────────────────────────────────
   const slotRows = useQuery(api.learningEngine.sheets.listSheetsForSlotDate, {
@@ -139,33 +142,17 @@ export function ScoreSheetTab({
   }, [selectedStudentId, attendance, markPresent, slotId, date]);
 
   // ── Per-student sheet actions ─────────────────────────────────────────
-  const doGenerate = useCallback(
-    async (r: Row) => {
-      const scope = studentScope(r.studentId);
-      if (!scope) {
+  // Generate opens the control panel (preview + tune) rather than writing
+  // immediately. The panel previews via planSheet and writes on confirm.
+  const openPlanner = useCallback(
+    (r: Row) => {
+      if (!studentScope(r.studentId)) {
         toast.error("Couldn't resolve this student's module scope.");
         return;
       }
-      setRowBusy('Generating…');
-      try {
-        const res = await saveSheet({
-          studentId: r.studentId,
-          dateStr: date,
-          unitIds: scope.unitIds,
-          gradeByModule: scope.gradeByModule,
-          slotId,
-        });
-        if (res.status === 'ok') toast.success(`${r.studentName}: sheet ready`);
-        else if (res.status === 'off-day')
-          toast.info(`${r.studentName}: off-day — no sheet written`);
-        else toast.error(`${r.studentName}: ${res.status}`);
-      } catch (e) {
-        toast.error(`${r.studentName}: ${describeError(e)}`);
-      } finally {
-        setRowBusy(null);
-      }
+      setPlannerRow(r);
     },
-    [saveSheet, studentScope, date, slotId],
+    [studentScope],
   );
 
   const doRender = useCallback(
@@ -375,13 +362,32 @@ export function ScoreSheetTab({
             rowBusy={rowBusy}
             slotId={slotId}
             onFirstMark={onFirstMark}
-            onGenerate={() => doGenerate(selectedRow)}
+            onGenerate={() => openPlanner(selectedRow)}
             onRender={() => doRender(selectedRow, false)}
             onForceRender={() => doRender(selectedRow, true)}
             onMarkPrinted={() => doMarkPrinted(selectedRow)}
           />
         )}
       </div>
+
+      {/* Generate-time control panel */}
+      {plannerRow &&
+        (() => {
+          const scope = studentScope(plannerRow.studentId);
+          if (!scope) return null;
+          return (
+            <SheetPlannerPanel
+              studentId={plannerRow.studentId}
+              studentName={plannerRow.studentName}
+              date={date}
+              slotId={slotId}
+              unitIds={scope.unitIds}
+              gradeByModule={scope.gradeByModule}
+              onClose={() => setPlannerRow(null)}
+              onGenerated={() => setPlannerRow(null)}
+            />
+          );
+        })()}
     </div>
   );
 }

@@ -60,7 +60,27 @@ export async function resolveUnitPacing(
       q.eq("grade", grade).eq("term", term).eq("unitId", unitId),
     )
     .unique();
-  return row ? row.conceptsPerHour : null;
+  // Treat 0 as "unset" so a row that only carries a saved mainQuestions value
+  // (conceptsPerHour 0) doesn't accidentally drive the auto pacing path.
+  return row && row.conceptsPerHour > 0 ? row.conceptsPerHour : null;
+}
+
+// Per-unit saved Main-block size (Founder, 2026-06-12). Read by the planner
+// as the Main section's question target when the next new concept is in this
+// unit. null when the teacher hasn't saved one.
+export async function resolveUnitMainQuestions(
+  ctx: ReadCtx,
+  grade: number,
+  term: number,
+  unitId: string,
+): Promise<number | null> {
+  const row = await ctx.db
+    .query("unitPacing")
+    .withIndex("by_grade_term_unit", (q) =>
+      q.eq("grade", grade).eq("term", term).eq("unitId", unitId),
+    )
+    .unique();
+  return row && typeof row.mainQuestions === "number" ? row.mainQuestions : null;
 }
 
 // Resolve the calling teacher id (best-effort, for the audit field). Mirrors
@@ -188,6 +208,64 @@ export const setUnitPacing = mutation({
         unitId,
         conceptsPerHour: clamped,
         updatedAt: Date.now(),
+      });
+    }
+    return { ok: true as const, cleared: false };
+  },
+});
+
+// ── WRITE — setUnitMainQuestions (control panel "save for this unit") ──────
+// Persist a unit's Main-block question target. count <= 0 clears it (and
+// deletes the row when no conceptsPerHour is also saved). Clamped to a sane
+// ceiling. Stored on the same unitPacing row as conceptsPerHour.
+export const setUnitMainQuestions = mutation({
+  args: {
+    grade: v.number(),
+    term: v.number(),
+    unitId: v.string(),
+    count: v.number(),
+  },
+  handler: async (ctx, { grade, term, unitId, count }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    if (!isUnitInScope(unitId, grade, term)) {
+      throw new Error(`Unit ${unitId} is not in G${grade} T${term}`);
+    }
+    const existing = await ctx.db
+      .query("unitPacing")
+      .withIndex("by_grade_term_unit", (q) =>
+        q.eq("grade", grade).eq("term", term).eq("unitId", unitId),
+      )
+      .unique();
+    const now = Date.now();
+    if (count <= 0) {
+      if (existing) {
+        // Drop the row entirely only when there's no pacing to keep.
+        if (existing.conceptsPerHour > 0) {
+          await ctx.db.patch(existing._id, {
+            mainQuestions: undefined,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.delete(existing._id);
+        }
+      }
+      return { ok: true as const, cleared: true };
+    }
+    const clamped = Math.min(30, Math.max(1, Math.round(count)));
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        mainQuestions: clamped,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("unitPacing", {
+        grade,
+        term,
+        unitId,
+        conceptsPerHour: 0,
+        mainQuestions: clamped,
+        updatedAt: now,
       });
     }
     return { ok: true as const, cleared: false };

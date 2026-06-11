@@ -796,6 +796,12 @@ export default defineSchema({
     term: v.number(),
     unitId: v.string(),
     conceptsPerHour: v.number(),
+    // Per-unit saved Main-block size (Founder, 2026-06-12). When set, the
+    // sheet planner uses this as the Main section's question target for sheets
+    // whose next new concept is in this unit — the "save for this unit" lever
+    // from the generate-time control panel. A one-off sectionTargets.main from
+    // the panel still wins for that single sheet.
+    mainQuestions: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_grade_term_unit", ["grade", "term", "unitId"]),
 

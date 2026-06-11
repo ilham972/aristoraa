@@ -54,7 +54,11 @@ import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { computeStudentProfile } from "./profile";
 import { masteryFromState } from "./mastery";
-import { resolveTeachingPath, resolveUnitPacing } from "./path";
+import {
+  resolveTeachingPath,
+  resolveUnitPacing,
+  resolveUnitMainQuestions,
+} from "./path";
 import { resolveTrackForStudent } from "./tracks";
 import { baseStudentIdsForSlot } from "../lib/roster";
 import {
@@ -1410,6 +1414,15 @@ type PlanSheetArgs = {
   slotId?: Id<"scheduleSlots">;
   debugSessionMinutes?: number;
   debugSheetLength?: number;
+  // Generate-time control panel: explicit per-section question targets for
+  // THIS sheet. Any provided section overrides its ratio-derived size; unset
+  // sections stay auto. `main` also lifts the new-concept cap.
+  sectionTargets?: {
+    warmup?: number;
+    main?: number;
+    revision?: number;
+    examPrep?: number;
+  };
 };
 
 export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
@@ -1586,10 +1599,27 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       return { timeMin, qCap };
     }
 
-    const examPrepBudget = slotBudget(phaseInfo.ratios.examPrep);
-    const mainBudget = slotBudget(phaseInfo.ratios.main);
-    const warmupBudget = slotBudget(phaseInfo.ratios.warmup);
-    const revisionBudget = slotBudget(phaseInfo.ratios.revision);
+    // Generate-time control panel (Founder, 2026-06-12): when a section's
+    // explicit target is supplied, it overrides the ratio-derived size for
+    // THIS sheet. Unset sections stay auto (ratio × length). The Main target is
+    // resolved further below (it also drives how many new concepts to teach).
+    const targets = args.sectionTargets;
+    const overrideBudget = (n: number): { timeMin: number; qCap: number } => ({
+      // Generous time so a soft time budget never truncates the chosen count.
+      timeMin: Math.max(budget.timeMin, (Math.round(n) + 1) * DEFAULT_QUESTION_TIME_MIN),
+      qCap: Math.max(0, Math.round(n)),
+    });
+    const sectionBudget = (
+      slot: "warmup" | "main" | "revision" | "examPrep",
+      ratio: number,
+    ): { timeMin: number; qCap: number } => {
+      const t = targets?.[slot];
+      return t !== undefined ? overrideBudget(t) : slotBudget(ratio);
+    };
+
+    const examPrepBudget = sectionBudget("examPrep", phaseInfo.ratios.examPrep);
+    const warmupBudget = sectionBudget("warmup", phaseInfo.ratios.warmup);
+    const revisionBudget = sectionBudget("revision", phaseInfo.ratios.revision);
 
     // ── Sheet redesign (Phase 4): teaching-path order over in-scope concepts.
     // The weekday→module rule is GONE. The Main block walks the teacher-curated
@@ -1666,7 +1696,24 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     const pacing = firstNew
       ? await resolveUnitPacing(ctx, firstNew.grade, firstNew.term, firstNew.unitId)
       : null;
-    const mainNewConcepts =
+    // Main-block size precedence (Founder, 2026-06-12):
+    //   1. one-off sectionTargets.main from the generate-time control panel
+    //   2. saved per-unit mainQuestions for the next new concept's unit
+    //   3. auto: pacing-based (Phase 7) or session-length-based (Phase 6)
+    // The explicit target also lifts the MAIN_NEW_CONCEPTS_MAX cap so a bigger
+    // Main block can actually introduce more new concepts (bounded by how many
+    // new concepts are available on the track/path).
+    const savedMain = firstNew
+      ? await resolveUnitMainQuestions(
+          ctx,
+          firstNew.grade,
+          firstNew.term,
+          firstNew.unitId,
+        )
+      : null;
+    const explicitMain =
+      targets?.main !== undefined ? targets.main : savedMain;
+    const autoMainConcepts =
       pacing !== null
         ? clamp(
             Math.round((pacing * budget.sessionMinutes) / 60),
@@ -1678,6 +1725,17 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
             MAIN_NEW_CONCEPTS_MIN,
             MAIN_NEW_CONCEPTS_MAX,
           );
+    const mainNewConcepts =
+      explicitMain !== null && explicitMain !== undefined
+        ? Math.max(
+            0,
+            Math.min(Math.round(explicitMain), Math.max(0, orderedNew.length)),
+          )
+        : autoMainConcepts;
+    const mainBudget =
+      explicitMain !== null && explicitMain !== undefined
+        ? overrideBudget(explicitMain)
+        : slotBudget(phaseInfo.ratios.main);
     const newConceptIds = new Set<string>(
       orderedNew
         .slice(0, mainNewConcepts)
@@ -1878,7 +1936,11 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     // flavoured) and append them to the Revision section — the natural home for
     // extra retrieval practice. Respects `seen` (no repeats) and the overall
     // time + question budget, so this never overshoots the sheet length.
-    {
+    //
+    // Skipped when the generate-time control panel supplied explicit section
+    // targets — the teacher is driving the section sizes by hand, so silently
+    // padding Revision would override their choice.
+    if (!targets) {
       const usedTime = [
         ...warmupPicked,
         ...mainPicked,
@@ -1995,6 +2057,14 @@ export const planSheet = query({
     slotId: v.optional(v.id("scheduleSlots")),
     debugSessionMinutes: v.optional(v.number()),
     debugSheetLength: v.optional(v.number()),
+    sectionTargets: v.optional(
+      v.object({
+        warmup: v.optional(v.number()),
+        main: v.optional(v.number()),
+        revision: v.optional(v.number()),
+        examPrep: v.optional(v.number()),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -2117,6 +2187,14 @@ export const saveSheetForStudent = mutation({
     slotId: v.optional(v.id("scheduleSlots")),
     debugSessionMinutes: v.optional(v.number()),
     debugSheetLength: v.optional(v.number()),
+    sectionTargets: v.optional(
+      v.object({
+        warmup: v.optional(v.number()),
+        main: v.optional(v.number()),
+        revision: v.optional(v.number()),
+        examPrep: v.optional(v.number()),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     try {
@@ -2144,6 +2222,12 @@ async function saveSheetForStudentImpl(
     slotId?: Id<"scheduleSlots">;
     debugSessionMinutes?: number;
     debugSheetLength?: number;
+    sectionTargets?: {
+      warmup?: number;
+      main?: number;
+      revision?: number;
+      examPrep?: number;
+    };
   },
 ) {
     const identity = await ctx.auth.getUserIdentity();
@@ -2161,6 +2245,7 @@ async function saveSheetForStudentImpl(
       slotId: args.slotId,
       debugSessionMinutes: args.debugSessionMinutes,
       debugSheetLength: args.debugSheetLength,
+      sectionTargets: args.sectionTargets,
     });
     if (!result) {
       return { status: "no-student", written: false } as const;
