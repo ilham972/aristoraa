@@ -65,3 +65,9 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - backfill.ts unwired but KEEP — needed for founder-gated track seed/backfill step (project_track_model).
 - IDEA (high): cumulative-exam holdout validation loop is the plan centerpiece — verify it has a UI/report surface; if not, build one (serves: learning engine, predicted-time promise).
 - IDEA: predicted-time-to-A is the brand promise but no module computes a per-student ETA — candidate flagship feature (serves: mission promise directly).
+
+## Task 7 findings (tracks/leaderboard/progress)
+- TRANSITION (not dead): legacy points (/leaderboard, /progress, src/lib/scoring.ts) vs track model — dual by design until LEADERBOARD_PRIMARY flips.
+- DEAD: src/components/learning/student-league-card.tsx, src/components/position-dialog.tsx, src/lib/store.ts, convex/studentModulePositions.ts — old position-system era.
+- IDEA (high): finish the founder-gated track flip (backfill prod → flag → test) — unblocks retiring a whole legacy system (serves: progression clarity + dead-code mass).
+- IDEA: /progress + /leaderboard compute client-side over full entries list — will not scale past a few hundred students; move to convex queries when student count grows (serves: scale).
