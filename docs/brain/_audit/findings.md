@@ -76,3 +76,10 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - DEAD: src/components/top-header.tsx (old shell), flag-toggle.tsx, pinch-zoom-area.tsx (drafts).
 - ODDITY: revenue-tab.tsx lives in components/groups/ but serves /analytics — relocation candidate during cleanup.
 - IDEA: studentsAtRisk exists in analytics — wire it to the messaging hub (absence alerts already exist) for proactive parent contact (serves: personalized education promise).
+
+## Task 9 findings (messaging/settings/shell)
+- CORRECTION to assistant memory: Phase W hub + provider layer are BUILT (not "plan only"); external Open-WA gateway is the remaining piece.
+- DEAD: convex/messaging/testSend.ts (near-duplicate of WIRED sendTest.ts — confusing name pair, delete the dead one in cleanup).
+- DEAD: convex/messaging/{policy,provider,recipients,templates}.ts are direct-import ALIVE — earlier zero-api-callers signal was false for these; keep.
+- src/components/settings/past-paper-pill-header.tsx — dead draft (knip).
+- IDEA: messaging settings page shows gateway connection status — add a CLAUDE-visible smoke check before relying on sends (serves: teacher trust).
