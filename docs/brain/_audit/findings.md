@@ -71,3 +71,8 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - DEAD: src/components/learning/student-league-card.tsx, src/components/position-dialog.tsx, src/lib/store.ts, convex/studentModulePositions.ts — old position-system era.
 - IDEA (high): finish the founder-gated track flip (backfill prod → flag → test) — unblocks retiring a whole legacy system (serves: progression clarity + dead-code mass).
 - IDEA: /progress + /leaderboard compute client-side over full entries list — will not scale past a few hundred students; move to convex queries when student count grows (serves: scale).
+
+## Task 8 findings (analytics/timeline/students)
+- DEAD: src/components/top-header.tsx (old shell), flag-toggle.tsx, pinch-zoom-area.tsx (drafts).
+- ODDITY: revenue-tab.tsx lives in components/groups/ but serves /analytics — relocation candidate during cleanup.
+- IDEA: studentsAtRisk exists in analytics — wire it to the messaging hub (absence alerts already exist) for proactive parent contact (serves: personalized education promise).
