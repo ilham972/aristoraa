@@ -27,8 +27,9 @@ mark grid). Backend calls, in lifecycle order:
    pdf-lib rendering of cropped question images (sharp was abandoned).
 4. `api.learningEngine.planner.markPrinted` — print tracking.
 5. `api.learningEngine.scoring.getSheetForScoring / setSheetMark /
-   finalizeSheetScoring` — per-question marks, then finalize (feeds memory
-   state + points + repeatCount).
+   finalizeSheetScoring` — a mark per question is good / again / skipped
+   (FSRS-style, no partial credit); finalize converts marks into memory-state
+   updates + points + repeatCount in one transaction.
 Doubts can be flagged per question (`api.doubts.*`). Sheet sections: Main
 (driven by TRACK since exam-mode change, not teachingPath), plus Revision and
 Mistakes sections per the path-driven redesign.

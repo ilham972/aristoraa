@@ -19,8 +19,9 @@ because Z.
   MODULE_DAYS/getTodayModule in src/lib/types.ts (unused).
 - **Per-exercise Score tab** — merged into the sheet-based Sheets tab
   (2026-06-07). Scoring is sheet-only; no sheet → no score.
-- **sharp for PDF imaging** — abandoned for pure-JS pdf-lib (serverless
-  compatibility); sharp still sits in package.json, dead.
+- **sharp for PDF imaging** — abandoned because sharp's native binaries don't
+  run in the Convex serverless runtime; replaced with pure-JS pdf-lib
+  clipping. sharp still sits in package.json, dead.
 - **Grade-based points/position** — replaced by cross-grade named TRACKS +
   leagues + railway map. Legacy still primary until LEADERBOARD_PRIMARY flips
   (founder-gated; see tracks-leaderboard.md).
