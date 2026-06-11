@@ -84,3 +84,11 @@ legacy-map.md (verdicts) and ideas-backlog.md (ideas) at the end of the audit.
 - src/components/settings/past-paper-pill-header.tsx — dead draft (knip).
 - IDEA: messaging settings page shows gateway connection status — add a CLAUDE-visible smoke check before relying on sends (serves: teacher trust).
 - CORRECTION 2: Open-WA gateway IS live (DigitalOcean droplet); W.1-W.5 shipped to prod 2026-05-30. Real blockers: founder acceptance tests + empty parentPhone on all prod students.
+
+## Performance audit 2026-06-12 (founder: app slow on first open; wants native feel)
+- Convex RTT from Sri Lanka: 230-780ms (US servers; structural — mitigate with fewer round trips).
+- auth-layout.tsx renders NULL until Clerk loads+verifies → 2-4s blank screen on cold open (top offender).
+- public/sw.js is network-first even for content-hashed /_next/static assets → repeat opens wait on network needlessly; PWA shell not precached.
+- Client JS total 3.3MB, largest chunk 419KB (likely Clerk); pdf libs are backend-only (not in bundle). Dead deps still installed.
+- /groups fires ~6 queries on open; no aggregate home-screen query.
+- Plan (founder-facing, 5 phases): SW cache-first; skeleton-not-blank auth; merged home query; optimistic UI/skeletons; bundle trim.
