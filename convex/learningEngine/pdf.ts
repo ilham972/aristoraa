@@ -76,8 +76,17 @@ const CONTENT_WIDTH = A4_WIDTH - 2 * MARGIN;
 const HEADER_HEIGHT = 14 * MM;
 const SECTION_BANNER_HEIGHT = 6 * MM;
 const QUESTION_GAP = 3 * MM;
-const IMAGE_MAX_WIDTH = 80 * MM;
-const IMAGE_MAX_HEIGHT = 60 * MM;
+// Natural-size rendering: a crop prints at the size it occupies on the real
+// textbook/paper page (cropBox is normalized to the page, source pages are
+// A4-class), so text size is CONSISTENT across every question on the sheet —
+// the thing that makes it read like a real exam paper. The old behavior
+// (stretch every crop to a fixed 80mm width) blew tiny questions up and
+// shrank big ones down, giving each question a different font size.
+const SOURCE_PAGE_WIDTH = 210 * MM; // physical width the cropBox fractions refer to
+const SOURCE_PAGE_HEIGHT = 297 * MM;
+const QUESTION_PRINT_SCALE = 1.0; // global zoom knob (e.g. 1.1 = 10% larger than the book)
+const IMAGE_MIN_WIDTH = 15 * MM; // guard against degenerate sliver crops
+const IMAGE_MAX_HEIGHT = 85 * MM; // page-layout safety cap; rarely hit
 const RULED_LINE_COUNT = 4;
 const RULED_LINE_GAP = 7 * MM;
 const RULED_LINES_TOTAL = RULED_LINE_COUNT * RULED_LINE_GAP;
@@ -194,19 +203,29 @@ function computeClippedDrawRect(
   return { x: drawX, y: drawY, w: drawW, h: drawH };
 }
 
-// Decide the slot dimensions for a question's image. cropBox alone doesn't
-// give us the true aspect ratio (it's normalized to the page, not the
-// crop), but the embedded PDFImage exposes pixel dimensions. Use those to
-// compute crop pixel dimensions → aspect → fit into IMAGE_MAX bounds.
+// Decide the slot dimensions for a question's image — NATURAL size.
+// Width comes from the crop's fraction of the source page (cropBox.w ×
+// physical page width × global scale). The aspect ratio comes from the
+// embedded PDFImage pixel dimensions (cropBox alone is normalized to the
+// page, not the crop). Clamped to layout bounds; the clamps fire only on
+// degenerate or unusually large crops.
 function fitCropSlot(
   img: PDFImage | null,
   cropBox: { w: number; h: number },
 ): { width: number; height: number } {
-  if (!img) return { width: IMAGE_MAX_WIDTH, height: IMAGE_MAX_HEIGHT };
+  const naturalW = clampUnit(cropBox.w) * SOURCE_PAGE_WIDTH * QUESTION_PRINT_SCALE;
+  if (!img) {
+    // No pixel data to derive aspect from — use the page-normalized height.
+    const naturalH = clampUnit(cropBox.h) * SOURCE_PAGE_HEIGHT * QUESTION_PRINT_SCALE;
+    return {
+      width: Math.min(Math.max(naturalW, IMAGE_MIN_WIDTH), CONTENT_WIDTH),
+      height: Math.min(naturalH, IMAGE_MAX_HEIGHT),
+    };
+  }
   const cropPxW = Math.max(1, img.width * clampUnit(cropBox.w));
   const cropPxH = Math.max(1, img.height * clampUnit(cropBox.h));
   const aspect = cropPxW / cropPxH;
-  let w = IMAGE_MAX_WIDTH;
+  let w = Math.min(Math.max(naturalW, IMAGE_MIN_WIDTH), CONTENT_WIDTH);
   let h = w / aspect;
   if (h > IMAGE_MAX_HEIGHT) {
     h = IMAGE_MAX_HEIGHT;
@@ -215,18 +234,23 @@ function fitCropSlot(
   return { width: w, height: h };
 }
 
-// Stem slot uses the FULL content width (instruction lines tend to be long
-// and benefit from horizontal room) and a tighter max height. Aspect ratio
-// preserved.
+// Stem slots use the same natural sizing (an instruction line prints at the
+// size it has in the book) with the tighter stem height cap.
 function fitStemSlot(
   img: PDFImage | null,
   cropBox: { w: number; h: number },
 ): { width: number; height: number } {
-  if (!img) return { width: CONTENT_WIDTH, height: STEM_IMAGE_MAX_HEIGHT };
+  const naturalW = clampUnit(cropBox.w) * SOURCE_PAGE_WIDTH * QUESTION_PRINT_SCALE;
+  if (!img) {
+    return {
+      width: Math.min(Math.max(naturalW, IMAGE_MIN_WIDTH), CONTENT_WIDTH),
+      height: STEM_IMAGE_MAX_HEIGHT,
+    };
+  }
   const cropPxW = Math.max(1, img.width * clampUnit(cropBox.w));
   const cropPxH = Math.max(1, img.height * clampUnit(cropBox.h));
   const aspect = cropPxW / cropPxH;
-  let w = CONTENT_WIDTH;
+  let w = Math.min(Math.max(naturalW, IMAGE_MIN_WIDTH), CONTENT_WIDTH);
   let h = w / aspect;
   if (h > STEM_IMAGE_MAX_HEIGHT) {
     h = STEM_IMAGE_MAX_HEIGHT;

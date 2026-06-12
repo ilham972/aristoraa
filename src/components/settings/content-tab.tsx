@@ -293,7 +293,11 @@ export function ContentTab() {
 
       for (let i = 1; i <= totalPages; i++) {
         const page = await pdf.getPage(i);
-        const scale = 2;
+        // scale 3 ≈ 216 DPI source; combined with natural-size rendering in
+        // pdf.ts this keeps printed crops near 300 DPI. scale 2 (~144 DPI)
+        // produced visibly fuzzy print. Quality 0.92: JPEG ringing around
+        // text glyphs is visible on paper below ~0.9.
+        const scale = 3;
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         canvas.width = viewport.width;
@@ -301,7 +305,7 @@ export function ContentTab() {
         const ctx = canvas.getContext('2d')!;
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
         const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.85);
+          canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92);
         });
         const uploadUrl = await generateUploadUrl();
         const result = await fetch(uploadUrl, {
@@ -506,7 +510,8 @@ export function ContentTab() {
 
       for (let i = 1; i <= totalPages; i++) {
         const page = await pdf.getPage(i);
-        const scale = 2;
+        // Same print-quality settings as the textbook upload above.
+        const scale = 3;
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         canvas.width = viewport.width;
@@ -514,7 +519,7 @@ export function ContentTab() {
         const ctx = canvas.getContext('2d')!;
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
         const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.85);
+          canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92);
         });
         const uploadUrl = await paperGenerateUploadUrl();
         const result = await fetch(uploadUrl, {

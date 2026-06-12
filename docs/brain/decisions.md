@@ -31,6 +31,12 @@ because Z.
   (examModeActive) + daily alert; auto-detection rejected.
 - **Standalone Sheets management UI** (inspector drawer/body, student rows,
   bulk actions) — superseded by the merged session Sheets tab; files dead.
+- **Fixed-width question slots in sheet PDFs** (every crop stretched to
+  80mm) — replaced 2026-06-12 by natural-size rendering (crop prints at its
+  real textbook size) because mixed text sizes killed the exam-paper feel.
+- **Typing the question bank as text** — considered, rejected 2026-06-12:
+  typed math (fractions/roots) looks worse than book images without a
+  typesetting engine; diagrams stay images anyway. Sharp images instead.
 
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
