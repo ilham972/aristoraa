@@ -62,16 +62,26 @@ export type RenderSheetData = {
 // renderer embeds these in order (a stem may itself be cropped as multiple
 // rows when there are several figures sharing the stem key — they all stack
 // above the sub-question).
+// Typed override snapshot: when present, the renderer draws this PNG at its
+// stored physical size instead of clipping the page crop. See overrides.ts.
+export type OverrideRenderForPdf = {
+  url: string;
+  widthMm: number;
+  heightMm: number;
+};
+
 export type StemAttachment = {
   questionId: Id<"questionBank">;
   cropBox: { x: number; y: number; w: number; h: number } | null;
   pageImageUrl: string | null;
+  override: OverrideRenderForPdf | null;
 };
 
 export type QuestionForRender = {
   questionId: Id<"questionBank">;
   cropBox: { x: number; y: number; w: number; h: number } | null;
   pageImageUrl: string | null;
+  override: OverrideRenderForPdf | null;
   source: string; // "textbook" | "past-paper" | "teacher-authored"
   conceptNames: string[]; // for the footnote
   questionNumberInPaper: string | null;
@@ -128,6 +138,20 @@ export const getSheetForRender = internalQuery({
       return null;
     };
 
+    // Resolve a typed-override snapshot to a fetchable URL + print size.
+    const overrideFor = async (q: {
+      overrideRender?: { storageId: Id<"_storage">; widthMm: number; heightMm: number };
+    }): Promise<OverrideRenderForPdf | null> => {
+      if (!q.overrideRender) return null;
+      const url = await ctx.storage.getUrl(q.overrideRender.storageId);
+      if (!url) return null;
+      return {
+        url,
+        widthMm: q.overrideRender.widthMm,
+        heightMm: q.overrideRender.heightMm,
+      };
+    };
+
     // Resolve stem attachments for a picked sub-question / level-3-leaf
     // crop. Both "ok-sub-with-stem" and "ok-leaf3-with-stems" expose the
     // same `stemQuestionIds` field (level-3 packs mainQ stems first, then
@@ -152,6 +176,7 @@ export const getSheetForRender = internalQuery({
           questionId: sid,
           cropBox: stemDoc.cropBox ?? null,
           pageImageUrl: url,
+          override: await overrideFor(stemDoc),
         });
       }
       return stems;
@@ -170,6 +195,7 @@ export const getSheetForRender = internalQuery({
             questionId: qid,
             cropBox: null,
             pageImageUrl: null,
+            override: null,
             source: "missing",
             conceptNames: [],
             questionNumberInPaper: null,
@@ -204,6 +230,7 @@ export const getSheetForRender = internalQuery({
           questionId: q._id,
           cropBox: q.cropBox ?? null,
           pageImageUrl,
+          override: await overrideFor(q),
           source: q.source,
           conceptNames,
           questionNumberInPaper: q.questionNumberInPaper ?? null,

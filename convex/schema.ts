@@ -422,6 +422,18 @@ export default defineSchema({
     // Distinct from (and complementary to) questionConcepts which carries
     // fine-grained per-concept identity.
     topicTagId: v.optional(v.id("examTopicTags")),
+    // Typed override ("digitalize as you go", 2026-06-12). When set, sheets
+    // render the typed version instead of the page crop. overrideText is the
+    // editable source (Tamil/English + $TeX$ math); overrideRender is the
+    // browser-typeset PNG snapshot with its physical print size. Both are
+    // set/cleared together via learningEngine/overrides.ts — never patch
+    // one without the other.
+    overrideText: v.optional(v.string()),
+    overrideRender: v.optional(v.object({
+      storageId: v.id("_storage"),
+      widthMm: v.number(),
+      heightMm: v.number(),
+    })),
     createdAt: v.number(),
   })
     .index("by_source", ["source"])

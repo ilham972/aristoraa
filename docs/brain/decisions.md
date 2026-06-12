@@ -34,9 +34,12 @@ because Z.
 - **Fixed-width question slots in sheet PDFs** (every crop stretched to
   80mm) — replaced 2026-06-12 by natural-size rendering (crop prints at its
   real textbook size) because mixed text sizes killed the exam-paper feel.
-- **Typing the question bank as text** — considered, rejected 2026-06-12:
-  typed math (fractions/roots) looks worse than book images without a
-  typesetting engine; diagrams stay images anyway. Sharp images instead.
+- **Typing the WHOLE question bank as text** — rejected 2026-06-12 (nightly
+  typing tax, diagrams stay images anyway). Superseded same day by OPT-IN
+  typed overrides: per-question/stem `overrideText` + browser-typeset PNG
+  (MathJax math, canvas Tamil) stored on questionBank; PDF prefers it.
+  Chose client-side render-at-save over server-side math (MathJax/canvas
+  can't run in the Convex runtime; zero per-PDF cost).
 
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at

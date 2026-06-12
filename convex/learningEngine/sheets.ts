@@ -279,6 +279,9 @@ export type SheetPreviewQuestion = {
   // pre-dates D.6 (no scoringSnapshot) or the Q was added via manual
   // override (no score recorded).
   factors: SheetOverrideScoringFactors | null;
+  // Typed override (learningEngine/overrides.ts). When set, the UI shows
+  // the typeset snapshot instead of the crop thumbnail.
+  typedOverride: { text: string; imageUrl: string | null } | null;
 };
 
 export type SheetPreviewData = {
@@ -375,6 +378,7 @@ export async function enrichOneQuestion(
       marksAvailable: null,
       difficulty: null,
       factors: null,
+      typedOverride: null,
     };
   }
   let pageImageUrl: string | null = null;
@@ -417,6 +421,13 @@ export async function enrichOneQuestion(
     marksAvailable: q.marksAvailable ?? null,
     difficulty: q.difficulty ?? null,
     factors: findFactors(snapshot, q._id),
+    typedOverride:
+      q.overrideText && q.overrideRender
+        ? {
+            text: q.overrideText,
+            imageUrl: await ctx.storage.getUrl(q.overrideRender.storageId),
+          }
+        : null,
   };
 }
 

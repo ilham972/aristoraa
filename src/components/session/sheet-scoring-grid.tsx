@@ -44,9 +44,11 @@ import {
   Sparkles,
   Eye,
   LayoutGrid,
+  PencilLine,
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
+import { QuestionOverrideDialog } from '@/components/session/question-override-dialog';
 
 type SlotName = 'warmup' | 'main' | 'revision' | 'examPrep';
 type Mark = 'correct' | 'wrong' | 'skipped' | null;
@@ -148,6 +150,9 @@ export function SheetScoringGrid({
   // Which section is being scored / viewed, and grid-vs-sheet view mode.
   const [activeSlot, setActiveSlot] = useState<SlotName>('warmup');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  // Question whose typed-override editor is open (null = closed).
+  const [editingQuestionId, setEditingQuestionId] =
+    useState<Id<'questionBank'> | null>(null);
 
   // Question crops for the inline "View sheet" mode — only fetched while the
   // sheet view is open (skipped otherwise to avoid the heavier query).
@@ -404,8 +409,14 @@ export function SheetScoringGrid({
           onToggleFlag={onToggleFlag}
         />
       ) : (
-        <SheetSectionView crops={crops} slot={activeSlot} />
+        <SheetSectionView crops={crops} slot={activeSlot} onEdit={setEditingQuestionId} />
       )}
+
+      {/* Typed-override editor (pencil on a sheet-view question row). */}
+      <QuestionOverrideDialog
+        questionId={editingQuestionId}
+        onClose={() => setEditingQuestionId(null)}
+      />
 
       {/* Bulk quick-actions — active section only, grid mode only. */}
       {viewMode === 'grid' && activeQs.length > 0 && (
@@ -574,17 +585,21 @@ type CropQ = {
   source: string;
   questionNumberInPaper: string | null;
   marksAvailable: number | null;
+  typedOverride: { text: string; imageUrl: string | null } | null;
 };
 
 function SheetSectionView({
   crops,
   slot,
+  onEdit,
 }: {
   crops:
     | { warmup: CropQ[]; main: CropQ[]; revision: CropQ[]; examPrep: CropQ[] }
     | null
     | undefined;
   slot: SlotName;
+  // Opens the typed-override editor for a question (pencil button).
+  onEdit: (questionId: Id<'questionBank'>) => void;
 }) {
   if (crops === undefined) {
     return (
@@ -614,12 +629,26 @@ function SheetSectionView({
     <div className="rounded-xl border border-border bg-card overflow-hidden divide-y divide-border">
       {qs.map((q, i) => (
         <div key={q.questionId as unknown as string} className="px-3 py-2.5 flex gap-2.5">
-          <CropThumbnail
-            imageUrl={q.pageImageUrl}
-            imageUrlSmall={q.pageImageUrlSmall}
-            cropBox={q.cropBox}
-            maxSide={96}
-          />
+          {q.typedOverride?.imageUrl ? (
+            // Typed override: show the typeset snapshot (white card — the
+            // snapshot is paper-styled) instead of the page crop.
+            <div className="shrink-0 rounded-md bg-white border border-border p-1 max-w-[120px] self-start">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={q.typedOverride.imageUrl}
+                alt="Typed question"
+                className="max-w-full h-auto"
+                style={{ maxHeight: 96 }}
+              />
+            </div>
+          ) : (
+            <CropThumbnail
+              imageUrl={q.pageImageUrl}
+              imageUrlSmall={q.pageImageUrlSmall}
+              cropBox={q.cropBox}
+              maxSide={96}
+            />
+          )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-1">
               <span className="text-xs font-bold text-foreground shrink-0">
@@ -635,6 +664,19 @@ function SheetSectionView({
                   [{q.marksAvailable}m]
                 </span>
               )}
+              {q.typedOverride && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-primary/15 text-primary font-medium">
+                  typed
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => onEdit(q.questionId)}
+                className="ml-auto shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent active:scale-95 transition-all"
+                aria-label="Type this question"
+              >
+                <PencilLine className="h-3.5 w-3.5" />
+              </button>
             </div>
             <div className="flex flex-wrap gap-1">
               {q.conceptNames.length === 0 ? (

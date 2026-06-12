@@ -33,6 +33,12 @@ mark grid). Backend calls, in lifecycle order:
 Doubts can be flagged per question (`api.doubts.*`). Sheet sections: Main
 (driven by TRACK since exam-mode change, not teachingPath), plus Revision and
 Mistakes sections per the path-driven redesign.
+Typed overrides (2026-06-12): pencil on a sheet-view question row opens
+`question-override-dialog.tsx` (question + its stems; Tamil text + $TeX$
+math; live preview = print). Saves text + typeset PNG via
+`learningEngine/overrides.ts` onto questionBank (BANK-level — all future
+sheets); typesetter in `src/lib/typeset-parse.ts` / `typeset-render.ts`
+(MathJax lazy-loaded); PDF + sheet view prefer the snapshot over the crop.
 
 ## PDF/crop pipeline (upstream of sheets)
 Textbook + past-paper pages are cropped per question in

@@ -234,6 +234,30 @@ function fitCropSlot(
   return { width: w, height: h };
 }
 
+// Typed-override slot: the snapshot already knows its physical print size
+// (the browser typeset it at a fixed 11pt-equivalent), so we draw at exactly
+// that size, shrinking only if it would overflow the layout bounds.
+function fitOverrideSlot(
+  override: { widthMm: number; heightMm: number },
+  maxHeight: number,
+): { width: number; height: number } {
+  let w = override.widthMm * MM;
+  let h = override.heightMm * MM;
+  if (w > CONTENT_WIDTH) {
+    h = h * (CONTENT_WIDTH / w);
+    w = CONTENT_WIDTH;
+  }
+  if (h > maxHeight) {
+    w = w * (maxHeight / h);
+    h = maxHeight;
+  }
+  return { width: w, height: h };
+}
+
+// Full-image "crop" so typed overrides can reuse drawClippedImage: clipping
+// to the whole image is a no-op draw of the slot itself.
+const FULL_IMAGE_BOX = { x: 0, y: 0, w: 1, h: 1 };
+
 // Stem slots use the same natural sizing (an instruction line prints at the
 // size it has in the book) with the tighter stem height cap.
 function fitStemSlot(
@@ -367,10 +391,12 @@ function drawClippedImage(
   }
 }
 
-// One resolved stem image ready to draw (paired source image + cropBox).
+// One resolved stem image ready to draw. Either a page crop (cropBox set,
+// override null) or a typed-override snapshot (override set, drawn full).
 type ResolvedStem = {
   img: PDFImage;
-  cropBox: { x: number; y: number; w: number; h: number };
+  cropBox: { x: number; y: number; w: number; h: number } | null;
+  override: { widthMm: number; heightMm: number } | null;
 };
 
 function drawQuestion(
@@ -382,15 +408,23 @@ function drawQuestion(
 ): void {
   // Caller guarantees the main embedded image is present — missing-image
   // cases are handled before rendering (see buildPDF + the onMissingImage
-  // policy in renderSheetPDF). cropBox is also guaranteed at this point.
-  if (!q.cropBox) throw new Error("drawQuestion called without cropBox");
-  const slot = fitCropSlot(embeddedImage, q.cropBox);
+  // policy in renderSheetPDF). Without a typed override, cropBox is also
+  // guaranteed at this point.
+  if (!q.override && !q.cropBox)
+    throw new Error("drawQuestion called without cropBox or override");
+  const slot = q.override
+    ? fitOverrideSlot(q.override, IMAGE_MAX_HEIGHT)
+    : fitCropSlot(embeddedImage, q.cropBox!);
   const numberLabelHeight = 5 * MM;
 
   // Pre-compute every stem slot so the block-height budget can account for
   // them before we ensureSpace + page-break. Each stem adds STEM_GAP +
   // stem.height.
-  const stemSlots = stems.map((s) => fitStemSlot(s.img, s.cropBox));
+  const stemSlots = stems.map((s) =>
+    s.override
+      ? fitOverrideSlot(s.override, STEM_IMAGE_MAX_HEIGHT)
+      : fitStemSlot(s.img, s.cropBox!),
+  );
   const stemsTotalHeight = stemSlots.reduce(
     (sum, s) => sum + s.height + STEM_GAP,
     0,
@@ -434,7 +468,7 @@ function drawQuestion(
     const stemY = stemCursor - stemSlot.height;
     drawClippedImage(r, {
       img: s.img,
-      cropBox: s.cropBox,
+      cropBox: s.override ? FULL_IMAGE_BOX : s.cropBox!,
       slotX: MARGIN,
       slotY: stemY,
       slotW: stemSlot.width,
@@ -448,12 +482,14 @@ function drawQuestion(
   const slotY = stemCursor - slot.height;
   drawClippedImage(r, {
     img: embeddedImage,
-    cropBox: q.cropBox,
+    cropBox: q.override ? FULL_IMAGE_BOX : q.cropBox!,
     slotX,
     slotY,
     slotW: slot.width,
     slotH: slot.height,
-    border: true,
+    // Typed overrides read like real exam text — a hairline box around them
+    // would mark them as "an image", so the border stays crop-only.
+    border: !q.override,
   });
 
   // Ruled working lines
@@ -659,6 +695,24 @@ async function buildPDF(
     if (q.stemAttachments.length === 0) return [];
     const out: ResolvedStem[] = [];
     for (const s of q.stemAttachments) {
+      // Typed override wins over the page crop.
+      if (s.override) {
+        const img = await embedPageImage(pdfDoc, pageImageCache, s.override.url);
+        if (!img) {
+          missing.push({
+            questionId: s.questionId,
+            section,
+            reason: "fetch-failed",
+          });
+          continue;
+        }
+        out.push({
+          img,
+          cropBox: null,
+          override: { widthMm: s.override.widthMm, heightMm: s.override.heightMm },
+        });
+        continue;
+      }
       if (!s.cropBox || !s.pageImageUrl) {
         missing.push({
           questionId: s.questionId,
@@ -680,7 +734,7 @@ async function buildPDF(
         });
         continue;
       }
-      out.push({ img, cropBox: s.cropBox });
+      out.push({ img, cropBox: s.cropBox, override: null });
     }
     return out;
   };
@@ -697,6 +751,22 @@ async function buildPDF(
           section,
           reason: "question-deleted",
         });
+        continue;
+      }
+      // Typed override: the snapshot PNG replaces the page crop entirely,
+      // so no cropBox / page link is required.
+      if (q.override) {
+        const img = await embedPageImage(pdfDoc, pageImageCache, q.override.url);
+        if (!img) {
+          missing.push({
+            questionId: q.questionId,
+            section,
+            reason: "fetch-failed",
+          });
+          continue;
+        }
+        const stems = await resolveStems(q, section);
+        out.push({ q, img, stems });
         continue;
       }
       if (!q.cropBox) {

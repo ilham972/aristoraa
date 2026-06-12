@@ -34,6 +34,7 @@ import type * as learningEngine_leagues from "../learningEngine/leagues.js";
 import type * as learningEngine_map from "../learningEngine/map.js";
 import type * as learningEngine_mastery from "../learningEngine/mastery.js";
 import type * as learningEngine_memory from "../learningEngine/memory.js";
+import type * as learningEngine_overrides from "../learningEngine/overrides.js";
 import type * as learningEngine_path from "../learningEngine/path.js";
 import type * as learningEngine_pdf from "../learningEngine/pdf.js";
 import type * as learningEngine_pdfHelpers from "../learningEngine/pdfHelpers.js";
@@ -127,6 +128,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/map": typeof learningEngine_map;
   "learningEngine/mastery": typeof learningEngine_mastery;
   "learningEngine/memory": typeof learningEngine_memory;
+  "learningEngine/overrides": typeof learningEngine_overrides;
   "learningEngine/path": typeof learningEngine_path;
   "learningEngine/pdf": typeof learningEngine_pdf;
   "learningEngine/pdfHelpers": typeof learningEngine_pdfHelpers;
