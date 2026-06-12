@@ -301,6 +301,11 @@ export default defineSchema({
     textbookId: v.id("textbooks"),
     pageNumber: v.number(),
     storageId: v.id("_storage"),
+    // Downscaled (~900px wide JPEG) variant for thumbnails/inline views.
+    // Generated client-side by the Settings "Optimize images" backfill
+    // (convex/pageThumbnails.ts). Full-res storageId stays untouched and is
+    // ALWAYS what the PDF renderer and crop workbenches use.
+    smallStorageId: v.optional(v.id("_storage")),
   })
     .index("by_textbook", ["textbookId"])
     .index("by_textbook_page", ["textbookId", "pageNumber"]),
@@ -339,6 +344,8 @@ export default defineSchema({
     pastPaperId: v.id("pastPapers"),
     pageNumber: v.number(),
     storageId: v.id("_storage"),
+    // Downscaled thumbnail variant — see textbookPages.smallStorageId.
+    smallStorageId: v.optional(v.id("_storage")),
   })
     .index("by_paper", ["pastPaperId"])
     .index("by_paper_page", ["pastPaperId", "pageNumber"]),

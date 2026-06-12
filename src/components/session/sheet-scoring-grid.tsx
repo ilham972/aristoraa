@@ -569,6 +569,7 @@ type CropQ = {
   questionId: Id<'questionBank'>;
   cropBox: { x: number; y: number; w: number; h: number } | null;
   pageImageUrl: string | null;
+  pageImageUrlSmall: string | null;
   conceptNames: string[];
   source: string;
   questionNumberInPaper: string | null;
@@ -613,7 +614,12 @@ function SheetSectionView({
     <div className="rounded-xl border border-border bg-card overflow-hidden divide-y divide-border">
       {qs.map((q, i) => (
         <div key={q.questionId as unknown as string} className="px-3 py-2.5 flex gap-2.5">
-          <CropThumbnail imageUrl={q.pageImageUrl} cropBox={q.cropBox} maxSide={96} />
+          <CropThumbnail
+            imageUrl={q.pageImageUrl}
+            imageUrlSmall={q.pageImageUrlSmall}
+            cropBox={q.cropBox}
+            maxSide={96}
+          />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-1">
               <span className="text-xs font-bold text-foreground shrink-0">

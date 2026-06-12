@@ -64,6 +64,7 @@ type SheetQ = {
   questionId: Id<'questionBank'>;
   cropBox: CropBox | null;
   pageImageUrl: string | null;
+  pageImageUrlSmall: string | null;
   conceptIds: Id<'exercises'>[];
   conceptNames: string[];
   source: string;
@@ -577,6 +578,7 @@ function QRow({
       <div className="flex gap-2.5">
         <CropThumbnail
           imageUrl={q.pageImageUrl}
+          imageUrlSmall={q.pageImageUrlSmall}
           cropBox={q.cropBox}
           maxSide={84}
         />
@@ -822,33 +824,39 @@ function FactorBarFull({ factors }: { factors: Factors }) {
 // thumbnail (with its tap-to-zoom full preview) instead of duplicating it.
 export function CropThumbnail({
   imageUrl,
+  imageUrlSmall,
   cropBox,
   maxSide,
 }: {
   imageUrl: string | null;
+  // Downscaled page variant (perf phase 6). The thumbnail loads THIS when
+  // present (~10x lighter than the full scan); the tap-to-zoom dialog always
+  // uses the full-res imageUrl. Same aspect ratio, so crop math is shared.
+  imageUrlSmall?: string | null;
   cropBox: CropBox | null;
   maxSide: number;
 }) {
+  const thumbUrl = imageUrlSmall || imageUrl;
   const MIN_SIDE = Math.max(32, Math.round(maxSide * 0.5));
   const [loaded, setLoaded] = useState<{ url: string; w: number; h: number } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
-    if (!imageUrl) return;
+    if (!thumbUrl) return;
     let cancelled = false;
     const img = new window.Image();
     img.onload = () => {
       if (cancelled) return;
-      setLoaded({ url: imageUrl, w: img.naturalWidth, h: img.naturalHeight });
+      setLoaded({ url: thumbUrl, w: img.naturalWidth, h: img.naturalHeight });
     };
-    img.src = imageUrl;
+    img.src = thumbUrl;
     return () => {
       cancelled = true;
     };
-  }, [imageUrl]);
+  }, [thumbUrl]);
 
   const naturalDims =
-    loaded && loaded.url === imageUrl ? { w: loaded.w, h: loaded.h } : null;
+    loaded && loaded.url === thumbUrl ? { w: loaded.w, h: loaded.h } : null;
 
   if (!imageUrl || !cropBox) {
     return (
@@ -897,7 +905,7 @@ export function CropThumbnail({
           style={{
             width: boxW,
             height: boxH,
-            backgroundImage: `url(${imageUrl})`,
+            backgroundImage: `url(${thumbUrl})`,
             backgroundRepeat: 'no-repeat',
             backgroundSize: `${imgW}px ${imgH}px`,
             backgroundPosition: `${bgX}px ${bgY}px`,

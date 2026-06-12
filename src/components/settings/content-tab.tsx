@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PaperOverridesEditor } from './paper-overrides-editor';
+import { ImageOptimizerCard } from './image-optimizer-card';
 import { api } from '@/lib/convex';
 import { toast } from 'sonner';
 import type { Id } from '@/lib/convex';
@@ -589,6 +590,9 @@ export function ContentTab() {
       <input ref={pdfInputRef} type="file" accept="application/pdf" className="hidden" onChange={handlePdfUpload} />
       <input ref={paperFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePaperFileCapture} />
       <input ref={paperPdfInputRef} type="file" accept="application/pdf" className="hidden" onChange={handlePaperPdfUpload} />
+
+      {/* One-tap thumbnail backfill for sheet views (perf phase 6). */}
+      <ImageOptimizerCard />
 
       {/* Source toggle */}
       <div className="flex gap-1 mb-4 p-1 bg-muted rounded-xl">

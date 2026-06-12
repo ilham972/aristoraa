@@ -265,6 +265,10 @@ export type SheetPreviewQuestion = {
   questionId: Id<"questionBank">;
   cropBox: { x: number; y: number; w: number; h: number } | null;
   pageImageUrl: string | null;
+  // Downscaled page variant for thumbnails (null until the page has been
+  // through the Settings "Optimize images" backfill). Full-res pageImageUrl
+  // remains the zoom/print source.
+  pageImageUrlSmall: string | null;
   conceptIds: Id<"exercises">[];
   conceptNames: string[];
   source: string;
@@ -363,6 +367,7 @@ export async function enrichOneQuestion(
       questionId: qid,
       cropBox: null,
       pageImageUrl: null,
+      pageImageUrlSmall: null,
       conceptIds: [],
       conceptNames: [],
       source: "missing",
@@ -373,12 +378,21 @@ export async function enrichOneQuestion(
     };
   }
   let pageImageUrl: string | null = null;
+  let pageImageUrlSmall: string | null = null;
   if (q.textbookPageId) {
     const p = await ctx.db.get(q.textbookPageId);
-    if (p) pageImageUrl = await ctx.storage.getUrl(p.storageId);
+    if (p) {
+      pageImageUrl = await ctx.storage.getUrl(p.storageId);
+      if (p.smallStorageId)
+        pageImageUrlSmall = await ctx.storage.getUrl(p.smallStorageId);
+    }
   } else if (q.pastPaperPageId) {
     const p = await ctx.db.get(q.pastPaperPageId);
-    if (p) pageImageUrl = await ctx.storage.getUrl(p.storageId);
+    if (p) {
+      pageImageUrl = await ctx.storage.getUrl(p.storageId);
+      if (p.smallStorageId)
+        pageImageUrlSmall = await ctx.storage.getUrl(p.smallStorageId);
+    }
   }
   const links = await ctx.db
     .query("questionConcepts")
@@ -395,6 +409,7 @@ export async function enrichOneQuestion(
     questionId: q._id,
     cropBox: q.cropBox ?? null,
     pageImageUrl,
+    pageImageUrlSmall,
     conceptIds,
     conceptNames,
     source: q.source,

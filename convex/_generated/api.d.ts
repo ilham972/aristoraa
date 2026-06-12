@@ -71,6 +71,7 @@ import type * as messaging_tomorrowReminders from "../messaging/tomorrowReminder
 import type * as messaging_weeklyCards from "../messaging/weeklyCards.js";
 import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
+import type * as pageThumbnails from "../pageThumbnails.js";
 import type * as paperStructures from "../paperStructures.js";
 import type * as pastPaperPages from "../pastPaperPages.js";
 import type * as pastPapers from "../pastPapers.js";
@@ -163,6 +164,7 @@ declare const fullApi: ApiFromModules<{
   "messaging/weeklyCards": typeof messaging_weeklyCards;
   migrations: typeof migrations;
   notifications: typeof notifications;
+  pageThumbnails: typeof pageThumbnails;
   paperStructures: typeof paperStructures;
   pastPaperPages: typeof pastPaperPages;
   pastPapers: typeof pastPapers;
