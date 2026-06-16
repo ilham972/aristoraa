@@ -43,9 +43,13 @@ export const add = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     // Phase W: normalize parentPhone to E.164 at the write boundary so the
-    // WhatsApp layer can rely on a single canonical phone format. Throws on
-    // unparseable input — the form should catch the error and surface it.
-    const parentPhone = normalizeToE164SL(args.parentPhone);
+    // WhatsApp layer can rely on a single canonical phone format. An empty
+    // phone is allowed (most students have none yet) — only validate when a
+    // number was actually entered. Throws on unparseable input so the form
+    // can surface a clear error.
+    const parentPhone = args.parentPhone.trim()
+      ? normalizeToE164SL(args.parentPhone)
+      : "";
     return await ctx.db.insert("students", { ...args, parentPhone });
   },
 });
@@ -63,7 +67,10 @@ export const update = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const { id, ...data } = args;
-    const parentPhone = normalizeToE164SL(data.parentPhone);
+    // Empty phone allowed; validate only when a number was entered.
+    const parentPhone = data.parentPhone.trim()
+      ? normalizeToE164SL(data.parentPhone)
+      : "";
     await ctx.db.patch(id, { ...data, parentPhone });
   },
 });
