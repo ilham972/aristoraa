@@ -29,6 +29,12 @@ because Z.
   superseded by Phase W messaging hub + weekly cards.
 - **Automatic exam-week detection** — exam mode is a MANUAL switch
   (examModeActive) + daily alert; auto-detection rejected.
+- **Always-expanded per-module progress grid on /students cards** (8+ bars
+  per student) — replaced 2026-06-17 by compact cards (one overall %) with a
+  tap-to-expand accordion for the module breakdown; too tall/heavy to scan.
+- **Required parentPhone on student add/edit** — caused silent save failures
+  (normalizeToE164SL threw on blank/odd input, no catch). Now optional:
+  validate only when filled, store "" otherwise, surface errors as toasts.
 - **Standalone Sheets management UI** (inspector drawer/body, student rows,
   bulk actions) — superseded by the merged session Sheets tab; files dead.
 - **Fixed-width question slots in sheet PDFs** (every crop stretched to
