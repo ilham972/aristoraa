@@ -6,8 +6,7 @@ import { useMutation } from 'convex/react';
 // storage while the live subscription refreshes (perf phase 3).
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import {
-  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain,
-  Search, ChevronDown,
+  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -48,7 +47,6 @@ export default function StudentsPage() {
   const [filterCenter, setFilterCenter] = useState<string>('all');
   const [filterTrack, setFilterTrack] = useState<string>('all');
   const [sortBy, setSortBy] = useState<SortKey>('name');
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -259,15 +257,6 @@ export default function StudentsPage() {
     setDialogOpen(true);
   };
 
-  const toggleExpand = (id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const progColor = (pct: number) =>
     pct >= 70 ? 'text-emerald-600 dark:text-emerald-400'
       : pct >= 40 ? 'text-amber-600 dark:text-amber-400'
@@ -293,56 +282,54 @@ export default function StudentsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="space-y-2 mb-3">
-        <div className="relative">
+      {/* Filters — single scrollable row */}
+      <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1 -mx-1 px-1">
+        <div className="relative shrink-0 w-40">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name or school…"
-            className="h-10 pl-9 text-sm"
+            placeholder="Search…"
+            className="h-9 pl-9 text-sm"
           />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Select value={filterGrade} onValueChange={(v) => setFilterGrade(v ?? 'all')}>
-            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Grade" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Grades</SelectItem>
-              {[6, 7, 8, 9, 10, 11].map(g => (
-                <SelectItem key={g} value={String(g)}>Grade {g}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filterCenter} onValueChange={(v) => setFilterCenter(v ?? 'all')}>
-            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Center" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Centers</SelectItem>
-              <SelectItem value="none">No Center</SelectItem>
-              {centers?.map((c: { _id: string; name: string }) => (
-                <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filterTrack} onValueChange={(v) => setFilterTrack(v ?? 'all')}>
-            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Track" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Tracks</SelectItem>
-              <SelectItem value="none">No Track</SelectItem>
-              {tracks?.map((t: { _id: string; name: string }) => (
-                <SelectItem key={t._id} value={t._id}>{t.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={sortBy} onValueChange={(v) => setSortBy((v as SortKey) ?? 'name')}>
-            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sort" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name">Sort: Name</SelectItem>
-              <SelectItem value="grade">Sort: Grade</SelectItem>
-              <SelectItem value="progress">Sort: Lowest progress</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <Select value={filterGrade} onValueChange={(v) => setFilterGrade(v ?? 'all')}>
+          <SelectTrigger className="h-9 text-sm shrink-0 w-[112px]"><SelectValue placeholder="Grade" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Grades</SelectItem>
+            {[6, 7, 8, 9, 10, 11].map(g => (
+              <SelectItem key={g} value={String(g)}>Grade {g}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={filterCenter} onValueChange={(v) => setFilterCenter(v ?? 'all')}>
+          <SelectTrigger className="h-9 text-sm shrink-0 w-[120px]"><SelectValue placeholder="Center" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Centers</SelectItem>
+            <SelectItem value="none">No Center</SelectItem>
+            {centers?.map((c: { _id: string; name: string }) => (
+              <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={filterTrack} onValueChange={(v) => setFilterTrack(v ?? 'all')}>
+          <SelectTrigger className="h-9 text-sm shrink-0 w-[112px]"><SelectValue placeholder="Track" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Tracks</SelectItem>
+            <SelectItem value="none">No Track</SelectItem>
+            {tracks?.map((t: { _id: string; name: string }) => (
+              <SelectItem key={t._id} value={t._id}>{t.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={(v) => setSortBy((v as SortKey) ?? 'name')}>
+          <SelectTrigger className="h-9 text-sm shrink-0 w-[150px]"><SelectValue placeholder="Sort" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name">Sort: Name</SelectItem>
+            <SelectItem value="grade">Sort: Grade</SelectItem>
+            <SelectItem value="progress">Sort: Lowest progress</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex items-center justify-between mb-3">
@@ -374,17 +361,12 @@ export default function StudentsPage() {
               hasModuleOverride(student, m.id),
             ).length;
             const overall = overallByStudent.get(student._id) ?? { done: 0, total: 0, pct: 0 };
-            const isOpen = expanded.has(student._id);
 
             return (
               <Card key={student._id} className="border-border/50 overflow-hidden">
-                {/* Compact header — tap to expand */}
-                <button
-                  onClick={() => toggleExpand(student._id)}
-                  className="w-full text-left"
-                  aria-expanded={isOpen}
-                >
-                  <CardContent className="p-3 flex items-center gap-2.5">
+                <CardContent className="p-3 space-y-2.5">
+                  {/* Top: identity + overall progress */}
+                  <div className="flex items-center gap-2.5">
                     <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 text-sm font-bold">
                       {student.name.charAt(0).toUpperCase()}
                     </div>
@@ -414,8 +396,7 @@ export default function StudentsPage() {
                         )}
                       </div>
                     </div>
-                    {/* Overall progress */}
-                    <div className="shrink-0 w-14 text-right">
+                    <div className="shrink-0 w-14 text-right" title={`${overall.done}/${overall.total} exercises done`}>
                       <div className={`text-sm font-bold tabular-nums ${progColor(overall.pct)}`}>
                         {overall.total > 0 ? `${overall.pct}%` : '—'}
                       </div>
@@ -426,17 +407,12 @@ export default function StudentsPage() {
                         />
                       </div>
                     </div>
-                    <ChevronDown
-                      className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-                    />
-                  </CardContent>
-                </button>
+                  </div>
 
-                {/* Expanded detail */}
-                {isOpen && (
-                  <div className="px-3 pb-3 pt-1 border-t border-border/50 space-y-3">
-                    {/* Action row */}
-                    <div className="flex items-center gap-0.5 pt-2 flex-wrap">
+                  {/* Bottom: track picker + actions */}
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <TrackPicker studentId={student._id} trackId={student.trackId} />
+                    <div className="flex items-center gap-0.5 ml-auto">
                       <Link href={`/progress?id=${student._id}`}>
                         <Button variant="ghost" size="icon-xs" title="Progress">
                           <BarChart3 className="w-3.5 h-3.5" />
@@ -474,55 +450,8 @@ export default function StudentsPage() {
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
                     </div>
-
-                    {/* Track assignment */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-muted-foreground shrink-0">Track</span>
-                      <TrackPicker studentId={student._id} trackId={student.trackId} />
-                    </div>
-
-                    {/* Per-module progress chips */}
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {CURRICULUM_MODULES.map((mod) => {
-                        const prog = progressFor(student, [mod.id]);
-                        const overridden = hasModuleOverride(student, mod.id);
-                        const moduleGrades = resolveAssignedGrades(student, mod.id);
-                        return (
-                          <div
-                            key={mod.id}
-                            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5"
-                            style={{ backgroundColor: `${mod.color}10` }}
-                            title={`${mod.name} · ${moduleGrades.map((g) => `G${g}`).join(' · ')} · ${prog.done}/${prog.total} done`}
-                          >
-                            <span
-                              className="text-[10px] font-bold w-7 shrink-0 text-center rounded text-white py-0.5 inline-flex items-center justify-center gap-0.5"
-                              style={{ backgroundColor: mod.color }}
-                            >
-                              {mod.id}
-                              {overridden && (
-                                <span className="w-1 h-1 rounded-full bg-amber-300" />
-                              )}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <div className="h-1.5 rounded-full bg-background overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all"
-                                  style={{ width: `${prog.pct}%`, backgroundColor: mod.color }}
-                                />
-                              </div>
-                            </div>
-                            <span
-                              className="text-[10px] font-bold tabular-nums shrink-0 w-8 text-right"
-                              style={{ color: mod.color }}
-                            >
-                              {prog.total > 0 ? `${prog.pct}%` : '—'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
                   </div>
-                )}
+                </CardContent>
               </Card>
             );
           })}
