@@ -20,13 +20,14 @@ Backend: `convex/timeline.ts`.
 
 ## /students — roster + per-student mastery
 - `/students` — CRUD roster (`api.students.*`), grade assignment
-  (`src/components/grade-assignment-dialog.tsx`). Cards are compact +
-  collapsible: header shows one overall progress %; per-module chips, track
-  picker, and actions live in a tap-to-expand accordion. Filter bar = search
-  (name/school) + grade + center + track + sort (name/grade/lowest progress).
-  Progress uses precomputed exercises-by-unit + entries-by-key maps (O(1)).
-  parentPhone is optional — `students.add/update` validate it only when
-  filled (empty stored as ""), and the form catches save errors as toasts.
+  (`src/components/grade-assignment-dialog.tsx`). Cards are compact, no
+  accordion: each shows name/chips, ONE overall progress % (per-module bars
+  removed by founder request), the track picker, and all actions inline.
+  Filter bar = one horizontally-scrollable row: search (name/school) + grade
+  + center + track + sort (name/grade/lowest progress). Progress uses
+  precomputed exercises-by-unit + entries-by-key maps (O(1)). parentPhone is
+  optional — `students.add/update` validate it only when filled (empty stored
+  as ""), and the form catches save errors as toasts.
 - `/students/[id]/mastery` — per-student engine view built from
   `src/components/learning/student-mastery.tsx` (concept mastery) +
   `student-exam-outlook.tsx` (exam-readiness); engine data via

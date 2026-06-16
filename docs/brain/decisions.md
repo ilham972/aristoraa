@@ -29,9 +29,10 @@ because Z.
   superseded by Phase W messaging hub + weekly cards.
 - **Automatic exam-week detection** — exam mode is a MANUAL switch
   (examModeActive) + daily alert; auto-detection rejected.
-- **Always-expanded per-module progress grid on /students cards** (8+ bars
-  per student) — replaced 2026-06-17 by compact cards (one overall %) with a
-  tap-to-expand accordion for the module breakdown; too tall/heavy to scan.
+- **Per-module progress grid on /students cards** (8+ bars per student) —
+  removed 2026-06-17. Cards now show only ONE overall %; founder rejected the
+  module breakdown (and a tap-to-expand accordion) entirely — all actions +
+  track picker sit inline on the compact card. Filters live in one row.
 - **Required parentPhone on student add/edit** — caused silent save failures
   (normalizeToE164SL threw on blank/odd input, no catch). Now optional:
   validate only when filled, store "" otherwise, surface errors as toasts.
