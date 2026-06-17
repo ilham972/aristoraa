@@ -60,6 +60,11 @@ because Z.
   per-block). Paper revenue reported separately from 250/hr personal revenue.
 - **Capacity lives on the ROOM** (rooms.capacity), not the block — small rooms
   6, big rooms 10+. Hard cap; availability only WARNS (lead can override).
+- **Paper block sharing a room with a personal class is ALLOWED** (2026-06-17
+  fix). Original createBlock hard-threw "Room is booked by a personal class",
+  which blocked the default create entirely. The lead owns physical room
+  scheduling + the library is separate, so it's a non-blocking form warning
+  (personalClashAt) now. Only paper-vs-paper room overlap is still hard-blocked.
 - **Availability = stored outside windows + derived personal slots** — only the
   night-class/outside commitments are entered (per student); the app already
   knows personal-class times from group slots, so it combines both for free.
