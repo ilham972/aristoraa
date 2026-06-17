@@ -115,6 +115,14 @@ function CreateForm({
     | { _id: string; name: string; capacity?: number }
     | undefined;
 
+  // Non-blocking heads-up: is this room also running a personal class then?
+  const personalClash = useQuery(
+    api.paperClasses.personalClashAt,
+    roomId && end > start
+      ? { roomId: roomId as Id<'rooms'>, dayOfWeek: day, startTime: start, endTime: end }
+      : 'skip',
+  );
+
   const save = async () => {
     if (!roomId) return toast.error('Pick a room');
     if (!teacherId) return toast.error('Pick a supervising teacher');
@@ -201,6 +209,14 @@ function CreateForm({
           </Select>
         </div>
       </div>
+
+      {personalClash && personalClash.length > 0 && (
+        <p className="text-[11px] text-amber-600 bg-amber-500/10 rounded-lg px-2 py-1.5">
+          Heads up: {selectedRoom?.name ?? 'this room'} also runs a personal class then
+          ({personalClash.join(', ')}). You can still create it — just make sure the
+          room is actually free or pick another.
+        </p>
+      )}
 
       <Button onClick={save} disabled={saving} className="w-full rounded-xl">
         {saving ? 'Creating…' : 'Create block'}

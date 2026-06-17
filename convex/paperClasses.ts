@@ -14,9 +14,10 @@
 // cap, and a room can't host a paper block that clashes with a personal class.
 
 import { query, mutation } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Id } from "./_generated/dataModel";
 import {
   rangesOverlap,
   busyConflict,
@@ -37,7 +38,7 @@ function hoursBetween(start: string, end: string): number {
 // human-readable reason on each. `excludeBlockId` drops the block being
 // edited so it doesn't count itself as a clash.
 async function busyWindowsForDay(
-  ctx: { db: any },
+  ctx: QueryCtx,
   studentId: Id<"students">,
   dayOfWeek: number,
   excludeBlockId?: Id<"paperBlocks">,
@@ -47,7 +48,7 @@ async function busyWindowsForDay(
   // 1. Outside commitments.
   const avail = await ctx.db
     .query("studentAvailability")
-    .withIndex("by_student", (q: any) => q.eq("studentId", studentId))
+    .withIndex("by_student", (q) => q.eq("studentId", studentId))
     .first();
   for (const w of avail?.busy ?? []) {
     if (w.dayOfWeek !== dayOfWeek) continue;
@@ -62,12 +63,12 @@ async function busyWindowsForDay(
   // 2. Personal classes — group slots on this day.
   const memberships = await ctx.db
     .query("groupMembers")
-    .withIndex("by_student", (q: any) => q.eq("studentId", studentId))
+    .withIndex("by_student", (q) => q.eq("studentId", studentId))
     .collect();
   for (const m of memberships) {
     const slots = await ctx.db
       .query("scheduleSlots")
-      .withIndex("by_group", (q: any) => q.eq("groupId", m.groupId))
+      .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
       .collect();
     const group = await ctx.db.get(m.groupId);
     for (const s of slots) {
@@ -84,7 +85,7 @@ async function busyWindowsForDay(
   // 3. Other paper blocks they already sit in.
   const inBlocks = await ctx.db
     .query("paperBlockStudents")
-    .withIndex("by_student", (q: any) => q.eq("studentId", studentId))
+    .withIndex("by_student", (q) => q.eq("studentId", studentId))
     .collect();
   for (const row of inBlocks) {
     if (excludeBlockId && row.blockId === excludeBlockId) continue;
@@ -566,10 +567,13 @@ export const paperRevenueRange = query({
 
 // ── Mutations ───────────────────────────────────────────────────────────────
 
-// Hard-block: a room can't host two things at once. Checks both other paper
-// blocks and personal-class slots in the same room overlapping this time.
+// Guard against a duplicate paper block: two paper blocks overlapping in the
+// SAME room is a genuine mistake, so block it. A clash with a PERSONAL class is
+// NOT blocked here — the lead owns physical room scheduling and the library
+// runs operationally separate; the create form surfaces that clash as a
+// non-blocking warning (see personalClashAt) instead of refusing to create.
 async function assertRoomFree(
-  ctx: { db: any },
+  ctx: QueryCtx,
   roomId: Id<"rooms">,
   dayOfWeek: number,
   startTime: string,
@@ -578,25 +582,44 @@ async function assertRoomFree(
 ) {
   const blocks = await ctx.db
     .query("paperBlocks")
-    .withIndex("by_room", (q: any) => q.eq("roomId", roomId))
+    .withIndex("by_room", (q) => q.eq("roomId", roomId))
     .collect();
   for (const b of blocks) {
     if (excludeBlockId && b._id === excludeBlockId) continue;
     if (b.dayOfWeek === dayOfWeek && rangesOverlap(b.startTime, b.endTime, startTime, endTime)) {
-      throw new ConvexError("Room already has a paper block at this time");
-    }
-  }
-  const slots = await ctx.db
-    .query("scheduleSlots")
-    .withIndex("by_room", (q: any) => q.eq("roomId", roomId))
-    .collect();
-  for (const s of slots) {
-    if (!s.groupId) continue; // orphan slot — free
-    if (s.dayOfWeek === dayOfWeek && rangesOverlap(s.startTime, s.endTime, startTime, endTime)) {
-      throw new ConvexError("Room is booked by a personal class at this time");
+      throw new ConvexError("This room already has a paper block at that time");
     }
   }
 }
+
+// Non-blocking check for the create/edit form: is there a PERSONAL class in
+// this room at this day/time? Returns the clashing group names so the form can
+// show an amber "also a personal class then" warning without refusing to save.
+export const personalClashAt = query({
+  args: {
+    roomId: v.id("rooms"),
+    dayOfWeek: v.number(),
+    startTime: v.string(),
+    endTime: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const slots = await ctx.db
+      .query("scheduleSlots")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .collect();
+    const names: string[] = [];
+    for (const s of slots) {
+      if (!s.groupId) continue;
+      if (s.dayOfWeek === args.dayOfWeek && rangesOverlap(s.startTime, s.endTime, args.startTime, args.endTime)) {
+        const g = await ctx.db.get(s.groupId);
+        if (g && !names.includes(g.name)) names.push(g.name);
+      }
+    }
+    return names;
+  },
+});
 
 export const createBlock = mutation({
   args: {
