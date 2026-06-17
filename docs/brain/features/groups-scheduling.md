@@ -11,10 +11,13 @@
 - **Session view** — Yesterday/Today/Tomorrow selector + `session-launcher.tsx`
   to jump into sessions without hunting the grid.
 - **Group view** — organize board to move students between groups (new joiners,
-  reshuffles). Grade-scoped columns + Unassigned; tap-to-pick/tap-to-drop;
-  stage then Save (atomic). `organize-board.tsx` + `groups.gradeBoard`/
-  `gradeOptions`/`applyRosterMoves`; cap/diff in `convex/lib/rosterMoves.ts`
-  (tested). Cap = maxSize ?? 10; only membership moves (not sessions/fees).
+  reshuffles). Grade-scoped columns (a group shows if it declares the grade OR
+  holds a grade-G student) + Unassigned; EVERY member is a movable chip (off-
+  grade ones get a grade badge; multi-group students appear in each group).
+  Tap-to-pick/tap-to-drop; stage then Save (atomic). `organize-board.tsx` +
+  `groups.gradeBoard`/`gradeOptions`/`applyRosterMoves`; column/cap/diff logic
+  in `convex/lib/rosterMoves.ts` (`buildGradeBoard`, tested). Cap = maxSize ??
+  10; only membership moves (not sessions/fees).
 - **Library view** — paper-class (cheap self-study) timetable, STUDENT-CENTRIC.
   Pill rail of all students on top (`paper-student-rail.tsx`); slot grid below
   (`library-grid.tsx`). Tap a pill = pick it up (glow) + highlight their week;

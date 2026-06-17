@@ -15,7 +15,7 @@ import { ConvexError } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { toggleBand, type SlotRange } from "./lib/slotNormalize";
 import { absorbSlotData } from "./lib/slotMerge";
-import { effectiveCap, realOps, validateCaps, type RosterOp } from "./lib/rosterMoves";
+import { buildGradeBoard, effectiveCap, realOps, validateCaps, type RosterOp } from "./lib/rosterMoves";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -870,13 +870,13 @@ export const gradeOptions = query({
   },
 });
 
-// One-pass snapshot for the organize board at a given grade. Columns = groups
-// accepting this grade; each lists its MOVABLE chips (this-grade students who
-// belong to exactly one group, so a single "move" is unambiguous) plus a
-// lockedCount for everyone else on the roster (other-grade members via
-// additionalGrades, or students in multiple groups) — they still count toward
-// the cap but are edited in the group editor, not dragged here. `unassigned`
-// holds this-grade students in no group at all. `cap` = maxSize ?? 10.
+// One-pass snapshot for the organize board at a given grade. A group is a
+// column if it DECLARES this grade (grade/additionalGrades) OR holds at least
+// one student of this grade (so untyped/mixed groups aren't stranded). EVERY
+// member of a shown column is a movable chip — including off-grade and
+// multi-group members; nothing is hidden. Unassigned = this-grade students in
+// no group at all. Column/member logic lives in the tested pure
+// `buildGradeBoard`; this handler only loads data + attaches session labels.
 export const gradeBoard = query({
   args: { grade: v.number() },
   handler: async (ctx, args) => {
@@ -889,22 +889,6 @@ export const gradeBoard = query({
       ctx.db.query("students").collect(),
       ctx.db.query("scheduleSlots").collect(),
     ]);
-
-    const studentById = new Map(allStudents.map((s) => [s._id as string, s]));
-
-    // How many groups each student belongs to (to flag multi-membership).
-    const groupCountByStudent = new Map<string, number>();
-    for (const m of allMembers) {
-      groupCountByStudent.set(m.studentId, (groupCountByStudent.get(m.studentId) ?? 0) + 1);
-    }
-
-    // Members per group.
-    const membersByGroup = new Map<string, typeof allMembers>();
-    for (const m of allMembers) {
-      const arr = membersByGroup.get(m.groupId) ?? [];
-      arr.push(m);
-      membersByGroup.set(m.groupId, arr);
-    }
 
     // Earliest weekly session per group → a "Mon 16:00" style label client-side.
     const firstSlotByGroup = new Map<string, { dayOfWeek: number; startTime: string }>();
@@ -923,46 +907,19 @@ export const gradeBoard = query({
       }
     }
 
-    const groups = allGroups.filter(
-      (g) => g.grade === args.grade || (g.additionalGrades ?? []).includes(args.grade),
-    );
-
-    const assignedThisGrade = new Set<string>();
-
-    const columns = groups.map((g) => {
-      const rows = membersByGroup.get(g._id) ?? [];
-      const chips: Array<{ studentId: Id<"students">; name: string }> = [];
-      let lockedCount = 0;
-      for (const m of rows) {
-        const s = studentById.get(m.studentId);
-        const isThisGrade = s != null && s.schoolGrade === args.grade;
-        const isSingleGroup = (groupCountByStudent.get(m.studentId) ?? 0) === 1;
-        if (isThisGrade) assignedThisGrade.add(m.studentId);
-        if (s && isThisGrade && isSingleGroup) {
-          chips.push({ studentId: s._id, name: s.name });
-        } else {
-          lockedCount += 1;
-        }
-      }
-      chips.sort((a, b) => a.name.localeCompare(b.name));
-      return {
-        groupId: g._id,
+    return buildGradeBoard(
+      args.grade,
+      allGroups.map((g) => ({
+        _id: g._id,
         name: g.name,
-        cap: effectiveCap(g.maxSize),
-        count: rows.length,
+        grade: g.grade,
+        additionalGrades: g.additionalGrades,
+        maxSize: g.maxSize,
         firstSession: firstSlotByGroup.get(g._id) ?? null,
-        chips,
-        lockedCount,
-      };
-    });
-
-    // Unassigned = this-grade students who are in NO group at all.
-    const unassigned = allStudents
-      .filter((s) => s.schoolGrade === args.grade && (groupCountByStudent.get(s._id) ?? 0) === 0)
-      .map((s) => ({ studentId: s._id, name: s.name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    return { columns, unassigned };
+      })),
+      allMembers.map((m) => ({ groupId: m.groupId, studentId: m.studentId })),
+      allStudents.map((s) => ({ _id: s._id, name: s.name, schoolGrade: s.schoolGrade })),
+    );
   },
 });
 

@@ -34,6 +34,102 @@ export function netCountDelta(ops: RosterOp[]): Map<string, number> {
   return delta;
 }
 
+// ── Organize-board construction (pure) ──────────────────────────────────────
+// Builds the grade-scoped board from plain rows so it can be unit-tested
+// without a Convex DB. Key rules (see decisions.md):
+//   • A group is a column for grade G if it DECLARES G (grade or
+//     additionalGrades) OR contains at least one grade-G student. The second
+//     clause is what surfaces untyped/mixed groups (e.g. a group with no grade
+//     field that nonetheless holds grade-G students) so their members aren't
+//     stranded off every board.
+//   • EVERY member of a shown column is a movable chip — including off-grade
+//     members (shown with their real grade) and students who are also in other
+//     groups (they appear once per group, moved independently). Nothing is
+//     hidden as "locked".
+//   • Unassigned = grade-G students who are in no group at all.
+
+export type BoardGroup = {
+  _id: string;
+  name: string;
+  grade?: number | null;
+  additionalGrades?: number[] | null;
+  maxSize?: number | null;
+  firstSession?: { dayOfWeek: number; startTime: string } | null;
+};
+export type BoardMemberRow = { groupId: string; studentId: string };
+export type BoardStudent = { _id: string; name: string; schoolGrade: number };
+
+export type BoardChip = { studentId: string; name: string; grade: number };
+export type BoardColumn = {
+  groupId: string;
+  name: string;
+  cap: number;
+  count: number;
+  firstSession: { dayOfWeek: number; startTime: string } | null;
+  acceptedGrades: number[]; // empty ⇒ accepts any grade
+  members: BoardChip[];
+};
+export type GradeBoard = { columns: BoardColumn[]; unassigned: BoardChip[] };
+
+export function acceptedGradesOf(g: BoardGroup): number[] {
+  return [
+    ...(g.grade != null ? [g.grade] : []),
+    ...(g.additionalGrades ?? []),
+  ];
+}
+
+export function buildGradeBoard(
+  grade: number,
+  groups: BoardGroup[],
+  members: BoardMemberRow[],
+  students: BoardStudent[],
+): GradeBoard {
+  const studentById = new Map(students.map((s) => [s._id, s]));
+
+  const membersByGroup = new Map<string, BoardMemberRow[]>();
+  const assigned = new Set<string>();
+  for (const m of members) {
+    const arr = membersByGroup.get(m.groupId) ?? [];
+    arr.push(m);
+    membersByGroup.set(m.groupId, arr);
+    assigned.add(m.studentId);
+  }
+
+  const columns: BoardColumn[] = [];
+  for (const g of groups) {
+    const rows = membersByGroup.get(g._id) ?? [];
+    const chips: BoardChip[] = [];
+    let hasGradeMember = false;
+    for (const m of rows) {
+      const s = studentById.get(m.studentId);
+      if (!s) continue;
+      if (s.schoolGrade === grade) hasGradeMember = true;
+      chips.push({ studentId: s._id, name: s.name, grade: s.schoolGrade });
+    }
+    const accepted = acceptedGradesOf(g);
+    const declaresGrade = accepted.includes(grade);
+    if (!declaresGrade && !hasGradeMember) continue;
+
+    chips.sort((a, b) => a.name.localeCompare(b.name));
+    columns.push({
+      groupId: g._id,
+      name: g.name,
+      cap: effectiveCap(g.maxSize),
+      count: chips.length,
+      firstSession: g.firstSession ?? null,
+      acceptedGrades: accepted,
+      members: chips,
+    });
+  }
+
+  const unassigned = students
+    .filter((s) => s.schoolGrade === grade && !assigned.has(s._id))
+    .map((s) => ({ studentId: s._id, name: s.name, grade: s.schoolGrade }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return { columns, unassigned };
+}
+
 export type CapViolation = { groupId: string; count: number; cap: number };
 
 // Validate that no group exceeds its cap once ops are applied. Only groups

@@ -2,16 +2,18 @@
 
 // The "Group" view — reorganize rosters when new students join or someone
 // needs a different class. Grade-scoped board: pick a grade, every group that
-// accepts it becomes a column (+ an Unassigned column). Tap a student to pick
-// them up, then tap any column to stage a move there. Nothing is written until
-// "Save changes" — moves stage locally so a big reshuffle can be reviewed
-// first, then committed atomically by api.groups.applyRosterMoves.
+// declares it OR holds a student of it becomes a column (+ an Unassigned
+// column). EVERY member shows as a chip (off-grade members carry a grade
+// badge; a student in two groups appears in each, moved independently). Tap a
+// chip to pick it up, then tap any column to stage a move there. Nothing is
+// written until "Save changes" — moves stage locally, then commit atomically
+// via api.groups.applyRosterMoves.
 
 import { useMemo, useState } from 'react';
 import { useMutation } from 'convex/react';
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
-import { ArrowLeftRight, Check, RotateCcw, Users, X } from 'lucide-react';
+import { ArrowLeftRight, Check, RotateCcw, X } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { DAYS, fmtTime12 } from '@/lib/groups/time-grid';
@@ -21,7 +23,19 @@ import { groupColor } from '@/lib/groups/color';
 // this client file doesn't reach into convex/; ops send null for "unassigned".
 const UNASSIGNED = '__unassigned__';
 
-type Chip = { studentId: Id<'students'>; name: string };
+// One chip = one membership (a student in a specific column). A student in two
+// groups has two chips, keyed by column, so each moves on its own.
+type ChipInfo = {
+  chipKey: string;
+  studentId: Id<'students'>;
+  name: string;
+  grade: number;
+  origin: string; // column id the chip starts in
+};
+
+function chipKeyOf(columnId: string, studentId: string): string {
+  return `${columnId}::${studentId}`;
+}
 
 function sessionLabel(s: { dayOfWeek: number; startTime: string } | null): string | null {
   if (!s) return null;
@@ -41,62 +55,67 @@ export function OrganizeBoard() {
     activeGrade != null ? { grade: activeGrade } : 'skip',
   );
 
-  // Staged moves: studentId → target column id (groupId or UNASSIGNED).
+  // Staged moves: chipKey → target column id (groupId or UNASSIGNED).
   const [pending, setPending] = useState<Map<string, string>>(new Map());
-  // Currently "picked up" student, awaiting a destination tap.
-  const [picked, setPicked] = useState<Id<'students'> | null>(null);
+  // Currently "picked up" chip, awaiting a destination tap.
+  const [picked, setPicked] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const applyMoves = useMutation(api.groups.applyRosterMoves);
 
-  // Where each movable student currently lives (their home column), plus a
-  // flat name lookup. Rebuilt from the server snapshot every render.
-  const { origin, nameById, allMovable, fixedCountByGroup, capByGroup } = useMemo(() => {
-    const origin = new Map<string, string>();
-    const nameById = new Map<string, string>();
-    const allMovable: Chip[] = [];
-    const fixedCountByGroup = new Map<string, number>();
-    const capByGroup = new Map<string, number>();
+  // Flatten the board into chips + per-column metadata. Rebuilt every render
+  // from the server snapshot.
+  const { chipByKey, allChips, capByCol, acceptedByCol } = useMemo(() => {
+    const chipByKey = new Map<string, ChipInfo>();
+    const allChips: ChipInfo[] = [];
+    const capByCol = new Map<string, number>();
+    const acceptedByCol = new Map<string, number[]>();
     if (board) {
       for (const col of board.columns) {
-        capByGroup.set(col.groupId, col.cap);
-        // Locked members (other-grade / multi-group) never move but still
-        // occupy a seat against the cap.
-        fixedCountByGroup.set(col.groupId, col.count - col.chips.length);
-        for (const c of col.chips) {
-          origin.set(c.studentId, col.groupId);
-          nameById.set(c.studentId, c.name);
-          allMovable.push(c);
+        capByCol.set(col.groupId, col.cap);
+        acceptedByCol.set(col.groupId, col.acceptedGrades);
+        for (const m of col.members) {
+          const info: ChipInfo = {
+            chipKey: chipKeyOf(col.groupId, m.studentId),
+            studentId: m.studentId as Id<'students'>,
+            name: m.name,
+            grade: m.grade,
+            origin: col.groupId,
+          };
+          chipByKey.set(info.chipKey, info);
+          allChips.push(info);
         }
       }
-      for (const c of board.unassigned) {
-        origin.set(c.studentId, UNASSIGNED);
-        nameById.set(c.studentId, c.name);
-        allMovable.push(c);
+      for (const m of board.unassigned) {
+        const info: ChipInfo = {
+          chipKey: chipKeyOf(UNASSIGNED, m.studentId),
+          studentId: m.studentId as Id<'students'>,
+          name: m.name,
+          grade: m.grade,
+          origin: UNASSIGNED,
+        };
+        chipByKey.set(info.chipKey, info);
+        allChips.push(info);
       }
     }
-    return { origin, nameById, allMovable, fixedCountByGroup, capByGroup };
+    return { chipByKey, allChips, capByCol, acceptedByCol };
   }, [board]);
 
-  // Effective column for a student = staged target, else home column.
-  const effectiveCol = (studentId: string) => pending.get(studentId) ?? origin.get(studentId)!;
+  // Effective column for a chip = staged target, else its origin column.
+  const effectiveCol = (chipKey: string) => pending.get(chipKey) ?? chipByKey.get(chipKey)!.origin;
 
-  // Live headcount for a group = locked seats + movable students now placed
-  // there. Unassigned has no cap so it isn't tracked here.
-  const liveCount = (colId: string): number => {
-    if (colId === UNASSIGNED) return allMovable.filter((c) => effectiveCol(c.studentId) === UNASSIGNED).length;
-    const fixed = fixedCountByGroup.get(colId) ?? 0;
-    const moved = allMovable.filter((c) => effectiveCol(c.studentId) === colId).length;
-    return fixed + moved;
-  };
+  // Live headcount for a column = chips currently placed there.
+  const liveCount = (colId: string): number =>
+    allChips.filter((c) => effectiveCol(c.chipKey) === colId).length;
 
   const pendingCount = useMemo(() => {
     let n = 0;
-    for (const [studentId, target] of Array.from(pending.entries())) {
-      if (target !== origin.get(studentId)) n += 1;
+    for (const [chipKey, target] of Array.from(pending.entries())) {
+      const info = chipByKey.get(chipKey);
+      if (info && target !== info.origin) n += 1;
     }
     return n;
-  }, [pending, origin]);
+  }, [pending, chipByKey]);
 
   const resetGrade = (g: number) => {
     setGrade(g);
@@ -104,16 +123,34 @@ export function OrganizeBoard() {
     setPicked(null);
   };
 
-  // Stage the picked student into `target` (a column id).
+  // Stage the picked chip into `target` (a column id).
   const dropInto = (target: string) => {
     if (!picked) return;
-    const home = origin.get(picked)!;
+    const info = chipByKey.get(picked);
+    if (!info) {
+      setPicked(null);
+      return;
+    }
     if (effectiveCol(picked) === target) {
       setPicked(null);
       return;
     }
+    // Can't land a student in a group they're already in (another membership).
+    const alreadyThere = allChips.some(
+      (c) => c.chipKey !== picked && c.studentId === info.studentId && effectiveCol(c.chipKey) === target,
+    );
+    if (alreadyThere) {
+      toast.error(`${info.name} is already in that group`);
+      return;
+    }
     if (target !== UNASSIGNED) {
-      const cap = capByGroup.get(target) ?? 10;
+      // Grade rule (same as the backend): a typed group only accepts its grades.
+      const accepted = acceptedByCol.get(target) ?? [];
+      if (accepted.length > 0 && !accepted.includes(info.grade)) {
+        toast.error(`${info.name} is Grade ${info.grade}; that group accepts ${accepted.join(', ')}`);
+        return;
+      }
+      const cap = capByCol.get(target) ?? 10;
       if (liveCount(target) >= cap) {
         toast.error(`That group is full (max ${cap})`);
         return;
@@ -121,20 +158,20 @@ export function OrganizeBoard() {
     }
     setPending((prev) => {
       const next = new Map(prev);
-      if (target === home) next.delete(picked); // back home → no longer a change
+      if (target === info.origin) next.delete(picked); // back home → no change
       else next.set(picked, target);
       return next;
     });
     setPicked(null);
   };
 
-  const onChipTap = (studentId: Id<'students'>, colId: string) => {
-    if (picked === studentId) {
+  const onChipTap = (chipKey: string, colId: string) => {
+    if (picked === chipKey) {
       setPicked(null); // tap the picked chip again to cancel
     } else if (picked) {
       dropInto(colId); // tapping a chip in another column drops onto that column
     } else {
-      setPicked(studentId);
+      setPicked(chipKey);
     }
   };
 
@@ -149,12 +186,12 @@ export function OrganizeBoard() {
       fromGroupId: Id<'groups'> | null;
       toGroupId: Id<'groups'> | null;
     }> = [];
-    for (const [studentId, target] of Array.from(pending.entries())) {
-      const home = origin.get(studentId);
-      if (target === home) continue;
+    for (const [chipKey, target] of Array.from(pending.entries())) {
+      const info = chipByKey.get(chipKey);
+      if (!info || target === info.origin) continue;
       ops.push({
-        studentId: studentId as Id<'students'>,
-        fromGroupId: home === UNASSIGNED ? null : (home as Id<'groups'>),
+        studentId: info.studentId,
+        fromGroupId: info.origin === UNASSIGNED ? null : (info.origin as Id<'groups'>),
         toGroupId: target === UNASSIGNED ? null : (target as Id<'groups'>),
       });
     }
@@ -261,12 +298,11 @@ export function OrganizeBoard() {
                 subtitle={sessionLabel(col.firstSession)}
                 count={liveCount(col.groupId)}
                 cap={col.cap}
-                lockedCount={col.lockedCount}
                 accentSeed={col.groupId}
-                chips={allMovable.filter((c) => effectiveCol(c.studentId) === col.groupId)}
+                boardGrade={activeGrade}
+                chips={allChips.filter((c) => effectiveCol(c.chipKey) === col.groupId)}
                 picked={picked}
                 pending={pending}
-                origin={origin}
                 onChipTap={onChipTap}
                 onColumnTap={() => dropInto(col.groupId)}
                 hasPick={picked != null}
@@ -277,12 +313,11 @@ export function OrganizeBoard() {
               title="Unassigned"
               subtitle="not in a group"
               count={liveCount(UNASSIGNED)}
-              lockedCount={0}
               accentSeed={null}
-              chips={allMovable.filter((c) => effectiveCol(c.studentId) === UNASSIGNED)}
+              boardGrade={activeGrade}
+              chips={allChips.filter((c) => effectiveCol(c.chipKey) === UNASSIGNED)}
               picked={picked}
               pending={pending}
-              origin={origin}
               onChipTap={onChipTap}
               onColumnTap={() => dropInto(UNASSIGNED)}
               hasPick={picked != null}
@@ -292,11 +327,11 @@ export function OrganizeBoard() {
       )}
 
       {/* Moving bar */}
-      {picked && (
+      {picked && chipByKey.get(picked) && (
         <div className="shrink-0 mt-2 flex items-center gap-2 rounded-xl bg-primary/10 border border-primary/30 px-3 py-2">
           <ArrowLeftRight className="w-4 h-4 text-primary shrink-0" />
           <span className="text-xs text-foreground">
-            Moving <span className="font-semibold">{nameById.get(picked)}</span> — tap a group
+            Moving <span className="font-semibold">{chipByKey.get(picked)!.name}</span> — tap a group
           </span>
           <button
             onClick={() => setPicked(null)}
@@ -316,12 +351,11 @@ function Column({
   subtitle,
   count,
   cap,
-  lockedCount,
   accentSeed,
+  boardGrade,
   chips,
   picked,
   pending,
-  origin,
   onChipTap,
   onColumnTap,
   hasPick,
@@ -331,13 +365,12 @@ function Column({
   subtitle: string | null;
   count: number;
   cap?: number;
-  lockedCount: number;
   accentSeed: string | null;
-  chips: Chip[];
-  picked: Id<'students'> | null;
+  boardGrade: number | null;
+  chips: ChipInfo[];
+  picked: string | null;
   pending: Map<string, string>;
-  origin: Map<string, string>;
-  onChipTap: (studentId: Id<'students'>, colId: string) => void;
+  onChipTap: (chipKey: string, colId: string) => void;
   onColumnTap: () => void;
   hasPick: boolean;
 }) {
@@ -381,17 +414,18 @@ function Column({
           </p>
         )}
         {chips.map((c) => {
-          const isPicked = picked === c.studentId;
-          const moved = pending.has(c.studentId) && pending.get(c.studentId) !== origin.get(c.studentId);
+          const isPicked = picked === c.chipKey;
+          const moved = pending.has(c.chipKey) && pending.get(c.chipKey) !== c.origin;
+          const offGrade = boardGrade != null && c.grade !== boardGrade;
           return (
             <button
-              key={c.studentId}
+              key={c.chipKey}
               onClick={(e) => {
                 e.stopPropagation();
-                onChipTap(c.studentId, colId);
+                onChipTap(c.chipKey, colId);
               }}
               className={cn(
-                'w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all border',
+                'w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all border flex items-center gap-1.5',
                 isPicked
                   ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-[1.02]'
                   : moved
@@ -399,18 +433,21 @@ function Column({
                     : 'bg-muted/50 border-transparent text-foreground hover:bg-muted',
               )}
             >
-              <span className="truncate block">{c.name}</span>
+              <span className="truncate flex-1">{c.name}</span>
+              {offGrade && (
+                <span
+                  className={cn(
+                    'shrink-0 text-[9px] font-bold px-1 py-px rounded tabular-nums',
+                    isPicked ? 'bg-primary-foreground/20' : 'bg-muted-foreground/15 text-muted-foreground',
+                  )}
+                  title={`Grade ${c.grade}`}
+                >
+                  G{c.grade}
+                </span>
+              )}
             </button>
           );
         })}
-        {lockedCount > 0 && (
-          <p
-            className="text-[10px] text-muted-foreground/70 text-center pt-1"
-            title="Other-grade members, or students in more than one group — edit them in the group editor"
-          >
-            +{lockedCount} locked
-          </p>
-        )}
       </div>
     </div>
   );

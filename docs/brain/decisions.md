@@ -49,16 +49,22 @@ because Z.
   can't run in the Convex runtime; zero per-PDF cost).
 
 ## Group organize board — /groups "Group" view (2026-06-18)
-- **5th view to reshuffle rosters** — grade-scoped multi-column board (groups
-  accepting that grade + Unassigned). Tap-to-pick/tap-to-drop, NOT drag (drag
-  fights horizontal scroll on a phone). Stage locally then **Save all** in ONE
-  atomic mutation (`groups.applyRosterMoves`) — founder wanted to plan before
-  committing (chose this over instant-write-with-undo).
+- **5th view to reshuffle rosters** — grade-scoped multi-column board. A group
+  is a grade-G column if it DECLARES G (grade/additionalGrades) OR holds any
+  grade-G student (so untyped/mixed groups aren't stranded). Tap-to-pick/
+  tap-to-drop, NOT drag (drag fights horizontal scroll on a phone). Stage
+  locally then **Save all** in ONE atomic mutation (`groups.applyRosterMoves`)
+  — founder wanted to plan before committing (over instant-write-with-undo).
+- **Show EVERY member as a movable chip** — including off-grade members (with a
+  grade badge) and students in multiple groups (one chip per group, moved
+  independently). The earlier "+N locked" hiding was a BUG (2026-06-18): it hid
+  legitimate members (a gr-11 member of a gr-10+11 group, a student in 2 groups)
+  and stranded students whose only group had no grade set. Do NOT re-add it.
 - **Cap = maxSize ?? 10**, re-checked server-side on final state; board also
-  refuses a drop into a full column. Pure cap/diff in `convex/lib/rosterMoves.ts`
-  (tested). Only MEMBERSHIP moves (not sessions/fees — fee is group-specific).
-  Multi-group/other-grade members show as "+N locked" (count vs cap, not movable
-  here — edit in the group editor); keeps each move keyed to one origin.
+  refuses a drop into a full column, a cross-grade drop (typed group), or a
+  drop into a group the student is already in. Pure column/cap/diff logic in
+  `convex/lib/rosterMoves.ts` (`buildGradeBoard` + cap math, unit-tested). Only
+  MEMBERSHIP moves (not sessions/fees — a fee is group-specific).
 
 ## Paper classes / Library (redesigned student-centric 2026-06-18)
 - **Separate tables, NOT a scheduleSlots flag** — paper classes never drag in
