@@ -44,6 +44,7 @@ import type * as learningEngine_scoring from "../learningEngine/scoring.js";
 import type * as learningEngine_sheets from "../learningEngine/sheets.js";
 import type * as learningEngine_studentDashboard from "../learningEngine/studentDashboard.js";
 import type * as learningEngine_tracks from "../learningEngine/tracks.js";
+import type * as lib_draftReconcile from "../lib/draftReconcile.js";
 import type * as lib_naming from "../lib/naming.js";
 import type * as lib_paperClasses from "../lib/paperClasses.js";
 import type * as lib_phone from "../lib/phone.js";
@@ -96,6 +97,7 @@ import type * as teachers from "../teachers.js";
 import type * as textbookPages from "../textbookPages.js";
 import type * as textbooks from "../textbooks.js";
 import type * as timeline from "../timeline.js";
+import type * as timetableDraft from "../timetableDraft.js";
 import type * as topicTags from "../topicTags.js";
 import type * as unitMetadata from "../unitMetadata.js";
 
@@ -142,6 +144,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/sheets": typeof learningEngine_sheets;
   "learningEngine/studentDashboard": typeof learningEngine_studentDashboard;
   "learningEngine/tracks": typeof learningEngine_tracks;
+  "lib/draftReconcile": typeof lib_draftReconcile;
   "lib/naming": typeof lib_naming;
   "lib/paperClasses": typeof lib_paperClasses;
   "lib/phone": typeof lib_phone;
@@ -194,6 +197,7 @@ declare const fullApi: ApiFromModules<{
   textbookPages: typeof textbookPages;
   textbooks: typeof textbooks;
   timeline: typeof timeline;
+  timetableDraft: typeof timetableDraft;
   topicTags: typeof topicTags;
   unitMetadata: typeof unitMetadata;
 }>;

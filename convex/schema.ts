@@ -228,6 +228,71 @@ export default defineSchema({
     .index("by_slot_date", ["slotId", "date"])
     .index("by_student", ["studentId"]),
 
+  // ─── Planning mode: the draft timetable "branch" ─────────────────────────
+  // A private, saved copy of ONLY the four structural tables (groups, slots,
+  // memberships, session-teachers). Edited through the same week view while
+  // the Planning-mode toggle is on; never touched by the live app, analytics,
+  // messaging or the engine. `sourceId` points back at the live row this was
+  // copied from (absent ⇒ created fresh in the draft). Internal foreign keys
+  // (slot→group, member→group, teacher→slot) point at DRAFT ids so the draft
+  // is internally consistent; Merge remaps them to live ids. Pull/Merge logic
+  // lives in convex/lib/draftReconcile.ts (pure, tested). One draft at a time.
+  draftMeta: defineTable({
+    status: v.string(), // "active" — a row's existence means a draft exists.
+    createdAt: v.number(),
+    lastPullAt: v.number(),
+    // liveId → fingerprint captured at fork / last Pull, per table. Used to
+    // tell "edited/deleted in the draft" apart from "live drifted".
+    baseGroups: v.any(),
+    baseSlots: v.any(),
+    baseMembers: v.any(),
+    baseTeachers: v.any(),
+  }),
+  draftGroups: defineTable({
+    sourceId: v.optional(v.id("groups")),
+    name: v.string(),
+    autoName: v.boolean(),
+    centerId: v.optional(v.id("centers")),
+    grade: v.optional(v.number()),
+    additionalGrades: v.optional(v.array(v.number())),
+    mentorId: v.optional(v.id("teachers")),
+    defaultRoomId: v.optional(v.id("rooms")),
+    type: v.optional(v.string()),
+    maxSize: v.optional(v.number()),
+    targetMarksMin: v.optional(v.number()),
+    targetMarksMax: v.optional(v.number()),
+    loggingStartDate: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_source", ["sourceId"]),
+  draftSlots: defineTable({
+    sourceId: v.optional(v.id("scheduleSlots")),
+    dayOfWeek: v.number(),
+    startTime: v.string(),
+    endTime: v.string(),
+    roomId: v.id("rooms"),
+    groupId: v.optional(v.id("draftGroups")), // draft-space FK
+  })
+    .index("by_source", ["sourceId"])
+    .index("by_group", ["groupId"]),
+  draftGroupMembers: defineTable({
+    sourceId: v.optional(v.id("groupMembers")),
+    groupId: v.id("draftGroups"), // draft-space FK
+    studentId: v.id("students"),
+    joinedAt: v.number(),
+    hourlyRate: v.optional(v.number()),
+  })
+    .index("by_source", ["sourceId"])
+    .index("by_group", ["groupId"])
+    .index("by_group_student", ["groupId", "studentId"]),
+  draftSlotTeachers: defineTable({
+    sourceId: v.optional(v.id("slotTeachers")),
+    slotId: v.id("draftSlots"), // draft-space FK
+    teacherId: v.id("teachers"),
+  })
+    .index("by_source", ["sourceId"])
+    .index("by_slot", ["slotId"]),
+
   // ─── Paper classes (the "Library" feature) ──────────────────────────────
   // STUDENT-CENTRIC redesign (2026-06-18). The unit is no longer a room+teacher
   // "block" — it's a per-student assignment to a 1-hour time slot. The Library
