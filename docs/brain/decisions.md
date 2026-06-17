@@ -48,6 +48,24 @@ because Z.
   Chose client-side render-at-save over server-side math (MathJax/canvas
   can't run in the Convex runtime; zero per-PDF cost).
 
+## Paper classes / Library (2026-06-17)
+- **Separate tables, NOT a scheduleSlots flag** — chose isolated paperBlocks/
+  paperBlockStudents/paperAttendance over overloading scheduleSlots, so paper
+  classes never drag in sheets/scoring/engine/leaderboard. Scope is attendance
+  + billing only (founder's explicit call).
+- **One paper-block primitive for both cases** — "fixed group paper class" and
+  "pull individuals in on free days" are the same object: a block you fill by
+  dropping a whole group OR one student at a time. No second system.
+- **Flat 100/student/DAY** — two blocks same day still bill once (per-day, not
+  per-block). Paper revenue reported separately from 250/hr personal revenue.
+- **Capacity lives on the ROOM** (rooms.capacity), not the block — small rooms
+  6, big rooms 10+. Hard cap; availability only WARNS (lead can override).
+- **Availability = stored outside windows + derived personal slots** — only the
+  night-class/outside commitments are entered (per student); the app already
+  knows personal-class times from group slots, so it combines both for free.
+- **UI = 4th "Library" view in /groups** (Option A), grid by room. Unified
+  overlay on the Week grid (Option B) deferred to phase 2 (ideas-backlog).
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.

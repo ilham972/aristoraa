@@ -6,7 +6,7 @@ import { useMutation } from 'convex/react';
 // storage while the live subscription refreshes (perf phase 3).
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import {
-  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search,
+  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search, CalendarClock,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ import { CURRICULUM_MODULES, getOrderedUnits } from '@/lib/curriculum-data';
 import { getTotalScoreable } from '@/lib/sub-questions';
 import { resolveAssignedGrades, hasModuleOverride } from '@/lib/student-grades';
 import { GradeAssignmentDialog } from '@/components/grade-assignment-dialog';
+import { AvailabilityDialog } from '@/components/students/availability-dialog';
 import { TrackPicker } from '@/components/algorithm/track-picker';
 import { toast } from 'sonner';
 import Link from 'next/link';
@@ -52,6 +53,7 @@ export default function StudentsPage() {
   const [saving, setSaving] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<Id<"students"> | null>(null);
   const [gradeDialogStudentId, setGradeDialogStudentId] = useState<Id<"students"> | null>(null);
+  const [availabilityStudentId, setAvailabilityStudentId] = useState<Id<"students"> | null>(null);
 
   const [formName, setFormName] = useState('');
   const [formGrade, setFormGrade] = useState('6');
@@ -437,6 +439,14 @@ export default function StudentsPage() {
                       >
                         <GraduationCap className="w-3.5 h-3.5" />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => setAvailabilityStudentId(student._id)}
+                        title="Busy times (Library availability)"
+                      >
+                        <CalendarClock className="w-3.5 h-3.5" />
+                      </Button>
                       <Button variant="ghost" size="icon-xs" onClick={() => handleEdit(student)} title="Edit">
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
@@ -512,6 +522,14 @@ export default function StudentsPage() {
         open={!!gradeDialogStudentId}
         onOpenChange={(o) => { if (!o) setGradeDialogStudentId(null); }}
         student={gradeDialogStudent}
+      />
+
+      {/* Availability (Library busy-times) dialog */}
+      <AvailabilityDialog
+        studentId={availabilityStudentId}
+        studentName={students?.find((s) => s._id === availabilityStudentId)?.name}
+        open={!!availabilityStudentId}
+        onClose={() => setAvailabilityStudentId(null)}
       />
     </div>
   );

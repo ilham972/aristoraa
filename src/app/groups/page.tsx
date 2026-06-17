@@ -13,6 +13,7 @@ import { useMutation } from 'convex/react';
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
 import {
+  BookOpen,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -35,6 +36,8 @@ import {
   type HourBand,
 } from '@/lib/groups/time-grid';
 import { WeekGrid } from '@/components/groups/week-grid';
+import { LibraryGrid } from '@/components/groups/library-grid';
+import { PaperBlockDialog } from '@/components/groups/paper-block-dialog';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
 import { SessionLauncher } from '@/components/groups/session-launcher';
@@ -65,7 +68,11 @@ function addDays(dateYmd: string, n: number): string {
 
 export default function GroupsPage() {
   const router = useRouter();
-  const [view, setView] = useState<'week' | 'day' | 'session'>('day');
+  const [view, setView] = useState<'week' | 'day' | 'session' | 'library'>('day');
+  // Paper-class (Library) block dialog state.
+  const [paperBlockId, setPaperBlockId] = useState<Id<'paperBlocks'> | null>(null);
+  const [paperSeed, setPaperSeed] = useState<{ dayOfWeek: number; startTime: string; endTime: string } | undefined>(undefined);
+  const [paperDialogOpen, setPaperDialogOpen] = useState(false);
   // Which day the Session view targets. Lives here (not in SessionLauncher) so
   // the Yesterday/Today/Tomorrow selector can sit on the right of the
   // Day/Week/Session toggle row. Today is the default.
@@ -103,8 +110,30 @@ export default function GroupsPage() {
   );
   const unassigned = assignmentSummary?.unassigned ?? [];
 
+  // Paper-class (Library) week grid + today's paper revenue — only fetched
+  // when the Library view is up so the other views stay lean.
+  const paperWeek = useQuery(
+    api.paperClasses.weekGrid,
+    view === 'library' ? {} : 'skip',
+  );
+  const paperRevToday = useQuery(
+    api.paperClasses.revenueForDate,
+    view === 'library' ? { date: today } : 'skip',
+  );
+
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
+
+  const openPaperBlock = (blockId: Id<'paperBlocks'>) => {
+    setPaperBlockId(blockId);
+    setPaperSeed(undefined);
+    setPaperDialogOpen(true);
+  };
+  const createPaperBlock = (dayOfWeek: number, band: HourBand) => {
+    setPaperBlockId(null);
+    setPaperSeed({ dayOfWeek, startTime: band.start, endTime: band.end });
+    setPaperDialogOpen(true);
+  };
 
   const openEditor = (groupId: Id<'groups'>) => {
     setEditingGroup(groupId);
@@ -201,6 +230,15 @@ export default function GroupsPage() {
           >
             <Clock className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Session</span>
           </button>
+          <button
+            onClick={() => setView('library')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'library' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            <BookOpen className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Library</span>
+          </button>
         </div>
 
         {/* Yesterday / Today / Tomorrow — Session view only. Chevrons select
@@ -273,6 +311,23 @@ export default function GroupsPage() {
             )}
           </div>
         )}
+
+        {/* Library view — today's paper revenue read-out (flat 100/student/day). */}
+        {view === 'library' && paperRevToday && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <span
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums"
+              title="Paper-class students present today"
+            >
+              <Users className="w-3 h-3" />
+              {paperRevToday.presentStudents}
+              <span className="hidden sm:inline">today</span>
+            </span>
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-semibold tabular-nums">
+              {fmtLKR(paperRevToday.total)}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Body fills the remaining height; each view manages its own scroll. */}
@@ -281,7 +336,28 @@ export default function GroupsPage() {
             time-aware queries), so it sits outside the week/day gating. */}
         {view === 'session' && <SessionLauncher day={sessionDay} />}
 
-        {view !== 'session' && loading && (
+        {/* Library view — paper-class timetable. Independent of groups, so it
+            owns its own loading/empty states like the Session view. */}
+        {view === 'library' && (
+          paperWeek === undefined ? (
+            <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
+                  <div className="h-9 rounded-md bg-muted/40" />
+                  {[...Array(7)].map((_, j) => <div key={j} className="h-9 rounded-md bg-muted/30" />)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <LibraryGrid
+              cells={paperWeek.cells}
+              onOpenBlock={openPaperBlock}
+              onCreateAt={createPaperBlock}
+            />
+          )
+        )}
+
+        {view !== 'session' && view !== 'library' && loading && (
           <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -292,7 +368,7 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {view !== 'session' && !loading && !hasGroups && (
+        {view !== 'session' && view !== 'library' && !loading && !hasGroups && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
               <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
@@ -336,6 +412,13 @@ export default function GroupsPage() {
         open={unassignedOpen}
         onClose={() => setUnassignedOpen(false)}
         students={unassigned ?? []}
+      />
+
+      <PaperBlockDialog
+        blockId={paperBlockId}
+        seed={paperSeed}
+        open={paperDialogOpen}
+        onClose={() => setPaperDialogOpen(false)}
       />
     </div>
   );

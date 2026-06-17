@@ -19,6 +19,7 @@ anytime. Effort S/M/L · Impact 1–5 · sorted by impact.
 | 6 | **Finish Phase F.6–F.8** (reader migration, data migration, retire old scheduling tab) — removes a dual-running legacy surface and its confusion risk. | scheduling | Teacher efficiency | M | 3 |
 | 7 | **Engine quality metrics at finalize.** finalizeSheetScoring is the single funnel — log per-sheet completion %, factor distributions, gap counts to spot planner drift early. | learning engine | Mission: predictable results | M | 3 |
 | 8 | **Scale-proof legacy pages.** /progress + /leaderboard aggregate full entries client-side — fine at 40 students, breaks at hundreds. Dies anyway if #3 ships; only do this if the flip stalls. | progression | Scale (multi-center) | M | 2 |
+| 8b | **Paper-class phase 2: unified week overlay** (Option B). Toggle paper blocks onto the Week grid so you see each student's WHOLE week (personal + paper) and the gaps to fill — directly serves "get each student in as many hours as possible." Also: per-student "free slots" planner, and a paper-revenue line in /analytics. | scheduling | Teacher efficiency + revenue | M | 3 |
 | 9 | **Split the giants** (lead-tab 1487, groups/page 1030, edit-group-dialog 816 lines) for maintainability as teacher count grows. Opportunistic, not urgent. | codebase health | Scale-readiness | M | 2 |
 | 10 | **Cleanup phase from legacy-map.md** (~3k+ dead lines + 5 dead deps). Cheap insurance against future confusion; do after #3 retires the transition rows. | codebase health | Scale-readiness | S | 2 |
 

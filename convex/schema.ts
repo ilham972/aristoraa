@@ -97,6 +97,11 @@ export default defineSchema({
     centerId: v.id("centers"),
     name: v.string(),
     moduleTimetable: v.optional(v.any()), // { "1": "M1", "2": "M2", ... } dayOfWeek → moduleId
+    // Paper-class capacity: max students a paper (library) block in this room
+    // can hold. Per-room because some rooms are small (6) and some big (10+).
+    // Optional/undefined ⇒ no cap enforced. Personal classes ignore this (they
+    // keep the ≤10 group cap elsewhere).
+    capacity: v.optional(v.number()),
   }).index("by_center", ["centerId"]),
 
   scheduleSlots: defineTable({
@@ -222,6 +227,59 @@ export default defineSchema({
   })
     .index("by_slot_date", ["slotId", "date"])
     .index("by_student", ["studentId"]),
+
+  // ─── Paper classes (the "Library" feature) ──────────────────────────────
+  // A paper block is the cheap supervised self-study slot, deliberately kept
+  // SEPARATE from scheduleSlots so it never touches sheets / scoring /
+  // learning-engine / leaderboard machinery. Scope is attendance + billing
+  // only (flat 100 LKR / student / day). One room + one (required) supervising
+  // teacher, with a roster of students who attend on their free days.
+  paperBlocks: defineTable({
+    dayOfWeek: v.number(), // 1=Mon..7=Sun, same convention as scheduleSlots
+    startTime: v.string(), // "HH:MM"
+    endTime: v.string(),
+    roomId: v.id("rooms"),
+    teacherId: v.id("teachers"), // supervising teacher — required
+  })
+    .index("by_room", ["roomId"])
+    .index("by_day", ["dayOfWeek"]),
+
+  // Roster: which students belong to a paper block.
+  paperBlockStudents: defineTable({
+    blockId: v.id("paperBlocks"),
+    studentId: v.id("students"),
+  })
+    .index("by_block", ["blockId"])
+    .index("by_student", ["studentId"]),
+
+  // Per-date attendance for a paper block. status "present" | "absent".
+  // Drives billing: 100 LKR per student per DAY (flat), regardless of how
+  // many blocks they sat in that day.
+  paperAttendance: defineTable({
+    blockId: v.id("paperBlocks"),
+    studentId: v.id("students"),
+    date: v.string(),
+    status: v.string(),
+  })
+    .index("by_block_date", ["blockId", "date"])
+    .index("by_student", ["studentId"])
+    .index("by_date", ["date"]),
+
+  // Per-student weekly availability: the OUTSIDE commitments (e.g. night
+  // classes) that make a student busy. One doc per student holding all their
+  // busy windows. Personal-class times are NOT stored here — they're derived
+  // live from the student's group slots when checking availability.
+  studentAvailability: defineTable({
+    studentId: v.id("students"),
+    busy: v.array(
+      v.object({
+        dayOfWeek: v.number(), // 1=Mon..7=Sun
+        startTime: v.string(), // "HH:MM"
+        endTime: v.string(),
+        label: v.optional(v.string()), // e.g. "Physics tuition"
+      }),
+    ),
+  }).index("by_student", ["studentId"]),
 
   studentModulePositions: defineTable({
     studentId: v.id("students"),

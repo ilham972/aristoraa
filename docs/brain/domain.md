@@ -56,4 +56,13 @@ Each entry: what it means here, then [tables in convex/schema.ts | main module].
   spec in whatsapp_integration_plan.md. [parentContacts, messageTemplates,
   messageQueue, messageLog, conversations, whatsappGroups | convex/messaging/*]
 - **Center / room** — physical locations; multi-center is the 2-year scaling
-  path (purpose.md). [centers, rooms | convex/centers.ts, rooms.ts]
+  path (purpose.md). `rooms.capacity` caps a paper block. [centers, rooms |
+  convex/centers.ts, rooms.ts]
+- **Paper class / Library** — cheap supervised self-study run by a low-cost
+  teacher; billed FLAT 100 LKR/student/DAY (vs personal class 250/hr). Lives in
+  its OWN tables, never touches sheets/scoring/engine. A **paper block** =
+  day+time+room+teacher+roster. [paperBlocks, paperBlockStudents,
+  paperAttendance | convex/paperClasses.ts]
+- **Student availability** — a student's OUTSIDE busy windows (night classes
+  etc.) used to find who's free for a paper block; personal-class times are
+  derived live, not stored here. [studentAvailability | convex/studentAvailability.ts]

@@ -37,6 +37,7 @@ export function CentersTab() {
   const addRoomMutation = useMutation(api.rooms.add);
   const removeRoomMutation = useMutation(api.rooms.remove);
   const setTimetableMutation = useMutation(api.rooms.setTimetable);
+  const updateRoomMutation = useMutation(api.rooms.update);
 
   const [editTimetableRoomId, setEditTimetableRoomId] = useState<Id<"rooms"> | null>(null);
 
@@ -211,7 +212,36 @@ export function CentersTab() {
                                       </span>
                                     )}
                                   </div>
-                                  <div className="flex gap-1">
+                                  <div className="flex gap-1 items-center">
+                                    {/* Paper-class (Library) capacity for this
+                                        room. Blank = no cap. Saved on blur. */}
+                                    <span
+                                      className="flex items-center gap-1 mr-1"
+                                      title="Library (paper class) capacity — max students in a paper block held here"
+                                    >
+                                      <span className="text-[10px] text-muted-foreground">cap</span>
+                                      <Input
+                                        type="number"
+                                        min={1}
+                                        defaultValue={room.capacity ?? ''}
+                                        key={`cap-${room._id}-${room.capacity ?? ''}`}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onBlur={async (e) => {
+                                          const raw = e.target.value.trim();
+                                          const next = raw === '' ? null : Math.max(1, Math.round(Number(raw)));
+                                          if (raw !== '' && !Number.isFinite(next as number)) return;
+                                          if ((room.capacity ?? null) === next) return;
+                                          try {
+                                            await updateRoomMutation({ id: room._id, capacity: next });
+                                            toast.success('Capacity saved');
+                                          } catch (err) {
+                                            toast.error(err instanceof Error ? err.message : 'Could not save');
+                                          }
+                                        }}
+                                        className="h-6 w-12 text-xs px-1.5 text-center"
+                                        placeholder="—"
+                                      />
+                                    </span>
                                     <button
                                       type="button"
                                       onClick={async (e) => {

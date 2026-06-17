@@ -36,13 +36,18 @@ export const add = mutation({
 export const update = mutation({
   args: {
     id: v.id("rooms"),
-    name: v.string(),
+    name: v.optional(v.string()),
+    // Paper-class capacity for this room. null clears it (no cap).
+    capacity: v.optional(v.union(v.number(), v.null())),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const { id, ...data } = args;
-    await ctx.db.patch(id, data);
+    const { id, name, capacity } = args;
+    const patch: { name?: string; capacity?: number | undefined } = {};
+    if (name !== undefined) patch.name = name;
+    if (capacity !== undefined) patch.capacity = capacity === null ? undefined : capacity;
+    await ctx.db.patch(id, patch);
   },
 });
 

@@ -10,6 +10,22 @@
   drop first session in one action (if exactly one room exists).
 - **Session view** — Yesterday/Today/Tomorrow selector + `session-launcher.tsx`
   to jump into sessions without hunting the grid.
+- **Library view** — paper-class (cheap self-study) timetable. Cells = paper
+  blocks BY ROOM (multiple rooms can run at once), `library-grid.tsx`. Tap a
+  chip → `paper-block-dialog.tsx` (block setup + availability-aware roster +
+  per-date attendance). Header shows today's paper revenue.
+
+## Paper classes (the Library)
+Deliberately SEPARATE from scheduleSlots — no sheets/scoring/engine/leaderboard.
+Scope = attendance + flat 100 LKR/student/DAY billing only. A paper block =
+day+time+room+ (required) supervising teacher + roster. Backend
+`convex/paperClasses.ts` (+ pure logic `convex/lib/paperClasses.ts`, tested).
+Tables: paperBlocks, paperBlockStudents, paperAttendance, studentAvailability;
+`rooms.capacity` (set in Settings→Centers) hard-caps a block. Availability =
+outside busy windows (`studentAvailability`, edited on /students via
+`availability-dialog.tsx`) + personal-class slots (derived) + other paper
+blocks; it WARNS, never hard-blocks an add. "Drop a group in" adds free members
+up to capacity. Phase-2 idea: overlay paper on the Week grid (ideas-backlog).
 
 ## Data flow
 Page calls `api.groups.*` (weekGrid, sessions, toggleSession, members,
