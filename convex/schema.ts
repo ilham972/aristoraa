@@ -229,40 +229,49 @@ export default defineSchema({
     .index("by_student", ["studentId"]),
 
   // ─── Paper classes (the "Library" feature) ──────────────────────────────
-  // A paper block is the cheap supervised self-study slot, deliberately kept
-  // SEPARATE from scheduleSlots so it never touches sheets / scoring /
-  // learning-engine / leaderboard machinery. Scope is attendance + billing
-  // only (flat 100 LKR / student / day). One room + one (required) supervising
-  // teacher, with a roster of students who attend on their free days.
-  paperBlocks: defineTable({
+  // STUDENT-CENTRIC redesign (2026-06-18). The unit is no longer a room+teacher
+  // "block" — it's a per-student assignment to a 1-hour time slot. The Library
+  // grid is built by tap-and-dropping student pills onto hour slots; rooms +
+  // teachers are assigned LATER, inside a slot's dialog, and are optional.
+  // Deliberately SEPARATE from scheduleSlots so paper classes never touch
+  // sheets / scoring / learning-engine / leaderboard. Scope = attendance +
+  // billing only (flat 100 LKR / student / DAY).
+  //
+  // One row = "this student sits in paper class on this weekday + hour". The
+  // grid cell is a 1-hour atom (startTime "15:00", endTime "16:00"); assigned
+  // hours for a student = count of their rows. roomId is OPTIONAL physical
+  // placement, set in the slot dialog; capacity (rooms.capacity) only WARNS.
+  // Uniqueness (one row per student+day+start) is enforced in the mutation.
+  paperAssignments: defineTable({
+    studentId: v.id("students"),
     dayOfWeek: v.number(), // 1=Mon..7=Sun, same convention as scheduleSlots
-    startTime: v.string(), // "HH:MM"
+    startTime: v.string(), // "HH:MM" (1-hour atom)
     endTime: v.string(),
-    roomId: v.id("rooms"),
-    teacherId: v.id("teachers"), // supervising teacher — required
+    roomId: v.optional(v.id("rooms")), // where they physically sit; optional
   })
-    .index("by_room", ["roomId"])
+    .index("by_student", ["studentId"])
+    .index("by_slot", ["dayOfWeek", "startTime"])
     .index("by_day", ["dayOfWeek"]),
 
-  // Roster: which students belong to a paper block.
-  paperBlockStudents: defineTable({
-    blockId: v.id("paperBlocks"),
-    studentId: v.id("students"),
-  })
-    .index("by_block", ["blockId"])
-    .index("by_student", ["studentId"]),
+  // Optional supervising teacher for a (slot, room). A row exists only when a
+  // teacher is assigned to a specific room within a specific weekly hour slot.
+  paperSlotTeachers: defineTable({
+    dayOfWeek: v.number(),
+    startTime: v.string(),
+    roomId: v.id("rooms"),
+    teacherId: v.id("teachers"),
+  }).index("by_slot", ["dayOfWeek", "startTime"]),
 
-  // Per-date attendance for a paper block. status "present" | "absent".
-  // Drives billing: 100 LKR per student per DAY (flat), regardless of how
-  // many blocks they sat in that day.
+  // Per-DATE daily roll-call. One row per (student, date). status
+  // "present" | "absent". Drives billing: a present row = 100 LKR for that
+  // day, regardless of how many hours / rooms the student sat in. Decoupled
+  // from slots entirely — paper attendance is a single daily Library list.
   paperAttendance: defineTable({
-    blockId: v.id("paperBlocks"),
     studentId: v.id("students"),
     date: v.string(),
     status: v.string(),
   })
-    .index("by_block_date", ["blockId", "date"])
-    .index("by_student", ["studentId"])
+    .index("by_student_date", ["studentId", "date"])
     .index("by_date", ["date"]),
 
   // Per-student weekly availability: the OUTSIDE commitments (e.g. night

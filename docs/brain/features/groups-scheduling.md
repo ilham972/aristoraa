@@ -10,27 +10,41 @@
   drop first session in one action (if exactly one room exists).
 - **Session view** — Yesterday/Today/Tomorrow selector + `session-launcher.tsx`
   to jump into sessions without hunting the grid.
-- **Library view** — paper-class (cheap self-study) timetable. Cells = paper
-  blocks BY ROOM (multiple rooms can run at once), `library-grid.tsx`. Tap a
-  chip → `paper-block-dialog.tsx` (block setup + availability-aware roster +
-  per-date attendance). Header shows today's paper revenue.
+- **Group view** — organize board to move students between groups (new joiners,
+  reshuffles). Grade-scoped columns + Unassigned; tap-to-pick/tap-to-drop;
+  stage then Save (atomic). `organize-board.tsx` + `groups.gradeBoard`/
+  `gradeOptions`/`applyRosterMoves`; cap/diff in `convex/lib/rosterMoves.ts`
+  (tested). Cap = maxSize ?? 10; only membership moves (not sessions/fees).
+- **Library view** — paper-class (cheap self-study) timetable, STUDENT-CENTRIC.
+  Pill rail of all students on top (`paper-student-rail.tsx`); slot grid below
+  (`library-grid.tsx`). Tap a pill = pick it up (glow) + highlight their week;
+  tap hour slots to drop them in. Tap an occupied slot (nothing picked) →
+  `paper-slot-dialog.tsx`.
 
-## Paper classes (the Library)
+## Paper classes (the Library) — student-centric (redesigned 2026-06-18)
 Deliberately SEPARATE from scheduleSlots — no sheets/scoring/engine/leaderboard.
-Scope = attendance + flat 100 LKR/student/DAY billing only. A paper block =
-day+time+room+ (required) supervising teacher + roster. Backend
+Scope = attendance + flat 100 LKR/student/DAY billing only. The unit is a
+per-student assignment to a 1-hour slot, NOT a room+teacher block. Backend
 `convex/paperClasses.ts` (+ pure logic `convex/lib/paperClasses.ts`, tested).
-Tables: paperBlocks, paperBlockStudents, paperAttendance, studentAvailability;
-`rooms.capacity` (set in Settings→Centers) hard-caps a block. Availability =
-outside busy windows (`studentAvailability`, edited on /students via
-`availability-dialog.tsx`) + personal-class slots (derived) + other paper
-blocks; it WARNS, never hard-blocks an add. "Drop a group in" adds free members
-up to capacity. **Phase 2 (shipped 2026-06-17)**: per-student planner —
-"Plan student" in the Library header opens `student-week-planner.tsx` (picker
-sorted lightest-load-first; one student's whole week with personal/paper/busy/
-free + tappable "can join" blocks). Backend: `studentWeek`, `studentsLoad`,
-`paperRevenueRange` (paper revenue card in /analytics Finance→Revenue). The
-literal Week-grid overlay (Option B) was dropped as too cluttered.
+Tables: `paperAssignments` (studentId, dayOfWeek, startTime, endTime, optional
+roomId), `paperSlotTeachers` (optional teacher per slot+room), `paperAttendance`
+(per student+date — one daily roll-call), `studentAvailability`.
+- **Build**: rail pill coloured by assigned hours (0=red, 1–2=yellow, 3+=green).
+  Pick up → grid highlights their paper slots (green), theory/main classes
+  (solid block, dots hidden) + outside-busy windows. Tap slots to add (mutation
+  `assign`; multi-hour = tap several). Queries `rail`, `weekGrid` (dots+count),
+  `studentMap` (highlight overlay).
+- **Rooms**: assigned LAST, inside `paper-slot-dialog.tsx` (full-screen, rooms
+  side-by-side, tap-and-drop a student → a room). Room + per-room teacher both
+  OPTIONAL; `rooms.capacity` is a soft amber warning, never a block. Mutations
+  `setRoom`, `setSlotTeacher`, `unassign`. Tap-to-pick/tap-to-drop, not HTML5 DnD
+  (mobile is the primary device).
+- **Attendance** is NOT in the builder — it's the daily Library roll-call on the
+  Session view (`paper-roll-call.tsx`, second pill row in `session-launcher.tsx`).
+  Everyone present unless toggled absent → `submitDayAttendance` → flat 100/day.
+  Queries `dayRoster`, `revenueForDate`, `paperRevenueRange` (analytics card).
+- Outside busy windows edited on /students via `availability-dialog.tsx`; theory
+  slots derived live from group scheduleSlots. Both feed the highlight overlay.
 
 ## Data flow
 Page calls `api.groups.*` (weekGrid, sessions, toggleSession, members,

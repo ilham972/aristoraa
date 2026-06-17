@@ -48,33 +48,43 @@ because Z.
   Chose client-side render-at-save over server-side math (MathJax/canvas
   can't run in the Convex runtime; zero per-PDF cost).
 
-## Paper classes / Library (2026-06-17)
-- **Separate tables, NOT a scheduleSlots flag** — chose isolated paperBlocks/
-  paperBlockStudents/paperAttendance over overloading scheduleSlots, so paper
-  classes never drag in sheets/scoring/engine/leaderboard. Scope is attendance
-  + billing only (founder's explicit call).
-- **One paper-block primitive for both cases** — "fixed group paper class" and
-  "pull individuals in on free days" are the same object: a block you fill by
-  dropping a whole group OR one student at a time. No second system.
-- **Flat 100/student/DAY** — two blocks same day still bill once (per-day, not
-  per-block). Paper revenue reported separately from 250/hr personal revenue.
-- **Capacity lives on the ROOM** (rooms.capacity), not the block — small rooms
-  6, big rooms 10+. Hard cap; availability only WARNS (lead can override).
-- **Paper block sharing a room with a personal class is ALLOWED** (2026-06-17
-  fix). Original createBlock hard-threw "Room is booked by a personal class",
-  which blocked the default create entirely. The lead owns physical room
-  scheduling + the library is separate, so it's a non-blocking form warning
-  (personalClashAt) now. Only paper-vs-paper room overlap is still hard-blocked.
-- **Availability = stored outside windows + derived personal slots** — only the
-  night-class/outside commitments are entered (per student); the app already
-  knows personal-class times from group slots, so it combines both for free.
-- **UI = 4th "Library" view in /groups** (Option A), grid by room.
-- **Phase 2 = per-student planner, NOT a Week-grid overlay** (2026-06-17). The
-  backlog said "overlay paper on the Week grid" (Option B); rejected on build
-  because that grid is group/room-centric and wouldn't show ONE student's gaps.
-  Shipped instead: "Plan student" → pick a student (sorted lightest-load-first)
-  → their whole week (personal/paper/busy/free + tappable "can join" blocks),
-  plus a paper-revenue card in /analytics. Don't re-propose the literal overlay.
+## Group organize board — /groups "Group" view (2026-06-18)
+- **5th view to reshuffle rosters** — grade-scoped multi-column board (groups
+  accepting that grade + Unassigned). Tap-to-pick/tap-to-drop, NOT drag (drag
+  fights horizontal scroll on a phone). Stage locally then **Save all** in ONE
+  atomic mutation (`groups.applyRosterMoves`) — founder wanted to plan before
+  committing (chose this over instant-write-with-undo).
+- **Cap = maxSize ?? 10**, re-checked server-side on final state; board also
+  refuses a drop into a full column. Pure cap/diff in `convex/lib/rosterMoves.ts`
+  (tested). Only MEMBERSHIP moves (not sessions/fees — fee is group-specific).
+  Multi-group/other-grade members show as "+N locked" (count vs cap, not movable
+  here — edit in the group editor); keeps each move keyed to one origin.
+
+## Paper classes / Library (redesigned student-centric 2026-06-18)
+- **Separate tables, NOT a scheduleSlots flag** — paper classes never drag in
+  sheets/scoring/engine/leaderboard. Scope = attendance + billing only.
+- **STUDENT-CENTRIC, not room/block-centric** (2026-06-18 rewrite — founder's
+  call). The unit is a per-student assignment to a 1-hour slot (`paperAssignments`),
+  built by tap-and-dropping student pills onto the grid. Rooms + teachers are
+  assigned LATER inside the slot dialog and are OPTIONAL. REPLACES the original
+  "paper block = room+teacher+time+roster" model (tables paperBlocks/
+  paperBlockStudents, dropped) — do NOT resurrect room-first creation.
+- **Flat 100/student/DAY** — driven by ONE daily roll-call (`paperAttendance`,
+  per student+date), on the Session view as a 2nd "Library" pill row, NOT in the
+  builder. Reported separately from 250/hr personal revenue.
+- **Capacity is a SOFT warning now** (rooms.capacity) — shown when a room is
+  overfilled in the slot dialog, never blocks. No cap at slot level: cram an hour
+  as full as you like; rooms are just where students physically sit.
+- **Tap-to-pick / tap-to-drop, not HTML5 drag-drop** — mobile is the primary
+  device. Pick a pill → it glows → tap slot/room to drop. Same in the slot dialog
+  (rooms side-by-side, horizontal scroll).
+- **Pill = student + assigned hours, coloured by load** (0=red, 1–2=yellow,
+  3+=green). Picking a pill highlights their paper slots + theory/main classes
+  (solid block, dots hidden) + outside-busy windows — this REPLACES the retired
+  phase-2 "Plan student" planner (`student-week-planner.tsx`, deleted): the rail
+  IS the planner now. Theory clashes WARN visually, never block (lead owns it).
+- **Availability = stored outside windows + derived personal slots** — combined
+  for the highlight overlay; app knows personal-class times from group slots.
 
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at

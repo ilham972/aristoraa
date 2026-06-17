@@ -13,6 +13,7 @@ import { useMutation } from 'convex/react';
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
 import {
+  ArrowLeftRight,
   BookOpen,
   CalendarDays,
   ChevronLeft,
@@ -37,11 +38,12 @@ import {
 } from '@/lib/groups/time-grid';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { LibraryGrid } from '@/components/groups/library-grid';
-import { PaperBlockDialog } from '@/components/groups/paper-block-dialog';
-import { StudentWeekPlanner } from '@/components/groups/student-week-planner';
+import { PaperStudentRail } from '@/components/groups/paper-student-rail';
+import { PaperSlotDialog } from '@/components/groups/paper-slot-dialog';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
 import { SessionLauncher } from '@/components/groups/session-launcher';
+import { OrganizeBoard } from '@/components/groups/organize-board';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -69,12 +71,13 @@ function addDays(dateYmd: string, n: number): string {
 
 export default function GroupsPage() {
   const router = useRouter();
-  const [view, setView] = useState<'week' | 'day' | 'session' | 'library'>('day');
-  // Paper-class (Library) block dialog state.
-  const [paperBlockId, setPaperBlockId] = useState<Id<'paperBlocks'> | null>(null);
-  const [paperSeed, setPaperSeed] = useState<{ dayOfWeek: number; startTime: string; endTime: string } | undefined>(undefined);
-  const [paperDialogOpen, setPaperDialogOpen] = useState(false);
-  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [view, setView] = useState<'week' | 'day' | 'session' | 'library' | 'group'>('day');
+  // Library (paper-class) state. The view is student-centric: pick a student
+  // pill (pickedUpId) then tap hour slots to drop them in. Tapping an occupied
+  // slot with nothing picked opens its room dialog (selectedSlot).
+  const [pickedUpId, setPickedUpId] = useState<Id<'students'> | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<{ dayOfWeek: number; startTime: string } | null>(null);
+  const [slotDialogOpen, setSlotDialogOpen] = useState(false);
   // Which day the Session view targets. Lives here (not in SessionLauncher) so
   // the Yesterday/Today/Tomorrow selector can sit on the right of the
   // Day/Week/Session toggle row. Today is the default.
@@ -112,11 +115,21 @@ export default function GroupsPage() {
   );
   const unassigned = assignmentSummary?.unassigned ?? [];
 
-  // Paper-class (Library) week grid + today's paper revenue — only fetched
-  // when the Library view is up so the other views stay lean.
+  // Library data — only fetched when the Library view is up so other views
+  // stay lean. The rail (all students + assigned hours), the slot grid, and
+  // today's revenue read-out. studentMap (highlight overlay) is fetched only
+  // while a pill is picked up.
   const paperWeek = useQuery(
     api.paperClasses.weekGrid,
     view === 'library' ? {} : 'skip',
+  );
+  const paperRail = useQuery(
+    api.paperClasses.rail,
+    view === 'library' ? {} : 'skip',
+  );
+  const studentMap = useQuery(
+    api.paperClasses.studentMap,
+    view === 'library' && pickedUpId ? { studentId: pickedUpId } : 'skip',
   );
   const paperRevToday = useQuery(
     api.paperClasses.revenueForDate,
@@ -125,16 +138,21 @@ export default function GroupsPage() {
 
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
+  const assignPaper = useMutation(api.paperClasses.assign);
 
-  const openPaperBlock = (blockId: Id<'paperBlocks'>) => {
-    setPaperBlockId(blockId);
-    setPaperSeed(undefined);
-    setPaperDialogOpen(true);
+  // Tap a slot while a student is picked up → drop them into that hour.
+  const dropAt = async (dayOfWeek: number, band: HourBand) => {
+    if (!pickedUpId) return;
+    try {
+      await assignPaper({ studentId: pickedUpId, dayOfWeek, startTime: band.start, endTime: band.end });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not add student');
+    }
   };
-  const createPaperBlock = (dayOfWeek: number, band: HourBand) => {
-    setPaperBlockId(null);
-    setPaperSeed({ dayOfWeek, startTime: band.start, endTime: band.end });
-    setPaperDialogOpen(true);
+  // Tap an occupied slot with nothing picked up → open its room dialog.
+  const openSlot = (dayOfWeek: number, band: HourBand) => {
+    setSelectedSlot({ dayOfWeek, startTime: band.start });
+    setSlotDialogOpen(true);
   };
 
   const openEditor = (groupId: Id<'groups'>) => {
@@ -241,6 +259,15 @@ export default function GroupsPage() {
           >
             <BookOpen className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Library</span>
           </button>
+          <button
+            onClick={() => setView('group')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'group' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Group</span>
+          </button>
         </div>
 
         {/* Yesterday / Today / Tomorrow — Session view only. Chevrons select
@@ -314,18 +341,11 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {/* Library view — "Plan student" + today's paper revenue read-out
-            (flat 100/student/day). */}
+        {/* Library view — today's paper revenue read-out (flat 100/student/day).
+            "Plan student" is gone: picking a student pill in the rail below now
+            lights up their whole week directly. */}
         {view === 'library' && (
           <div className="ml-auto flex items-center gap-1.5">
-            <button
-              onClick={() => setPlannerOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-primary/40 bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/15 transition-colors"
-              title="See one student's whole week and fill their gaps"
-            >
-              <BookOpen className="w-3 h-3" />
-              <span className="hidden sm:inline">Plan student</span>
-            </button>
             {paperRevToday && (
               <>
                 <span
@@ -351,10 +371,15 @@ export default function GroupsPage() {
             time-aware queries), so it sits outside the week/day gating. */}
         {view === 'session' && <SessionLauncher day={sessionDay} />}
 
-        {/* Library view — paper-class timetable. Independent of groups, so it
-            owns its own loading/empty states like the Session view. */}
+        {/* Group view — the organize board. Self-contained (own grade picker,
+            queries, loading + empty states) so it sits outside the week/day
+            gating like the Session and Library views. */}
+        {view === 'group' && <OrganizeBoard />}
+
+        {/* Library view — student-centric paper-class timetable. Pill rail on
+            top, slot grid below. Independent of groups, owns its own loading. */}
         {view === 'library' && (
-          paperWeek === undefined ? (
+          paperWeek === undefined || paperRail === undefined ? (
             <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
               {[...Array(8)].map((_, i) => (
                 <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -364,15 +389,24 @@ export default function GroupsPage() {
               ))}
             </div>
           ) : (
-            <LibraryGrid
-              cells={paperWeek.cells}
-              onOpenBlock={openPaperBlock}
-              onCreateAt={createPaperBlock}
-            />
+            <>
+              <PaperStudentRail
+                students={paperRail}
+                pickedUpId={pickedUpId}
+                onPick={setPickedUpId}
+              />
+              <LibraryGrid
+                cells={paperWeek.cells}
+                highlight={pickedUpId ? (studentMap ?? null) : null}
+                placing={pickedUpId !== null}
+                onDropAt={dropAt}
+                onOpenSlot={openSlot}
+              />
+            </>
           )
         )}
 
-        {view !== 'session' && view !== 'library' && loading && (
+        {view !== 'session' && view !== 'library' && view !== 'group' && loading && (
           <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
@@ -383,7 +417,7 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {view !== 'session' && view !== 'library' && !loading && !hasGroups && (
+        {view !== 'session' && view !== 'library' && view !== 'group' && !loading && !hasGroups && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
               <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
@@ -429,14 +463,11 @@ export default function GroupsPage() {
         students={unassigned ?? []}
       />
 
-      <PaperBlockDialog
-        blockId={paperBlockId}
-        seed={paperSeed}
-        open={paperDialogOpen}
-        onClose={() => setPaperDialogOpen(false)}
+      <PaperSlotDialog
+        slot={selectedSlot}
+        open={slotDialogOpen}
+        onClose={() => setSlotDialogOpen(false)}
       />
-
-      <StudentWeekPlanner open={plannerOpen} onClose={() => setPlannerOpen(false)} />
     </div>
   );
 }
