@@ -21,10 +21,17 @@ import {
   rangesOverlap,
   busyConflict,
   paperRevenue,
+  PAPER_RATE_LKR,
   type BusyWindow,
 } from "./lib/paperClasses";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+function hoursBetween(start: string, end: string): number {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  return Math.max(0, eh + em / 60 - (sh + sm / 60));
+}
 
 // All the windows that make `studentId` busy on `dayOfWeek`, with a
 // human-readable reason on each. `excludeBlockId` drops the block being
@@ -323,6 +330,237 @@ export const revenueForDate = query({
     }));
 
     return { total, presentStudents, perBlock };
+  },
+});
+
+// One student's whole week for the planner: personal-class slots, the paper
+// blocks they're already in, their outside busy windows, and the paper blocks
+// they could still JOIN (free + not already in + room not full). Plus weekly
+// hour totals. This is the phase-2 "where can I fit this student in" surface.
+export const studentWeek = query({
+  args: { studentId: v.id("students") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const student = await ctx.db.get(args.studentId);
+    if (!student) return null;
+
+    // Personal-class slots (from the student's groups).
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
+      .collect();
+    const personal: Array<{
+      dayOfWeek: number; startTime: string; endTime: string; groupName: string;
+    }> = [];
+    let personalHours = 0;
+    for (const m of memberships) {
+      const group = await ctx.db.get(m.groupId);
+      const slots = await ctx.db
+        .query("scheduleSlots")
+        .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
+        .collect();
+      for (const s of slots) {
+        personal.push({
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          groupName: group?.name ?? "?",
+        });
+        personalHours += hoursBetween(s.startTime, s.endTime);
+      }
+    }
+
+    // Paper blocks the student is already in.
+    const inRows = await ctx.db
+      .query("paperBlockStudents")
+      .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
+      .collect();
+    const inBlockIds = new Set(inRows.map((r) => String(r.blockId)));
+    const paperIn: Array<{
+      blockId: Id<"paperBlocks">; dayOfWeek: number; startTime: string; endTime: string; roomName: string;
+    }> = [];
+    let paperHours = 0;
+    for (const row of inRows) {
+      const b = await ctx.db.get(row.blockId);
+      if (!b) continue;
+      const room = await ctx.db.get(b.roomId);
+      paperIn.push({
+        blockId: b._id,
+        dayOfWeek: b.dayOfWeek,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        roomName: room?.name ?? "?",
+      });
+      paperHours += hoursBetween(b.startTime, b.endTime);
+    }
+
+    // Outside busy windows.
+    const avail = await ctx.db
+      .query("studentAvailability")
+      .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
+      .first();
+    const busy = (avail?.busy ?? []).map((w) => ({
+      dayOfWeek: w.dayOfWeek,
+      startTime: w.startTime,
+      endTime: w.endTime,
+      label: w.label,
+    }));
+
+    // Paper blocks the student could JOIN: not already in, free at that time,
+    // room not full.
+    const allBlocks = await ctx.db.query("paperBlocks").collect();
+    const joinable: Array<{
+      blockId: Id<"paperBlocks">; dayOfWeek: number; startTime: string; endTime: string;
+      roomName: string; memberCount: number; capacity?: number; full: boolean;
+    }> = [];
+    for (const b of allBlocks) {
+      if (inBlockIds.has(String(b._id))) continue;
+      const windows = await busyWindowsForDay(ctx, args.studentId, b.dayOfWeek, b._id);
+      const conflict = busyConflict(
+        { dayOfWeek: b.dayOfWeek, startTime: b.startTime, endTime: b.endTime },
+        windows,
+      );
+      if (conflict) continue; // not free → not a suggestion
+      const room = await ctx.db.get(b.roomId);
+      const roster = await ctx.db
+        .query("paperBlockStudents")
+        .withIndex("by_block", (q) => q.eq("blockId", b._id))
+        .collect();
+      joinable.push({
+        blockId: b._id,
+        dayOfWeek: b.dayOfWeek,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        roomName: room?.name ?? "?",
+        memberCount: roster.length,
+        capacity: room?.capacity,
+        full: room?.capacity != null && roster.length >= room.capacity,
+      });
+    }
+
+    return {
+      studentId: student._id,
+      name: student.name,
+      schoolGrade: student.schoolGrade,
+      personal,
+      paperIn,
+      busy,
+      joinable,
+      personalHours,
+      paperHours,
+    };
+  },
+});
+
+// Weekly load per student for the planner's picker: total personal + paper
+// hours, sorted lightest-first so underloaded students surface to the top
+// ("who can I pull into the Library").
+export const studentsLoad = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const [students, allMembers, allSlots, allPaperRows, allBlocks] = await Promise.all([
+      ctx.db.query("students").collect(),
+      ctx.db.query("groupMembers").collect(),
+      ctx.db.query("scheduleSlots").collect(),
+      ctx.db.query("paperBlockStudents").collect(),
+      ctx.db.query("paperBlocks").collect(),
+    ]);
+
+    const slotHoursByGroup = new Map<string, number>();
+    for (const s of allSlots) {
+      if (!s.groupId) continue;
+      slotHoursByGroup.set(
+        String(s.groupId),
+        (slotHoursByGroup.get(String(s.groupId)) ?? 0) + hoursBetween(s.startTime, s.endTime),
+      );
+    }
+    const paperHoursByBlock = new Map<string, number>();
+    for (const b of allBlocks) {
+      paperHoursByBlock.set(String(b._id), hoursBetween(b.startTime, b.endTime));
+    }
+
+    const personalByStudent = new Map<string, number>();
+    for (const m of allMembers) {
+      personalByStudent.set(
+        String(m.studentId),
+        (personalByStudent.get(String(m.studentId)) ?? 0) + (slotHoursByGroup.get(String(m.groupId)) ?? 0),
+      );
+    }
+    const paperByStudent = new Map<string, number>();
+    for (const r of allPaperRows) {
+      paperByStudent.set(
+        String(r.studentId),
+        (paperByStudent.get(String(r.studentId)) ?? 0) + (paperHoursByBlock.get(String(r.blockId)) ?? 0),
+      );
+    }
+
+    return students
+      .map((s) => {
+        const personalHours = personalByStudent.get(String(s._id)) ?? 0;
+        const paperHours = paperByStudent.get(String(s._id)) ?? 0;
+        return {
+          studentId: s._id,
+          name: s.name,
+          schoolGrade: s.schoolGrade,
+          personalHours,
+          paperHours,
+          totalHours: personalHours + paperHours,
+        };
+      })
+      .sort((a, b) => a.totalHours - b.totalHours || a.name.localeCompare(b.name));
+  },
+});
+
+// Realized paper-class revenue over the last `days` days (flat 100/student/day).
+// Returns the total, the count of billed student-days, and a per-day series for
+// charting. Reported separately from personal-class (250/hr) revenue.
+export const paperRevenueRange = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { total: 0, studentDays: 0, days: 0, perDay: [] };
+
+    const days = Math.min(Math.max(args.days ?? 30, 1), 90);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() - (days - 1));
+    const ymd = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const cutoffYmd = ymd(cutoff);
+
+    const rows = (await ctx.db.query("paperAttendance").collect()).filter(
+      (r) => r.status === "present" && r.date >= cutoffYmd,
+    );
+
+    // Distinct (student, date) → 100 each.
+    const billed = new Set<string>();
+    const byDay = new Map<string, Set<string>>();
+    for (const r of rows) {
+      billed.add(`${r.studentId}|${r.date}`);
+      const set = byDay.get(r.date) ?? new Set<string>();
+      set.add(String(r.studentId));
+      byDay.set(r.date, set);
+    }
+
+    const perDay: Array<{ date: string; revenue: number }> = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (days - 1 - i));
+      const key = ymd(d);
+      perDay.push({ date: key, revenue: (byDay.get(key)?.size ?? 0) * PAPER_RATE_LKR });
+    }
+
+    return {
+      total: billed.size * PAPER_RATE_LKR,
+      studentDays: billed.size,
+      days,
+      perDay,
+    };
   },
 });
 

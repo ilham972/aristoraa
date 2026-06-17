@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { useQuery } from 'convex/react';
-import { AlertCircle, BarChart3, Clock, Coins, Wallet, XCircle } from 'lucide-react';
+import { AlertCircle, BarChart3, BookOpen, Clock, Coins, Wallet, XCircle } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { fmtLKR } from '@/lib/groups/time-grid';
 import { cn } from '@/lib/utils';
@@ -49,6 +49,7 @@ function RevenueSubview({
 }) {
   const [range, setRange] = useState<Range>(30);
   const lost = useQuery(api.analytics.lostRevenue, { days: range });
+  const paper = useQuery(api.paperClasses.paperRevenueRange, { days: range });
 
   return (
     <div className="space-y-4">
@@ -62,6 +63,30 @@ function RevenueSubview({
           <div className="h-24 rounded-lg bg-muted/30 animate-pulse" />
         ) : (
           <LostRevenueBreakdown lost={lost} />
+        )}
+      </Card>
+
+      {/* Paper-class (Library) revenue — flat 100/student/day, kept separate
+          from the personal-class (250/hr) figures below. */}
+      <Card title={`Paper classes · ${range}d`} icon={<BookOpen className="w-3.5 h-3.5" />}>
+        {paper === undefined ? (
+          <div className="h-16 rounded-lg bg-muted/30 animate-pulse" />
+        ) : paper.studentDays === 0 ? (
+          <p className="text-xs text-muted-foreground py-3 text-center">
+            No paper-class attendance recorded in this period.
+          </p>
+        ) : (
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="text-base font-bold text-foreground tabular-nums">{fmtLKR(paper.total)}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {paper.studentDays} student-day{paper.studentDays === 1 ? '' : 's'} · flat 100/day
+              </p>
+            </div>
+            <p className="text-[10px] text-muted-foreground text-right max-w-[45%]">
+              Separate from personal-class revenue below.
+            </p>
+          </div>
         )}
       </Card>
 

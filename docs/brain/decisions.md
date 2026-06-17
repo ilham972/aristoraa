@@ -63,8 +63,13 @@ because Z.
 - **Availability = stored outside windows + derived personal slots** — only the
   night-class/outside commitments are entered (per student); the app already
   knows personal-class times from group slots, so it combines both for free.
-- **UI = 4th "Library" view in /groups** (Option A), grid by room. Unified
-  overlay on the Week grid (Option B) deferred to phase 2 (ideas-backlog).
+- **UI = 4th "Library" view in /groups** (Option A), grid by room.
+- **Phase 2 = per-student planner, NOT a Week-grid overlay** (2026-06-17). The
+  backlog said "overlay paper on the Week grid" (Option B); rejected on build
+  because that grid is group/room-centric and wouldn't show ONE student's gaps.
+  Shipped instead: "Plan student" → pick a student (sorted lightest-load-first)
+  → their whole week (personal/paper/busy/free + tappable "can join" blocks),
+  plus a paper-revenue card in /analytics. Don't re-propose the literal overlay.
 
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at

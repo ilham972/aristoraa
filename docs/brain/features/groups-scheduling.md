@@ -25,7 +25,12 @@ Tables: paperBlocks, paperBlockStudents, paperAttendance, studentAvailability;
 outside busy windows (`studentAvailability`, edited on /students via
 `availability-dialog.tsx`) + personal-class slots (derived) + other paper
 blocks; it WARNS, never hard-blocks an add. "Drop a group in" adds free members
-up to capacity. Phase-2 idea: overlay paper on the Week grid (ideas-backlog).
+up to capacity. **Phase 2 (shipped 2026-06-17)**: per-student planner —
+"Plan student" in the Library header opens `student-week-planner.tsx` (picker
+sorted lightest-load-first; one student's whole week with personal/paper/busy/
+free + tappable "can join" blocks). Backend: `studentWeek`, `studentsLoad`,
+`paperRevenueRange` (paper revenue card in /analytics Finance→Revenue). The
+literal Week-grid overlay (Option B) was dropped as too cluttered.
 
 ## Data flow
 Page calls `api.groups.*` (weekGrid, sessions, toggleSession, members,

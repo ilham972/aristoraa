@@ -38,6 +38,7 @@ import {
 import { WeekGrid } from '@/components/groups/week-grid';
 import { LibraryGrid } from '@/components/groups/library-grid';
 import { PaperBlockDialog } from '@/components/groups/paper-block-dialog';
+import { StudentWeekPlanner } from '@/components/groups/student-week-planner';
 import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
 import { SessionLauncher } from '@/components/groups/session-launcher';
@@ -73,6 +74,7 @@ export default function GroupsPage() {
   const [paperBlockId, setPaperBlockId] = useState<Id<'paperBlocks'> | null>(null);
   const [paperSeed, setPaperSeed] = useState<{ dayOfWeek: number; startTime: string; endTime: string } | undefined>(undefined);
   const [paperDialogOpen, setPaperDialogOpen] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
   // Which day the Session view targets. Lives here (not in SessionLauncher) so
   // the Yesterday/Today/Tomorrow selector can sit on the right of the
   // Day/Week/Session toggle row. Today is the default.
@@ -312,20 +314,33 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {/* Library view — today's paper revenue read-out (flat 100/student/day). */}
-        {view === 'library' && paperRevToday && (
+        {/* Library view — "Plan student" + today's paper revenue read-out
+            (flat 100/student/day). */}
+        {view === 'library' && (
           <div className="ml-auto flex items-center gap-1.5">
-            <span
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums"
-              title="Paper-class students present today"
+            <button
+              onClick={() => setPlannerOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-primary/40 bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/15 transition-colors"
+              title="See one student's whole week and fill their gaps"
             >
-              <Users className="w-3 h-3" />
-              {paperRevToday.presentStudents}
-              <span className="hidden sm:inline">today</span>
-            </span>
-            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-semibold tabular-nums">
-              {fmtLKR(paperRevToday.total)}
-            </span>
+              <BookOpen className="w-3 h-3" />
+              <span className="hidden sm:inline">Plan student</span>
+            </button>
+            {paperRevToday && (
+              <>
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums"
+                  title="Paper-class students present today"
+                >
+                  <Users className="w-3 h-3" />
+                  {paperRevToday.presentStudents}
+                  <span className="hidden sm:inline">today</span>
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-semibold tabular-nums">
+                  {fmtLKR(paperRevToday.total)}
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -420,6 +435,8 @@ export default function GroupsPage() {
         open={paperDialogOpen}
         onClose={() => setPaperDialogOpen(false)}
       />
+
+      <StudentWeekPlanner open={plannerOpen} onClose={() => setPlannerOpen(false)} />
     </div>
   );
 }
