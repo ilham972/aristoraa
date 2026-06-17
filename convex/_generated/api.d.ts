@@ -48,6 +48,7 @@ import type * as lib_naming from "../lib/naming.js";
 import type * as lib_paperClasses from "../lib/paperClasses.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_roster from "../lib/roster.js";
+import type * as lib_rosterMoves from "../lib/rosterMoves.js";
 import type * as lib_slotMerge from "../lib/slotMerge.js";
 import type * as lib_slotNormalize from "../lib/slotNormalize.js";
 import type * as messaging_absenceAlerts from "../messaging/absenceAlerts.js";
@@ -145,6 +146,7 @@ declare const fullApi: ApiFromModules<{
   "lib/paperClasses": typeof lib_paperClasses;
   "lib/phone": typeof lib_phone;
   "lib/roster": typeof lib_roster;
+  "lib/rosterMoves": typeof lib_rosterMoves;
   "lib/slotMerge": typeof lib_slotMerge;
   "lib/slotNormalize": typeof lib_slotNormalize;
   "messaging/absenceAlerts": typeof messaging_absenceAlerts;

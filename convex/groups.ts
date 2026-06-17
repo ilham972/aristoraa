@@ -15,6 +15,7 @@ import { ConvexError } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { toggleBand, type SlotRange } from "./lib/slotNormalize";
 import { absorbSlotData } from "./lib/slotMerge";
+import { effectiveCap, realOps, validateCaps, type RosterOp } from "./lib/rosterMoves";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -848,6 +849,123 @@ export const unassignedStudents = query({
   },
 });
 
+// ── Organize board ("Group" view) ──────────────────────────────────────────
+//
+// The /groups "Group" view lets the Lead reshuffle rosters when new students
+// join or someone needs a different class. The board is grade-scoped: pick a
+// grade, see every group that accepts it as a column (+ an Unassigned column),
+// then move students between columns. gradeBoard feeds the board; gradeOptions
+// fills the grade picker; applyRosterMoves commits a staged batch atomically.
+
+// Distinct grades present across students, ascending. Drives the grade picker.
+export const gradeOptions = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const students = await ctx.db.query("students").collect();
+    const grades = new Set<number>();
+    for (const s of students) grades.add(s.schoolGrade);
+    return Array.from(grades).sort((a, b) => a - b);
+  },
+});
+
+// One-pass snapshot for the organize board at a given grade. Columns = groups
+// accepting this grade; each lists its MOVABLE chips (this-grade students who
+// belong to exactly one group, so a single "move" is unambiguous) plus a
+// lockedCount for everyone else on the roster (other-grade members via
+// additionalGrades, or students in multiple groups) — they still count toward
+// the cap but are edited in the group editor, not dragged here. `unassigned`
+// holds this-grade students in no group at all. `cap` = maxSize ?? 10.
+export const gradeBoard = query({
+  args: { grade: v.number() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { columns: [], unassigned: [] };
+
+    const [allGroups, allMembers, allStudents, allSlots] = await Promise.all([
+      ctx.db.query("groups").collect(),
+      ctx.db.query("groupMembers").collect(),
+      ctx.db.query("students").collect(),
+      ctx.db.query("scheduleSlots").collect(),
+    ]);
+
+    const studentById = new Map(allStudents.map((s) => [s._id as string, s]));
+
+    // How many groups each student belongs to (to flag multi-membership).
+    const groupCountByStudent = new Map<string, number>();
+    for (const m of allMembers) {
+      groupCountByStudent.set(m.studentId, (groupCountByStudent.get(m.studentId) ?? 0) + 1);
+    }
+
+    // Members per group.
+    const membersByGroup = new Map<string, typeof allMembers>();
+    for (const m of allMembers) {
+      const arr = membersByGroup.get(m.groupId) ?? [];
+      arr.push(m);
+      membersByGroup.set(m.groupId, arr);
+    }
+
+    // Earliest weekly session per group → a "Mon 16:00" style label client-side.
+    const firstSlotByGroup = new Map<string, { dayOfWeek: number; startTime: string }>();
+    for (const slot of allSlots) {
+      if (!slot.groupId) continue;
+      const cur = firstSlotByGroup.get(slot.groupId);
+      if (
+        !cur ||
+        slot.dayOfWeek < cur.dayOfWeek ||
+        (slot.dayOfWeek === cur.dayOfWeek && slot.startTime < cur.startTime)
+      ) {
+        firstSlotByGroup.set(slot.groupId, {
+          dayOfWeek: slot.dayOfWeek,
+          startTime: slot.startTime,
+        });
+      }
+    }
+
+    const groups = allGroups.filter(
+      (g) => g.grade === args.grade || (g.additionalGrades ?? []).includes(args.grade),
+    );
+
+    const assignedThisGrade = new Set<string>();
+
+    const columns = groups.map((g) => {
+      const rows = membersByGroup.get(g._id) ?? [];
+      const chips: Array<{ studentId: Id<"students">; name: string }> = [];
+      let lockedCount = 0;
+      for (const m of rows) {
+        const s = studentById.get(m.studentId);
+        const isThisGrade = s != null && s.schoolGrade === args.grade;
+        const isSingleGroup = (groupCountByStudent.get(m.studentId) ?? 0) === 1;
+        if (isThisGrade) assignedThisGrade.add(m.studentId);
+        if (s && isThisGrade && isSingleGroup) {
+          chips.push({ studentId: s._id, name: s.name });
+        } else {
+          lockedCount += 1;
+        }
+      }
+      chips.sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        groupId: g._id,
+        name: g.name,
+        cap: effectiveCap(g.maxSize),
+        count: rows.length,
+        firstSession: firstSlotByGroup.get(g._id) ?? null,
+        chips,
+        lockedCount,
+      };
+    });
+
+    // Unassigned = this-grade students who are in NO group at all.
+    const unassigned = allStudents
+      .filter((s) => s.schoolGrade === args.grade && (groupCountByStudent.get(s._id) ?? 0) === 0)
+      .map((s) => ({ studentId: s._id, name: s.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return { columns, unassigned };
+  },
+});
+
 // Set (or clear) a per-group fee override for one student. Pass
 // hourlyRate=0 for a free seat, a positive number for a custom rate, or
 // undefined to clear the override and fall back to the student's standard
@@ -887,6 +1005,119 @@ export const removeMember = mutation({
       )
       .first();
     if (row) await ctx.db.delete(row._id);
+  },
+});
+
+// Commit a staged batch of roster moves from the organize board, atomically.
+// Each op moves one student out of `fromGroupId` (null = was Unassigned) into
+// `toGroupId` (null = move to Unassigned). All ops apply in one transaction:
+// it re-checks the size cap and the grade rule on the FINAL state, so the
+// batch either lands whole or not at all (no partial reshuffle on failure).
+// Per-group fee overrides do NOT follow a student — a fee is group-specific,
+// so the new membership starts on the student's standard rate.
+export const applyRosterMoves = mutation({
+  args: {
+    ops: v.array(
+      v.object({
+        studentId: v.id("students"),
+        fromGroupId: v.union(v.id("groups"), v.null()),
+        toGroupId: v.union(v.id("groups"), v.null()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+
+    // Keep the branded Id types for DB writes; project to plain strings only
+    // for the pure cap math.
+    const typedOps = args.ops.filter((o) => o.fromGroupId !== o.toGroupId);
+    if (typedOps.length === 0) return { applied: 0 };
+    const ops: RosterOp[] = typedOps.map((o) => ({
+      studentId: o.studentId,
+      fromGroupId: o.fromGroupId,
+      toGroupId: o.toGroupId,
+    }));
+
+    // Load every involved group once: current member count + cap + record.
+    const groupIds = new Set<string>();
+    for (const o of typedOps) {
+      if (o.fromGroupId) groupIds.add(o.fromGroupId);
+      if (o.toGroupId) groupIds.add(o.toGroupId);
+    }
+    const groupById = new Map<string, Doc<"groups">>();
+    const currentCounts = new Map<string, number>();
+    const caps = new Map<string, number>();
+    for (const gid of Array.from(groupIds)) {
+      const g = await ctx.db.get(gid as Id<"groups">);
+      if (!g) throw new ConvexError("Group not found");
+      groupById.set(gid, g);
+      caps.set(gid, effectiveCap(g.maxSize));
+      const rows = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", gid as Id<"groups">))
+        .collect();
+      currentCounts.set(gid, rows.length);
+    }
+
+    // Final-state cap guard (mirrors the board's per-drop check).
+    const { ok, violations } = validateCaps(ops, currentCounts, caps);
+    if (!ok) {
+      const v0 = violations[0];
+      const g = groupById.get(v0.groupId);
+      throw new ConvexError(
+        `${g?.name ?? "A group"} would have ${v0.count} students (max ${v0.cap})`,
+      );
+    }
+
+    // Grade guard on every add target (same rule as addMember).
+    for (const o of typedOps) {
+      if (!o.toGroupId) continue;
+      const g = groupById.get(o.toGroupId)!;
+      const accepted = [
+        ...(g.grade != null ? [g.grade] : []),
+        ...(g.additionalGrades ?? []),
+      ];
+      if (accepted.length === 0) continue;
+      const s = await ctx.db.get(o.studentId);
+      if (!s) throw new ConvexError("Student not found");
+      if (!accepted.includes(s.schoolGrade)) {
+        throw new ConvexError(
+          `${s.name} is Grade ${s.schoolGrade}; ${g.name} accepts ${accepted.join(", ")}`,
+        );
+      }
+    }
+
+    // Apply: removes first, then adds (keeps intermediate counts low and a
+    // swap from a full group never trips an index-time invariant).
+    for (const o of typedOps) {
+      if (!o.fromGroupId) continue;
+      const row = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_student", (q) =>
+          q.eq("groupId", o.fromGroupId!).eq("studentId", o.studentId),
+        )
+        .first();
+      if (row) await ctx.db.delete(row._id);
+    }
+    for (const o of typedOps) {
+      if (!o.toGroupId) continue;
+      const existing = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_student", (q) =>
+          q.eq("groupId", o.toGroupId!).eq("studentId", o.studentId),
+        )
+        .first();
+      if (!existing) {
+        await ctx.db.insert("groupMembers", {
+          groupId: o.toGroupId,
+          studentId: o.studentId,
+          joinedAt: Date.now(),
+        });
+      }
+    }
+
+    return { applied: typedOps.length };
   },
 });
 
