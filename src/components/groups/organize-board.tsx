@@ -70,11 +70,15 @@ export function OrganizeBoard() {
     const allChips: ChipInfo[] = [];
     const capByCol = new Map<string, number>();
     const acceptedByCol = new Map<string, number[]>();
+    // Defensive against a stale cached payload (useCachedQuery replays the
+    // last result on first paint; an older gradeBoard shape lacked `members`/
+    // `acceptedGrades`). Default every field so a partial shape can't crash the
+    // iteration — live data replaces it a moment later.
     if (board) {
-      for (const col of board.columns) {
-        capByCol.set(col.groupId, col.cap);
-        acceptedByCol.set(col.groupId, col.acceptedGrades);
-        for (const m of col.members) {
+      for (const col of board.columns ?? []) {
+        capByCol.set(col.groupId, col.cap ?? 10);
+        acceptedByCol.set(col.groupId, col.acceptedGrades ?? []);
+        for (const m of col.members ?? []) {
           const info: ChipInfo = {
             chipKey: chipKeyOf(col.groupId, m.studentId),
             studentId: m.studentId as Id<'students'>,
@@ -86,7 +90,7 @@ export function OrganizeBoard() {
           allChips.push(info);
         }
       }
-      for (const m of board.unassigned) {
+      for (const m of board.unassigned ?? []) {
         const info: ChipInfo = {
           chipKey: chipKeyOf(UNASSIGNED, m.studentId),
           studentId: m.studentId as Id<'students'>,
@@ -280,7 +284,7 @@ export function OrganizeBoard() {
             <div key={i} className="w-44 rounded-xl bg-muted/30" />
           ))}
         </div>
-      ) : board.columns.length === 0 ? (
+      ) : (board.columns?.length ?? 0) === 0 ? (
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
             <p className="text-sm text-muted-foreground mb-1">No groups for Grade {activeGrade}.</p>
@@ -290,7 +294,7 @@ export function OrganizeBoard() {
       ) : (
         <div className="flex-1 min-h-0 overflow-x-auto -mx-3 px-3 pb-2">
           <div className="flex gap-2 h-full">
-            {board.columns.map((col) => (
+            {(board.columns ?? []).map((col) => (
               <Column
                 key={col.groupId}
                 colId={col.groupId}
@@ -416,7 +420,7 @@ function Column({
         {chips.map((c) => {
           const isPicked = picked === c.chipKey;
           const moved = pending.has(c.chipKey) && pending.get(c.chipKey) !== c.origin;
-          const offGrade = boardGrade != null && c.grade !== boardGrade;
+          const offGrade = boardGrade != null && typeof c.grade === 'number' && c.grade !== boardGrade;
           return (
             <button
               key={c.chipKey}
