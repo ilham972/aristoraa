@@ -49,6 +49,20 @@ roomId), `paperSlotTeachers` (optional teacher per slot+room), `paperAttendance`
 - Outside busy windows edited on /students via `availability-dialog.tsx`; theory
   slots derived live from group scheduleSlots. Both feed the highlight overlay.
 
+## Planning mode — draft timetable branch (2026-06-18)
+Week-view "Planning" toggle (`planning-mode-bar.tsx`) flips the grid onto a
+private DRAFT copy; live keeps running. Pull = live→draft, Merge = draft→live
+(both behind confirm dialogs), Discard = drop the draft. Engine
+`convex/timetableDraft.ts` (fork/pull/merge/discard/status) + pure tested
+`convex/lib/draftReconcile.ts`. Editing `convex/timetableDraftEdit.ts` mirrors
+every live edit op on the draft tables (reuses toggleBand/validateCaps/
+buildGradeBoard). Tables: draftGroups/draftSlots/draftGroupMembers/
+draftSlotTeachers + draftMeta baseline — only the 4 STRUCTURAL tables, history
+isn't copied. Branch-aware surfaces (all share ONE draft): the Week grid,
+`EditGroupDialog`, and the **Group/organize board** (`OrganizeBoard` `branch`
+prop → gradeBoardDraft/applyRosterMovesDraft). Per-slot teacher draft UI + a
+pre-Merge diff preview still pending. Rules → decisions.md.
+
 ## Data flow
 Page calls `api.groups.*` (weekGrid, sessions, toggleSession, members,
 candidateStudents…), `api.sessionRecords.*` (weekSessions, cancelDay,
