@@ -98,4 +98,4 @@ leftover `src/components/groups/attendance-tab.tsx` (536 lines) is dead
 - Colors: `src/lib/groups/color.ts` — `resolveGroupColor(colorIndex, colorKey)`:
   stored `colorIndex` (tap dialog dot to cycle) else hash of `colorKey` (live id;
   draft passes `sourceId` so live/draft match). Session time: `session-time.ts`.
-- Attendance backend: `convex/attendance.ts` (marked per session).
+  Attendance backend: `convex/attendance.ts` (marked per session).
