@@ -43,7 +43,12 @@ function sessionLabel(s: { dayOfWeek: number; startTime: string } | null): strin
   return `${day} · ${fmtTime12(s.startTime)}`;
 }
 
-export function OrganizeBoard() {
+export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }) {
+  // Planning mode: read/write the DRAFT roster (same draft branch as the Week
+  // view) instead of live. Refs cast to their live twin's type — the draft
+  // returns identical shapes (column ids are draftGroups ids at runtime). Saved
+  // moves land in the draft; the live rosters change only on Merge.
+  const draft = branch === 'draft';
   const grades = useQuery(api.groups.gradeOptions);
   const [grade, setGrade] = useState<number | null>(null);
 
@@ -51,7 +56,7 @@ export function OrganizeBoard() {
   const activeGrade = grade ?? grades?.[0] ?? null;
 
   const board = useQuery(
-    api.groups.gradeBoard,
+    (draft ? api.timetableDraftEdit.gradeBoardDraft : api.groups.gradeBoard) as typeof api.groups.gradeBoard,
     activeGrade != null ? { grade: activeGrade } : 'skip',
   );
 
@@ -61,7 +66,9 @@ export function OrganizeBoard() {
   const [picked, setPicked] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const applyMoves = useMutation(api.groups.applyRosterMoves);
+  const applyMoves = useMutation(
+    (draft ? api.timetableDraftEdit.applyRosterMovesDraft : api.groups.applyRosterMoves) as typeof api.groups.applyRosterMoves,
+  );
 
   // Flatten the board into chips + per-column metadata. Rebuilt every render
   // from the server snapshot.

@@ -414,6 +414,18 @@ export default function GroupsPage() {
           </div>
         )}
 
+        {/* Group view — same Planning toggle as the Week view. It's the SAME
+            draft branch, so roster moves here merge alongside any session edits
+            made in the Week view. */}
+        {view === 'group' && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <PlanningModeBar
+              active={planning}
+              onActiveChange={setPlanning}
+            />
+          </div>
+        )}
+
         {/* Library view — today's paper revenue read-out (flat 100/student/day).
             "Plan student" is gone: picking a student pill in the rail below now
             lights up their whole week directly. */}
@@ -446,8 +458,17 @@ export default function GroupsPage() {
 
         {/* Group view — the organize board. Self-contained (own grade picker,
             queries, loading + empty states) so it sits outside the week/day
-            gating like the Session and Library views. */}
-        {view === 'group' && <OrganizeBoard />}
+            gating like the Session and Library views. In planning mode it edits
+            the DRAFT rosters (same branch as the Week view). */}
+        {view === 'group' && planning && (
+          <div className="shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2 text-[11px] text-amber-600 flex items-center gap-1.5">
+            <span className="font-semibold uppercase tracking-wider">Planning</span>
+            <span className="text-amber-600/80">
+              Reshuffling a draft — rosters go live only when you press Merge.
+            </span>
+          </div>
+        )}
+        {view === 'group' && <OrganizeBoard branch={planning ? 'draft' : 'live'} />}
 
         {/* Library view — student-centric paper-class timetable. Pill rail on
             top, slot grid below. Independent of groups, owns its own loading. */}
