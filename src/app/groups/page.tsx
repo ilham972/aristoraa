@@ -468,7 +468,12 @@ export default function GroupsPage() {
             </span>
           </div>
         )}
-        {view === 'group' && <OrganizeBoard branch={planning ? 'draft' : 'live'} />}
+        {view === 'group' && (
+          <OrganizeBoard
+            branch={planning ? 'draft' : 'live'}
+            onOpenGroup={openEditor}
+          />
+        )}
 
         {/* Library view — student-centric paper-class timetable. Pill rail on
             top, slot grid below. Independent of groups, owns its own loading. */}

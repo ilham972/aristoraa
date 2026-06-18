@@ -14,7 +14,9 @@ import { useMutation } from 'convex/react';
 import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
-import { ArrowLeftRight, Check, ChevronDown, RotateCcw, X } from 'lucide-react';
+import { ArrowLeftRight, CalendarRange, Check, ChevronDown, Pencil, RotateCcw, Trash2, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { DAYS, fmtTime12 } from '@/lib/groups/time-grid';
@@ -47,7 +49,15 @@ function sessionLabel(s: { dayOfWeek: number; startTime: string } | null): strin
   return `${day} · ${fmtTime12(s.startTime)}`;
 }
 
-export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }) {
+export function OrganizeBoard({
+  branch = 'live',
+  onOpenGroup,
+}: {
+  branch?: 'live' | 'draft';
+  // Opens the full group dialog (weekly session grid + members) for a column.
+  // The page wires this to its EditGroupDialog, already branch-aware.
+  onOpenGroup?: (groupId: Id<'groups'>) => void;
+}) {
   // Planning mode: read/write the DRAFT roster (same draft branch as the Week
   // view) instead of live. Refs cast to their live twin's type — the draft
   // returns identical shapes (column ids are draftGroups ids at runtime). Saved
@@ -73,6 +83,39 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
   const applyMoves = useMutation(
     (draft ? api.timetableDraftEdit.applyRosterMovesDraft : api.groups.applyRosterMoves) as typeof api.groups.applyRosterMoves,
   );
+  const updateGroup = useMutation(
+    (draft ? api.timetableDraftEdit.updateGroupDraft : api.groups.update) as typeof api.groups.update,
+  );
+  const removeGroup = useMutation(
+    (draft ? api.timetableDraftEdit.removeGroupDraft : api.groups.remove) as typeof api.groups.remove,
+  );
+  // Group pending deletion (confirm dialog), and which group is being renamed.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const renameGroup = async (groupId: string, name: string) => {
+    try {
+      await updateGroup({ id: groupId as Id<'groups'>, name, autoName: false });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not rename');
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await removeGroup({ id: deleteTarget.id as Id<'groups'> });
+      toast.success(`Deleted ${deleteTarget.name}`);
+      setDeleteTarget(null);
+      setPending(new Map()); // staged moves may reference the gone group
+      setPicked(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete group');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // Grade edits apply immediately (they're a group property, not a staged
   // roster move). Live → groups.setGroupGrades, draft → its draft twin.
@@ -352,6 +395,9 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
                 primaryGrade={col.primaryGrade ?? null}
                 extraGrades={col.extraGrades ?? []}
                 onSetGrades={(p, e) => applyGrades(col.groupId, p, e)}
+                onOpenGroup={onOpenGroup ? () => onOpenGroup(col.groupId as Id<'groups'>) : undefined}
+                onRename={(name) => renameGroup(col.groupId, name)}
+                onDelete={() => setDeleteTarget({ id: col.groupId, name: col.name })}
                 chips={allChips.filter((c) => effectiveCol(c.chipKey) === col.groupId)}
                 picked={picked}
                 pending={pending}
@@ -395,6 +441,25 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
           </button>
         </div>
       )}
+
+      {/* Delete-group confirm */}
+      <Dialog open={deleteTarget !== null} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This removes the group and its memberships. Its weekly sessions are freed
+            (not deleted). {branch === 'draft' ? 'Applies to your draft only — live changes on Merge.' : 'This affects the live timetable.'}
+          </p>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete group'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -411,6 +476,9 @@ function Column({
   primaryGrade,
   extraGrades,
   onSetGrades,
+  onOpenGroup,
+  onRename,
+  onDelete,
   chips,
   picked,
   pending,
@@ -430,6 +498,9 @@ function Column({
   primaryGrade?: number | null;
   extraGrades?: number[];
   onSetGrades?: (primary: number | undefined, extras: number[]) => void;
+  onOpenGroup?: () => void;
+  onRename?: (name: string) => void;
+  onDelete?: () => void;
   chips: ChipInfo[];
   picked: string | null;
   pending: Map<string, string>;
@@ -440,6 +511,16 @@ function Column({
 }) {
   const color = colorKey ? resolveGroupColor(colorIndex, colorKey) : null;
   const full = cap != null && count >= cap;
+  // A real group column (not the Unassigned pile) gets rename/open/delete.
+  const isGroup = colId !== UNASSIGNED;
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(title);
+  const commitName = () => {
+    setEditingName(false);
+    const t = nameDraft.trim();
+    if (t && t !== title) onRename?.(t);
+    else setNameDraft(title);
+  };
 
   return (
     <div
@@ -453,9 +534,65 @@ function Column({
     >
       {/* Header */}
       <div className="shrink-0 px-2.5 py-2 border-b border-border/40 space-y-1">
-        <p className="text-xs font-semibold text-foreground truncate" title={title}>
-          {title}
-        </p>
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {isGroup && editingName ? (
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                if (e.key === 'Escape') { setNameDraft(title); setEditingName(false); }
+              }}
+              className="flex-1 min-w-0 text-xs font-semibold bg-transparent border-b border-primary/50 outline-none text-foreground"
+            />
+          ) : isGroup && onRename ? (
+            <button
+              onClick={() => { setNameDraft(title); setEditingName(true); }}
+              className="flex-1 min-w-0 text-left text-xs font-semibold text-foreground truncate hover:underline"
+              title="Tap to rename"
+            >
+              {title}
+            </button>
+          ) : (
+            <p className="flex-1 min-w-0 text-xs font-semibold text-foreground truncate" title={title}>{title}</p>
+          )}
+          {isGroup && (
+            <div className="shrink-0 flex items-center gap-0.5">
+              {onRename && !editingName && (
+                <button
+                  onClick={() => { setNameDraft(title); setEditingName(true); }}
+                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Rename"
+                  aria-label="Rename group"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+              )}
+              {onOpenGroup && (
+                <button
+                  onClick={onOpenGroup}
+                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Weekly sessions"
+                  aria-label="Edit weekly sessions"
+                >
+                  <CalendarRange className="w-3 h-3" />
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={onDelete}
+                  className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  title="Delete group"
+                  aria-label="Delete group"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         {subtitle && <p className="text-[10px] text-muted-foreground truncate">{subtitle}</p>}
         <div className="flex items-center justify-between gap-1">
           {onSetGrades ? (
