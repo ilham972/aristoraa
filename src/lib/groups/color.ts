@@ -63,4 +63,26 @@ export function groupColor(seed: string): GroupColor {
   return PALETTE[fnv1a(seed) % PALETTE.length];
 }
 
+/** The palette index a seed hashes to (so cycling can start from the shown color). */
+export function groupColorIndex(seed: string): number {
+  return fnv1a(seed) % PALETTE.length;
+}
+
+/** Color at an explicit palette index (wraps; tolerates negatives). */
+export function paletteColorAt(index: number): GroupColor {
+  return PALETTE[((index % PALETTE.length) + PALETTE.length) % PALETTE.length];
+}
+
+// Resolve a group's color: an explicit stored `colorIndex` wins (user picked
+// it by tapping the dot); otherwise fall back to the deterministic hash of
+// `colorKey`. `colorKey` MUST be stable across live/draft for the same group —
+// use the live group id (a draft passes its sourceId) so the SAME group shows
+// the SAME colour in both views.
+export function resolveGroupColor(
+  colorIndex: number | null | undefined,
+  colorKey: string,
+): GroupColor {
+  return colorIndex != null ? paletteColorAt(colorIndex) : groupColor(colorKey);
+}
+
 export const GROUP_PALETTE_SIZE = PALETTE.length;

@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/select';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
-import { groupColor } from '@/lib/groups/color';
+import { resolveGroupColor, groupColorIndex, GROUP_PALETTE_SIZE } from '@/lib/groups/color';
 import { generateAutoName } from '@/lib/groups/naming';
 import { fmtLKR, type DayNum, type HourBand } from '@/lib/groups/time-grid';
 import { WeeklySessionGrid, type SessionCell } from './weekly-session-grid';
@@ -145,7 +145,25 @@ function EditGroupBody({
     setNameSeededFor(group._id);
   }
 
-  const color = useMemo(() => groupColor(groupId), [groupId]);
+  // Colour key is stable across live/draft: a draft group hashes its live
+  // source id so the SAME group shows the SAME colour in both views.
+  const colorKey = (draft ? (group as { sourceId?: string } | null)?.sourceId : undefined) ?? groupId;
+  const color = useMemo(
+    () => resolveGroupColor(group?.colorIndex, colorKey),
+    [group?.colorIndex, colorKey],
+  );
+
+  // Tap the header dot → cycle to the next palette colour (stored on the group,
+  // so it sticks and syncs live↔draft). Starts from the colour currently shown.
+  const cycleColor = async () => {
+    if (!group) return;
+    const current = group.colorIndex ?? groupColorIndex(colorKey);
+    try {
+      await update({ id: group._id, colorIndex: (current + 1) % GROUP_PALETTE_SIZE });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not change colour');
+    }
+  };
 
   const selectedCells: SessionCell[] = useMemo(
     () =>
@@ -282,7 +300,15 @@ function EditGroupBody({
     <div className="h-dvh max-w-lg mx-auto px-3 flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-2 pt-3 pb-2 shrink-0">
-        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color.solid }} />
+        <button
+          type="button"
+          onClick={cycleColor}
+          disabled={!group}
+          title="Tap to change colour"
+          aria-label="Change group colour"
+          className="w-3.5 h-3.5 rounded-full shrink-0 transition-transform hover:scale-125 active:scale-95 disabled:opacity-50"
+          style={{ backgroundColor: color.solid }}
+        />
         <Input
           value={groupReady ? nameInput : displayName}
           onChange={(e) => setNameInput(e.target.value)}

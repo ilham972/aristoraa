@@ -18,7 +18,7 @@ import { ArrowLeftRight, Check, ChevronDown, RotateCcw, X } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { DAYS, fmtTime12 } from '@/lib/groups/time-grid';
-import { groupColor } from '@/lib/groups/color';
+import { resolveGroupColor } from '@/lib/groups/color';
 
 // Sentinel column id for the Unassigned pile (no group, no cap). Kept local so
 // this client file doesn't reach into convex/; ops send null for "unassigned".
@@ -346,7 +346,8 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
                 subtitle={sessionLabel(col.firstSession)}
                 count={liveCount(col.groupId)}
                 cap={col.cap}
-                accentSeed={col.groupId}
+                colorIndex={col.colorIndex}
+                colorKey={col.colorKey}
                 boardGrade={activeGrade}
                 primaryGrade={col.primaryGrade ?? null}
                 extraGrades={col.extraGrades ?? []}
@@ -365,7 +366,7 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
               title="Unassigned"
               subtitle="not in a group"
               count={liveCount(UNASSIGNED)}
-              accentSeed={null}
+              colorKey={null}
               boardGrade={activeGrade}
               chips={allChips.filter((c) => effectiveCol(c.chipKey) === UNASSIGNED)}
               picked={picked}
@@ -404,7 +405,8 @@ function Column({
   subtitle,
   count,
   cap,
-  accentSeed,
+  colorIndex,
+  colorKey,
   boardGrade,
   primaryGrade,
   extraGrades,
@@ -422,7 +424,8 @@ function Column({
   subtitle: string | null;
   count: number;
   cap?: number;
-  accentSeed: string | null;
+  colorIndex?: number | null;
+  colorKey: string | null;
   boardGrade: number | null;
   primaryGrade?: number | null;
   extraGrades?: number[];
@@ -435,7 +438,7 @@ function Column({
   onColumnTap: () => void;
   hasPick: boolean;
 }) {
-  const color = accentSeed ? groupColor(accentSeed) : null;
+  const color = colorKey ? resolveGroupColor(colorIndex, colorKey) : null;
   const full = cap != null && count >= cap;
 
   return (

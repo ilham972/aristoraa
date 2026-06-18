@@ -62,6 +62,9 @@ export const weekGridDraft = query({
           memberCount: memberRows.length,
           hours,
           revenue: ratePerHour * hours,
+          colorIndex: g.colorIndex ?? null,
+          // Stable across live/draft: a forked group hashes its live source id.
+          colorKey: g.sourceId ?? g._id,
         });
       }
       groupSummaries.push({
@@ -146,6 +149,8 @@ export const gradeBoardDraft = query({
         additionalGrades: g.additionalGrades,
         maxSize: g.maxSize,
         firstSession: firstSlotByGroup.get(g._id) ?? null,
+        colorIndex: g.colorIndex ?? null,
+        colorKey: g.sourceId ?? g._id,
       })),
       members.map((m) => ({ groupId: m.groupId, studentId: m.studentId })),
       students.map((s) => ({ _id: s._id, name: s.name, schoolGrade: s.schoolGrade })),
@@ -289,6 +294,7 @@ export const updateGroupDraft = mutation({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    colorIndex: v.optional(v.number()),
     loggingStartDate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {

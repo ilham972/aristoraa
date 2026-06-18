@@ -60,6 +60,10 @@ export type BoardGroup = {
   additionalGrades?: number[] | null;
   maxSize?: number | null;
   firstSession?: { dayOfWeek: number; startTime: string } | null;
+  // Colour resolution (see src/lib/groups/color.ts): explicit index wins, else
+  // hash colorKey. colorKey is stable across live/draft for the same group.
+  colorIndex?: number | null;
+  colorKey?: string;
 };
 export type BoardMemberRow = { groupId: string; studentId: string };
 export type BoardStudent = { _id: string; name: string; schoolGrade: number };
@@ -75,6 +79,8 @@ export type BoardColumn = {
   primaryGrade: number | null; // the group's `grade` (null ⇒ "Any")
   extraGrades: number[]; // the group's `additionalGrades`
   members: BoardChip[];
+  colorIndex: number | null;
+  colorKey: string;
 };
 export type GradeBoard = { columns: BoardColumn[]; unassigned: BoardChip[] };
 
@@ -135,6 +141,8 @@ export function buildGradeBoard(
       primaryGrade: g.grade ?? null,
       extraGrades: g.additionalGrades ?? [],
       members: chips,
+      colorIndex: g.colorIndex ?? null,
+      colorKey: g.colorKey ?? g._id,
     });
   }
 

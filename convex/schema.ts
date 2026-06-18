@@ -144,6 +144,10 @@ export default defineSchema({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    // Explicit colour palette index, set when the user taps the dialog's colour
+    // dot to cycle it. Unset ⇒ colour falls back to a hash of the group id (see
+    // src/lib/groups/color.ts). Mirrored on draftGroups so planning edits it.
+    colorIndex: v.optional(v.number()),
     // Legacy: pre-removal of the archive feature. Kept in the schema as
     // optional so existing rows still validate; new code never sets or
     // reads it. Hard delete is the only "remove" path now.
@@ -261,6 +265,7 @@ export default defineSchema({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    colorIndex: v.optional(v.number()),
     // Mirror the legacy optional field on `groups` so forking a row that still
     // carries it validates (copy is field-for-field).
     archived: v.optional(v.boolean()),

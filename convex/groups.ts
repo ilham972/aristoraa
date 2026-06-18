@@ -220,6 +220,11 @@ export const weekGrid = query({
       memberCount: number;
       hours: number;
       revenue: number;
+      // Colour resolution: explicit index wins, else hash colorKey. colorKey is
+      // the live group id here; the draft grid passes its sourceId so the same
+      // group matches colours across views. See src/lib/groups/color.ts.
+      colorIndex: number | null;
+      colorKey: string;
     }> = [];
 
     const groupSummaries: Array<{
@@ -260,6 +265,8 @@ export const weekGrid = query({
           memberCount,
           hours,
           revenue: ratePerHour * hours,
+          colorIndex: g.colorIndex ?? null,
+          colorKey: g._id,
         });
       }
 
@@ -649,6 +656,7 @@ export const update = mutation({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    colorIndex: v.optional(v.number()),
     loggingStartDate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -942,6 +950,8 @@ export const gradeBoard = query({
         additionalGrades: g.additionalGrades,
         maxSize: g.maxSize,
         firstSession: firstSlotByGroup.get(g._id) ?? null,
+        colorIndex: g.colorIndex ?? null,
+        colorKey: g._id,
       })),
       allMembers.map((m) => ({ groupId: m.groupId, studentId: m.studentId })),
       allStudents.map((s) => ({ _id: s._id, name: s.name, schoolGrade: s.schoolGrade })),

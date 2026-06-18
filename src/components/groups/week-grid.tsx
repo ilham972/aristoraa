@@ -8,7 +8,7 @@
 
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { groupColor } from '@/lib/groups/color';
+import { resolveGroupColor } from '@/lib/groups/color';
 import { fmtLKR, DAYS, WEEKEND_BANDS, todayDayNum, type HourBand } from '@/lib/groups/time-grid';
 import type { Id } from '@/lib/convex';
 
@@ -22,6 +22,8 @@ type Cell = {
   memberCount: number;
   hours: number;
   revenue: number;
+  colorIndex?: number | null;
+  colorKey?: string;
 };
 
 // Member-count dots, capped at 6 with a "+N" tail (matches the reference UI).
@@ -131,7 +133,7 @@ export function WeekGrid({
                       </button>
                     );
                   }
-                  const color = groupColor(cell.groupId);
+                  const color = resolveGroupColor(cell.colorIndex, cell.colorKey ?? cell.groupId);
                   const isHead = cell.startTime === band.start;
                   return (
                     <button

@@ -123,6 +123,22 @@ describe('sessionConflictsDraft flags a shared mentor in the draft', () => {
   });
 });
 
+describe('group colour set in the draft merges to live', () => {
+  it('updateGroupDraft colorIndex reaches the live group on merge', async () => {
+    const t = convexTest(schema, modules);
+    const { groupId } = await seed(t);
+    await asUser(t).mutation(api.timetableDraft.fork, {});
+    const dg = await draftGroupFor(t, groupId);
+    await asUser(t).mutation(api.timetableDraftEdit.updateGroupDraft, { id: dg._id, colorIndex: 3 });
+    // Live untouched before merge.
+    const before = await t.run((ctx) => ctx.db.get(groupId));
+    expect(before!.colorIndex).toBeUndefined();
+    await asUser(t).mutation(api.timetableDraft.merge, {});
+    const after = await t.run((ctx) => ctx.db.get(groupId));
+    expect(after!.colorIndex).toBe(3);
+  });
+});
+
 describe('applyRosterMovesDraft respects the size cap', () => {
   it('blocks a move that would exceed maxSize', async () => {
     const t = convexTest(schema, modules);

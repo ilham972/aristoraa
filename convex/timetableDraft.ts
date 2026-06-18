@@ -39,6 +39,7 @@ function fpGroup(g: Doc<"groups"> | Doc<"draftGroups">): string {
     maxSize: g.maxSize ?? null,
     targetMarksMin: g.targetMarksMin ?? null,
     targetMarksMax: g.targetMarksMax ?? null,
+    colorIndex: g.colorIndex ?? null,
     loggingStartDate: g.loggingStartDate ?? null,
   });
 }
