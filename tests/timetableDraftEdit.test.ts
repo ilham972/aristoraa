@@ -101,6 +101,28 @@ describe('createGroupDraft + merge creates a brand-new live group', () => {
   });
 });
 
+describe('sessionConflictsDraft flags a shared mentor in the draft', () => {
+  it('reports mentorBusy for another draft group the same mentor teaches', async () => {
+    const t = convexTest(schema, modules);
+    const { centerId, roomId } = await seed(t);
+    const teacherId = await t.run((ctx) =>
+      ctx.db.insert('teachers', { clerkUserId: 'tx', name: 'Mr T', role: 'mentor' }),
+    );
+    // Two live groups sharing a mentor; the other one already has a session.
+    const gA = await t.run((ctx) =>
+      ctx.db.insert('groups', { name: 'A', autoName: false, centerId, grade: 10, mentorId: teacherId, createdAt: 0, updatedAt: 0, defaultRoomId: roomId }),
+    );
+    const gB = await t.run((ctx) =>
+      ctx.db.insert('groups', { name: 'B', autoName: false, centerId, grade: 10, mentorId: teacherId, createdAt: 0, updatedAt: 0, defaultRoomId: roomId }),
+    );
+    await t.run((ctx) => ctx.db.insert('scheduleSlots', { dayOfWeek: 6, startTime: '15:00', endTime: '16:00', roomId, groupId: gB }));
+    await asUser(t).mutation(api.timetableDraft.fork, {});
+    const dgA = await draftGroupFor(t, gA);
+    const res = await asUser(t).query(api.timetableDraftEdit.sessionConflictsDraft, { groupId: dgA._id });
+    expect(res.mentorBusy.some((c) => c.startTime === '15:00' && c.groupName === 'B')).toBe(true);
+  });
+});
+
 describe('applyRosterMovesDraft respects the size cap', () => {
   it('blocks a move that would exceed maxSize', async () => {
     const t = convexTest(schema, modules);

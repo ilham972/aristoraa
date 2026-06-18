@@ -153,6 +153,57 @@ export const gradeBoardDraft = query({
   },
 });
 
+// Mirror of groups.sessionConflicts over draft tables — drives the red (mentor
+// busy) / amber (a member booked elsewhere) rings on the dialog's session grid
+// so double-booking is warned in the draft exactly like live.
+export const sessionConflictsDraft = query({
+  args: { groupId: v.id("draftGroups") },
+  handler: async (ctx, args) => {
+    if (!(await ctx.auth.getUserIdentity())) return { mentorBusy: [], studentBusy: [] };
+    const group = await ctx.db.get(args.groupId);
+    if (!group) return { mentorBusy: [], studentBusy: [] };
+
+    const memberRows = await ctx.db
+      .query("draftGroupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const memberIds = new Set(memberRows.map((m) => m.studentId));
+
+    const allSlots = await ctx.db.query("draftSlots").collect();
+    const mentorBusy: Array<{ dayOfWeek: number; startTime: string; endTime: string; groupName: string }> = [];
+    const studentBusy: Array<{ dayOfWeek: number; startTime: string; endTime: string; groupName: string; studentName: string }> = [];
+
+    for (const slot of allSlots) {
+      if (!slot.groupId || slot.groupId === args.groupId) continue;
+      const other = await ctx.db.get(slot.groupId);
+      if (!other) continue;
+
+      if (group.mentorId && other.mentorId === group.mentorId) {
+        mentorBusy.push({ dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime, groupName: other.name });
+      }
+      if (memberIds.size > 0) {
+        const otherMembers = await ctx.db
+          .query("draftGroupMembers")
+          .withIndex("by_group", (q) => q.eq("groupId", other._id))
+          .collect();
+        for (const om of otherMembers) {
+          if (memberIds.has(om.studentId)) {
+            const s = await ctx.db.get(om.studentId);
+            studentBusy.push({
+              dayOfWeek: slot.dayOfWeek,
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              groupName: other.name,
+              studentName: s?.name ?? "?",
+            });
+          }
+        }
+      }
+    }
+    return { mentorBusy, studentBusy };
+  },
+});
+
 export const candidateStudentsDraft = query({
   args: { groupId: v.id("draftGroups"), includeInOtherGroups: v.optional(v.boolean()) },
   handler: async (ctx, args) => {

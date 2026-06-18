@@ -111,7 +111,10 @@ function EditGroupBody({
   const group = useQuery((draft ? E.getGroupDraft : api.groups.get) as typeof api.groups.get, { id: groupId });
   const members = useQuery((draft ? E.membersDraft : api.groups.members) as typeof api.groups.members, { groupId });
   const sessions = useQuery((draft ? E.sessionsDraft : api.groups.sessions) as typeof api.groups.sessions, { groupId });
-  const conflicts = useQuery(api.groups.sessionConflicts, draft ? 'skip' : { groupId });
+  const conflicts = useQuery(
+    (draft ? E.sessionConflictsDraft : api.groups.sessionConflicts) as typeof api.groups.sessionConflicts,
+    { groupId },
+  );
   const teachers = useQuery(api.teachers.list);
   const rooms = useQuery(api.rooms.list);
   const centers = useQuery(api.centers.list);
