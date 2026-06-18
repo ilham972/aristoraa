@@ -580,16 +580,6 @@ function Column({
                   <CalendarRange className="w-3 h-3" />
                 </button>
               )}
-              {onDelete && (
-                <button
-                  onClick={onDelete}
-                  className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  title="Delete group"
-                  aria-label="Delete group"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -684,6 +674,23 @@ function Column({
           );
         })}
       </div>
+
+      {/* Delete — deliberately at the FOOT of the column, away from the
+          rename/sessions controls in the header, so it can't be mis-tapped.
+          Still goes through the confirm dialog. */}
+      {isGroup && onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="shrink-0 m-1.5 mt-0 inline-flex items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium border border-border/50 text-muted-foreground/70 hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10 transition-colors"
+          title="Delete group"
+          aria-label="Delete group"
+        >
+          <Trash2 className="w-3 h-3" /> Delete group
+        </button>
+      )}
     </div>
   );
 }
