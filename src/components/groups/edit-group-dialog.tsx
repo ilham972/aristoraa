@@ -60,11 +60,15 @@ export function EditGroupDialog({
   seed,
   open,
   onClose,
+  branch = 'live',
 }: {
+  // In planning mode `groupId` is a draftGroups id; the dialog reads/writes the
+  // draft tables instead of live (see branch handling in EditGroupBody).
   groupId: Id<'groups'> | null;
   seed?: EditGroupSeed;
   open: boolean;
   onClose: () => void;
+  branch?: 'live' | 'draft';
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onClose()}>
@@ -76,7 +80,7 @@ export function EditGroupDialog({
           className="fixed inset-0 z-50 bg-background outline-none duration-75 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
         >
           <DialogPrimitive.Title className="sr-only">Edit group</DialogPrimitive.Title>
-          {groupId && <EditGroupBody groupId={groupId} seed={seed} onClose={onClose} />}
+          {groupId && <EditGroupBody groupId={groupId} seed={seed} onClose={onClose} branch={branch} />}
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
@@ -87,19 +91,31 @@ function EditGroupBody({
   groupId,
   seed,
   onClose,
+  branch,
 }: {
   groupId: Id<'groups'>;
   seed?: EditGroupSeed;
   onClose: () => void;
+  branch: 'live' | 'draft';
 }) {
-  const group = useQuery(api.groups.get, { id: groupId });
-  const members = useQuery(api.groups.members, { groupId });
-  const sessions = useQuery(api.groups.sessions, { groupId });
-  const conflicts = useQuery(api.groups.sessionConflicts, { groupId });
+  // Planning mode points every query/mutation at the draft twin. Only these
+  // initialisers branch — all downstream call sites use the same locals, so
+  // the live path stays byte-identical. Each conditional ref is cast to its
+  // LIVE twin's type: the twins share field shapes, so results stay fully
+  // typed while the draft function runs at runtime (the id is a draftGroups id
+  // but structurally identical). `conflicts`/`revenue` have no draft twin
+  // (display-only), so they're skipped in draft mode.
+  const draft = branch === 'draft';
+  const E = api.timetableDraftEdit;
+
+  const group = useQuery((draft ? E.getGroupDraft : api.groups.get) as typeof api.groups.get, { id: groupId });
+  const members = useQuery((draft ? E.membersDraft : api.groups.members) as typeof api.groups.members, { groupId });
+  const sessions = useQuery((draft ? E.sessionsDraft : api.groups.sessions) as typeof api.groups.sessions, { groupId });
+  const conflicts = useQuery(api.groups.sessionConflicts, draft ? 'skip' : { groupId });
   const teachers = useQuery(api.teachers.list);
   const rooms = useQuery(api.rooms.list);
   const centers = useQuery(api.centers.list);
-  const groupRevenue = useQuery(api.groups.revenue, { groupId });
+  const groupRevenue = useQuery(api.groups.revenue, draft ? 'skip' : { groupId });
 
   const [studentSearch, setStudentSearch] = useState('');
   const [addingStudent, setAddingStudent] = useState(false);
@@ -107,16 +123,16 @@ function EditGroupBody({
 
   // Candidate list runs server-side, only when the picker is open.
   const candidates = useQuery(
-    api.groups.candidateStudents,
+    (draft ? E.candidateStudentsDraft : api.groups.candidateStudents) as typeof api.groups.candidateStudents,
     addingStudent ? { groupId, includeInOtherGroups } : 'skip',
   );
 
-  const update = useMutation(api.groups.update);
-  const remove = useMutation(api.groups.remove);
-  const addMember = useMutation(api.groups.addMember);
-  const removeMember = useMutation(api.groups.removeMember);
-  const setMemberFee = useMutation(api.groups.setMemberFee);
-  const toggleSession = useMutation(api.groups.toggleSession);
+  const update = useMutation((draft ? E.updateGroupDraft : api.groups.update) as typeof api.groups.update);
+  const remove = useMutation((draft ? E.removeGroupDraft : api.groups.remove) as typeof api.groups.remove);
+  const addMember = useMutation((draft ? E.addMemberDraft : api.groups.addMember) as typeof api.groups.addMember);
+  const removeMember = useMutation((draft ? E.removeMemberDraft : api.groups.removeMember) as typeof api.groups.removeMember);
+  const setMemberFee = useMutation((draft ? E.setMemberFeeDraft : api.groups.setMemberFee) as typeof api.groups.setMemberFee);
+  const toggleSession = useMutation((draft ? E.toggleSessionDraft : api.groups.toggleSession) as typeof api.groups.toggleSession);
 
   const [nameInput, setNameInput] = useState(seed?.name ?? '');
   const [nameSeededFor, setNameSeededFor] = useState<Id<'groups'> | null>(null);

@@ -44,6 +44,7 @@ import { EditGroupDialog } from '@/components/groups/edit-group-dialog';
 import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
 import { SessionLauncher } from '@/components/groups/session-launcher';
 import { OrganizeBoard } from '@/components/groups/organize-board';
+import { PlanningModeBar } from '@/components/groups/planning-mode-bar';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -85,6 +86,10 @@ export default function GroupsPage() {
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [unassignedOpen, setUnassignedOpen] = useState(false);
+  // Planning mode: when on, the Week grid reads + writes a private DRAFT copy
+  // of the timetable (api.timetableDraftEdit.*) instead of live. Persisted as a
+  // real draft in Convex, so toggling off/on resumes it. See PlanningModeBar.
+  const [planning, setPlanning] = useState(false);
 
   // Day view is date-aware (the only date-aware surface in /groups). The
   // Week-grid view stays purely a standard timetable as the user asked.
@@ -94,7 +99,16 @@ export default function GroupsPage() {
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const weekStartYmd = mondayOf(selectedDate);
 
-  const week = useQuery(api.groups.weekGrid);
+  const liveWeek = useQuery(api.groups.weekGrid);
+  // Draft grid — only subscribed while planning mode is on. Same cell shape as
+  // the live weekGrid, so WeekGrid renders it unchanged (ids are draft ids).
+  const draftWeek = useQuery(
+    // Same cell shape as the live grid (ids are draft ids at runtime); cast to
+    // the live ref's type so `week` stays fully typed downstream.
+    api.timetableDraftEdit.weekGridDraft as unknown as typeof api.groups.weekGrid,
+    planning ? {} : 'skip',
+  );
+  const week = planning ? draftWeek : liveWeek;
   const rooms = useQuery(api.rooms.list);
   // Prefetch the dialog's reference lists at the page level so they're
   // already in the Convex cache when the user opens a group editor.
@@ -138,7 +152,46 @@ export default function GroupsPage() {
 
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
-  const assignPaper = useMutation(api.paperClasses.assign);
+  const createGroupDraft = useMutation(api.timetableDraftEdit.createGroupDraft);
+  const toggleSessionDraft = useMutation(api.timetableDraftEdit.toggleSessionDraft);
+  // Optimistic so a tap-drop lands INSTANTLY: bump the grid cell, recolour +
+  // re-sort the rail pill, and add the slot to the picked student's overlay —
+  // all in the local store before the server round-trips. The live result
+  // replaces it a moment later. Skips if the student is already in the slot
+  // (the mutation is a no-op there too).
+  const assignPaper = useMutation(api.paperClasses.assign).withOptimisticUpdate(
+    (store, { studentId, dayOfWeek, startTime, endTime }) => {
+      const sm = store.getQuery(api.paperClasses.studentMap, { studentId });
+      const already = sm?.paperSlots.some(
+        (p) => p.dayOfWeek === dayOfWeek && p.startTime === startTime,
+      );
+      if (already) return;
+
+      const wg = store.getQuery(api.paperClasses.weekGrid, {});
+      if (wg) {
+        const cells = wg.cells.slice();
+        const i = cells.findIndex((c) => c.dayOfWeek === dayOfWeek && c.startTime === startTime);
+        if (i >= 0) cells[i] = { ...cells[i], count: cells[i].count + 1 };
+        else cells.push({ dayOfWeek, startTime, endTime, count: 1 });
+        store.setQuery(api.paperClasses.weekGrid, {}, { cells });
+      }
+
+      const rail = store.getQuery(api.paperClasses.rail, {});
+      if (rail) {
+        const next = rail
+          .map((r) => (r.studentId === studentId ? { ...r, assignedHours: r.assignedHours + 1 } : r))
+          .sort((a, b) => a.assignedHours - b.assignedHours || a.name.localeCompare(b.name));
+        store.setQuery(api.paperClasses.rail, {}, next);
+      }
+
+      if (sm) {
+        store.setQuery(api.paperClasses.studentMap, { studentId }, {
+          ...sm,
+          paperSlots: [...sm.paperSlots, { dayOfWeek, startTime }],
+        });
+      }
+    },
+  );
 
   // Tap a slot while a student is picked up → drop them into that hour.
   const dropAt = async (dayOfWeek: number, band: HourBand) => {
@@ -161,13 +214,20 @@ export default function GroupsPage() {
   };
 
   // Create a group; if exactly one room exists, set it as default + drop the
-  // first session immediately so an empty-cell tap is one action.
+  // first session immediately so an empty-cell tap is one action. In planning
+  // mode this targets the DRAFT (createGroupDraft / toggleSessionDraft) so the
+  // live timetable is never touched until Merge.
   const handleCreate = async (seed?: { dayOfWeek: number; band: HourBand }) => {
     const onlyRoom = rooms && rooms.length === 1 ? rooms[0]._id : undefined;
-    const id = await createGroup({ name: 'new_group', autoName: true, defaultRoomId: onlyRoom });
+    // Draft twins share arg/return shapes with their live counterparts; cast to
+    // the live mutation type so the call sites stay typed (ids are draft ids at
+    // runtime in planning mode).
+    const create = (planning ? createGroupDraft : createGroup) as typeof createGroup;
+    const toggle = (planning ? toggleSessionDraft : toggleSession) as typeof toggleSession;
+    const id = await create({ name: 'new_group', autoName: true, defaultRoomId: onlyRoom });
     if (seed && onlyRoom) {
       try {
-        await toggleSession({
+        await toggle({
           groupId: id,
           dayOfWeek: seed.dayOfWeek,
           startTime: seed.band.start,
@@ -177,7 +237,7 @@ export default function GroupsPage() {
         /* room collision — user resolves in the editor */
       }
     }
-    openEditor(id);
+    openEditor(id as Id<'groups'>);
     if (!onlyRoom) toast('Pick a default room, then add sessions');
   };
 
@@ -314,29 +374,42 @@ export default function GroupsPage() {
                 read on coverage (X of Y students placed).
               • Amber alert appears next to it when ≥ 1 student is in no
                 group; tap to see who. */}
-        {view === 'week' && assignmentSummary && (
+        {view === 'week' && (
           <div className="ml-auto flex items-center gap-1.5">
-            <span
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums"
-              title="Unique students in at least one group"
-            >
-              <Users className="w-3 h-3" />
-              <span>
-                <span className="text-foreground">{assignmentSummary.assignedCount}</span>
-                <span className="opacity-60"> / {assignmentSummary.totalCount}</span>
-              </span>
-              <span className="hidden sm:inline">in groups</span>
-            </span>
-            {assignmentSummary.unassigned.length > 0 && (
-              <button
-                onClick={() => setUnassignedOpen(true)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-600 text-[10px] font-medium hover:bg-amber-500/15 transition-colors"
-                title="Students not in any group"
-              >
-                <UserRoundX className="w-3 h-3" />
-                <span className="tabular-nums">{assignmentSummary.unassigned.length}</span>
-                <span className="hidden sm:inline">unassigned</span>
-              </button>
+            <PlanningModeBar
+              active={planning}
+              onActiveChange={(a) => {
+                setPlanning(a);
+                setDrawerOpen(false); // avoid a stale draft/live branch mismatch
+              }}
+            />
+            {/* Live-only coverage pills — hidden while planning (the draft has
+                its own roster that isn't merged yet). */}
+            {!planning && assignmentSummary && (
+              <>
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium tabular-nums"
+                  title="Unique students in at least one group"
+                >
+                  <Users className="w-3 h-3" />
+                  <span>
+                    <span className="text-foreground">{assignmentSummary.assignedCount}</span>
+                    <span className="opacity-60"> / {assignmentSummary.totalCount}</span>
+                  </span>
+                  <span className="hidden sm:inline">in groups</span>
+                </span>
+                {assignmentSummary.unassigned.length > 0 && (
+                  <button
+                    onClick={() => setUnassignedOpen(true)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-600 text-[10px] font-medium hover:bg-amber-500/15 transition-colors"
+                    title="Students not in any group"
+                  >
+                    <UserRoundX className="w-3 h-3" />
+                    <span className="tabular-nums">{assignmentSummary.unassigned.length}</span>
+                    <span className="hidden sm:inline">unassigned</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}
@@ -417,7 +490,7 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {view !== 'session' && view !== 'library' && view !== 'group' && !loading && !hasGroups && (
+        {view !== 'session' && view !== 'library' && view !== 'group' && !loading && !hasGroups && !planning && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
               <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
@@ -426,7 +499,20 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {!loading && hasGroups && view === 'week' && week && (
+        {/* Planning-mode banner — a constant reminder that edits aren't live. */}
+        {view === 'week' && planning && (
+          <div className="shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2 text-[11px] text-amber-600 flex items-center gap-1.5">
+            <span className="font-semibold uppercase tracking-wider">Planning</span>
+            <span className="text-amber-600/80">
+              Editing a draft — changes go live only when you press Merge.
+            </span>
+          </div>
+        )}
+
+        {/* Grid shows whenever there are groups, OR always in planning mode (a
+            draft can legitimately be empty — fresh fork or everything removed —
+            and the user still needs empty cells to tap and build). */}
+        {!loading && view === 'week' && week && (hasGroups || planning) && (
           <WeekGrid
             cells={week.cells}
             onOpenGroup={openEditor}
@@ -455,6 +541,7 @@ export default function GroupsPage() {
         }
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
+        branch={planning ? 'draft' : 'live'}
       />
 
       <UnassignedStudentsDialog

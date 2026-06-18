@@ -98,6 +98,7 @@ import type * as textbookPages from "../textbookPages.js";
 import type * as textbooks from "../textbooks.js";
 import type * as timeline from "../timeline.js";
 import type * as timetableDraft from "../timetableDraft.js";
+import type * as timetableDraftEdit from "../timetableDraftEdit.js";
 import type * as topicTags from "../topicTags.js";
 import type * as unitMetadata from "../unitMetadata.js";
 
@@ -198,6 +199,7 @@ declare const fullApi: ApiFromModules<{
   textbooks: typeof textbooks;
   timeline: typeof timeline;
   timetableDraft: typeof timetableDraft;
+  timetableDraftEdit: typeof timetableDraftEdit;
   topicTags: typeof topicTags;
   unitMetadata: typeof unitMetadata;
 }>;
