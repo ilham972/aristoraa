@@ -21,9 +21,10 @@
   group" (drops THAT membership → student lands in their own grade's Unassigned;
   other memberships untouched). Each column header has a grade chip editing the
   group's primary + extra grades (live & draft) via `groups.setGroupGrades` /
-  `setGroupGradesDraft`. Phantom groups (no members AND no scheduled
-  session — abandoned `new_group` rows from tap-to-create) are hidden; cleanup
-  via `groups.deletePhantomGroups`. See decisions.md.
+  `setGroupGradesDraft`. Column header also: tap name to rename, a calendar
+  icon opens the group's `EditGroupDialog` (weekly sessions), a trash deletes
+  (confirm) — all branch-aware. Phantom groups (no members AND no session —
+  abandoned `new_group` rows) hidden; cleanup `groups.deletePhantomGroups`.
 - **Library view** — paper-class (cheap self-study) timetable, STUDENT-CENTRIC.
   Pill rail of all students on top (`paper-student-rail.tsx`); slot grid below
   (`library-grid.tsx`). Tap a pill = pick it up (glow) + highlight their week;
