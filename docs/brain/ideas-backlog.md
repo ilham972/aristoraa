@@ -22,6 +22,7 @@ anytime. Effort S/M/L · Impact 1–5 · sorted by impact.
 | 8b | **Paper-class Library** — SHIPPED. Redesigned STUDENT-CENTRIC 2026-06-18: pill rail of all students (coloured by assigned hours) → tap-to-pick → tap hour slots to drop them in (highlights their theory/busy week); rooms+teachers assigned later in a full-screen slot dialog (optional); attendance = one daily roll-call on the Session view (2nd pill row); flat 100/day. Replaced the room-first block model + phase-2 planner. Paper-revenue card in /analytics. | scheduling | Teacher efficiency + revenue | M | 3 |
 | 9 | **Split the giants** (lead-tab 1487, groups/page 1030, edit-group-dialog 816 lines) for maintainability as teacher count grows. Opportunistic, not urgent. | codebase health | Scale-readiness | M | 2 |
 | 10 | **Cleanup phase from legacy-map.md** (~3k+ dead lines + 5 dead deps). Cheap insurance against future confusion; do after #3 retires the transition rows. | codebase health | Scale-readiness | S | 2 |
+| 11 | **Finish planning-mode wiring.** Backend handles all 4 dimensions; UI gaps: the standalone "Group" organize board isn't branch-aware (edits live even in planning — wire `applyRosterMovesDraft`/`gradeBoardDraft` via a `branch` prop), per-slot teacher editing in the draft, and a draft-vs-live diff preview before Merge. | scheduling | Teacher efficiency | S | 3 |
 
 ## Standing guidance for ranking
 The learning engine is the priority compass (purpose.md): engine ideas
