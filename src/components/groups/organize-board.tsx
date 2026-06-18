@@ -176,6 +176,21 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
     setPicked(null);
   };
 
+  // Explicit "remove from group" = stage a move to Unassigned (drop THIS
+  // membership only). The student lands in their OWN grade's Unassigned on
+  // save; any other group memberships they hold are untouched. No-op for a
+  // chip that's already in the Unassigned pile.
+  const removeChip = (chipKey: string) => {
+    const info = chipByKey.get(chipKey);
+    if (!info || info.origin === UNASSIGNED) return;
+    setPending((prev) => {
+      const next = new Map(prev);
+      next.set(chipKey, UNASSIGNED);
+      return next;
+    });
+    if (picked === chipKey) setPicked(null);
+  };
+
   const onChipTap = (chipKey: string, colId: string) => {
     if (picked === chipKey) {
       setPicked(null); // tap the picked chip again to cancel
@@ -315,6 +330,7 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
                 picked={picked}
                 pending={pending}
                 onChipTap={onChipTap}
+                onRemove={removeChip}
                 onColumnTap={() => dropInto(col.groupId)}
                 hasPick={picked != null}
               />
@@ -330,6 +346,7 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
               picked={picked}
               pending={pending}
               onChipTap={onChipTap}
+              onRemove={removeChip}
               onColumnTap={() => dropInto(UNASSIGNED)}
               hasPick={picked != null}
             />
@@ -368,6 +385,7 @@ function Column({
   picked,
   pending,
   onChipTap,
+  onRemove,
   onColumnTap,
   hasPick,
 }: {
@@ -382,6 +400,7 @@ function Column({
   picked: string | null;
   pending: Map<string, string>;
   onChipTap: (chipKey: string, colId: string) => void;
+  onRemove: (chipKey: string) => void;
   onColumnTap: () => void;
   hasPick: boolean;
 }) {
@@ -428,15 +447,14 @@ function Column({
           const isPicked = picked === c.chipKey;
           const moved = pending.has(c.chipKey) && pending.get(c.chipKey) !== c.origin;
           const offGrade = boardGrade != null && typeof c.grade === 'number' && c.grade !== boardGrade;
+          // The × removes THIS membership (→ Unassigned). Pointless in the
+          // Unassigned column (the student is already out of every group here).
+          const removable = colId !== UNASSIGNED;
           return (
-            <button
+            <div
               key={c.chipKey}
-              onClick={(e) => {
-                e.stopPropagation();
-                onChipTap(c.chipKey, colId);
-              }}
               className={cn(
-                'w-full text-left px-2 py-1.5 rounded-lg text-xs transition-all border flex items-center gap-1.5',
+                'w-full rounded-lg text-xs transition-all border flex items-stretch',
                 isPicked
                   ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-[1.02]'
                   : moved
@@ -444,19 +462,45 @@ function Column({
                     : 'bg-muted/50 border-transparent text-foreground hover:bg-muted',
               )}
             >
-              <span className="truncate flex-1">{c.name}</span>
-              {offGrade && (
-                <span
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChipTap(c.chipKey, colId);
+                }}
+                className="flex-1 min-w-0 text-left px-2 py-1.5 flex items-center gap-1.5"
+              >
+                <span className="truncate flex-1">{c.name}</span>
+                {offGrade && (
+                  <span
+                    className={cn(
+                      'shrink-0 text-[9px] font-bold px-1 py-px rounded tabular-nums',
+                      isPicked ? 'bg-primary-foreground/20' : 'bg-muted-foreground/15 text-muted-foreground',
+                    )}
+                    title={`Grade ${c.grade}`}
+                  >
+                    G{c.grade}
+                  </span>
+                )}
+              </button>
+              {removable && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(c.chipKey);
+                  }}
+                  title="Remove from group"
+                  aria-label={`Remove ${c.name} from group`}
                   className={cn(
-                    'shrink-0 text-[9px] font-bold px-1 py-px rounded tabular-nums',
-                    isPicked ? 'bg-primary-foreground/20' : 'bg-muted-foreground/15 text-muted-foreground',
+                    'shrink-0 px-1.5 flex items-center rounded-r-lg transition-colors',
+                    isPicked
+                      ? 'text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/15'
+                      : 'text-muted-foreground/40 hover:text-red-600 hover:bg-red-500/10',
                   )}
-                  title={`Grade ${c.grade}`}
                 >
-                  G{c.grade}
-                </span>
+                  <X className="w-3 h-3" />
+                </button>
               )}
-            </button>
+            </div>
           );
         })}
       </div>

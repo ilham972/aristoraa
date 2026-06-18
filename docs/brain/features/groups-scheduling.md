@@ -17,9 +17,11 @@
   Tap-to-pick/tap-to-drop; stage then Save (atomic). `organize-board.tsx` +
   `groups.gradeBoard`/`gradeOptions`/`applyRosterMoves`; column/cap/diff logic
   in `convex/lib/rosterMoves.ts` (`buildGradeBoard`, tested). Cap = maxSize ??
-  10; only membership moves (not sessions/fees). Phantom groups (no members AND
-  no scheduled session — abandoned `new_group` rows from tap-to-create) are
-  hidden; cleanup via `groups.deletePhantomGroups`. See decisions.md.
+  10; only membership moves (not sessions/fees). Each chip has a × "remove from
+  group" (drops THAT membership → student lands in their own grade's Unassigned;
+  other memberships untouched). Phantom groups (no members AND no scheduled
+  session — abandoned `new_group` rows from tap-to-create) are hidden; cleanup
+  via `groups.deletePhantomGroups`. See decisions.md.
 - **Library view** — paper-class (cheap self-study) timetable, STUDENT-CENTRIC.
   Pill rail of all students on top (`paper-student-rail.tsx`); slot grid below
   (`library-grid.tsx`). Tap a pill = pick it up (glow) + highlight their week;

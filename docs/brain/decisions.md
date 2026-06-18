@@ -55,6 +55,13 @@ because Z.
   tap-to-drop, NOT drag (drag fights horizontal scroll on a phone). Stage
   locally then **Save all** in ONE atomic mutation (`groups.applyRosterMoves`)
   — founder wanted to plan before committing (over instant-write-with-undo).
+- **Per-chip × "remove from group"** (2026-06-19) — an explicit remove control
+  on every chip, because dropping onto the Unassigned column (the only prior way
+  to remove) wasn't discoverable, and removing an OFF-grade student that way felt
+  wrong (they'd vanish into a grade they don't belong to). × stages a move to
+  Unassigned = drop THAT membership only; on save the student lands in their own
+  grade's Unassigned and keeps any other group memberships. No backend change —
+  `applyRosterMoves` already treats toGroupId=null as a removal.
 - **Show EVERY member as a movable chip** — including off-grade members (with a
   grade badge) and students in multiple groups (one chip per group, moved
   independently). The earlier "+N locked" hiding was a BUG (2026-06-18): it hid
