@@ -659,6 +659,32 @@ export const update = mutation({
   },
 });
 
+// Grade-only patch for the Group-board column editor. Deliberately narrow:
+// it touches ONLY grade + additionalGrades so it can't accidentally wipe the
+// group's other fields (the general `update` above patches every arg, and an
+// unspecified optional arrives as undefined → Convex deletes that field).
+// Pass grade=undefined for "Any"; an empty/omitted additionalGrades clears
+// the extras.
+export const setGroupGrades = mutation({
+  args: {
+    id: v.id("groups"),
+    grade: v.optional(v.number()),
+    additionalGrades: v.optional(v.array(v.number())),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Unauthenticated");
+    await ctx.db.patch(args.id, {
+      grade: args.grade,
+      additionalGrades:
+        args.additionalGrades && args.additionalGrades.length > 0
+          ? args.additionalGrades
+          : undefined,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 // Hard delete a group: detaches any owned slots (groupId cleared, slots stay
 // as orphans available for reuse) and deletes all groupMembers rows. This is
 // the only "remove from system" path — there is no soft-archive concept.

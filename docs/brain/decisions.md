@@ -55,6 +55,15 @@ because Z.
   tap-to-drop, NOT drag (drag fights horizontal scroll on a phone). Stage
   locally then **Save all** in ONE atomic mutation (`groups.applyRosterMoves`)
   — founder wanted to plan before committing (over instant-write-with-undo).
+- **Per-column grade editor** (2026-06-19) — each column header has a grade chip
+  (primary grade + up to 2 extras, "Any" clears) reusing the Week-dialog picker,
+  so accepted grades (incl. removing an extra) can be edited without opening Edit
+  Group. Works in live AND draft (chosen by the `branch` prop). Applies
+  immediately (a group property, not a staged roster move) via dedicated
+  grade-ONLY mutations `groups.setGroupGrades` / `timetableDraftEdit.
+  setGroupGradesDraft` — NOT the general `update` (which patches every arg, so an
+  unspecified optional arrives undefined and Convex would delete that field).
+  Board columns now carry `primaryGrade`/`extraGrades` (`buildGradeBoard`).
 - **Per-chip × "remove from group"** (2026-06-19) — an explicit remove control
   on every chip, because dropping onto the Unassigned column (the only prior way
   to remove) wasn't discoverable, and removing an OFF-grade student that way felt

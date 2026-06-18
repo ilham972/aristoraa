@@ -72,6 +72,8 @@ export type BoardColumn = {
   count: number;
   firstSession: { dayOfWeek: number; startTime: string } | null;
   acceptedGrades: number[]; // empty ⇒ accepts any grade
+  primaryGrade: number | null; // the group's `grade` (null ⇒ "Any")
+  extraGrades: number[]; // the group's `additionalGrades`
   members: BoardChip[];
 };
 export type GradeBoard = { columns: BoardColumn[]; unassigned: BoardChip[] };
@@ -130,6 +132,8 @@ export function buildGradeBoard(
       count: chips.length,
       firstSession: g.firstSession ?? null,
       acceptedGrades: accepted,
+      primaryGrade: g.grade ?? null,
+      extraGrades: g.additionalGrades ?? [],
       members: chips,
     });
   }

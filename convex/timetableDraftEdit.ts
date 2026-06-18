@@ -298,6 +298,27 @@ export const updateGroupDraft = mutation({
   },
 });
 
+// Grade-only patch for the draft Group-board column editor — mirror of
+// groups.setGroupGrades over draftGroups. Narrow on purpose (see that fn).
+export const setGroupGradesDraft = mutation({
+  args: {
+    id: v.id("draftGroups"),
+    grade: v.optional(v.number()),
+    additionalGrades: v.optional(v.array(v.number())),
+  },
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    await ctx.db.patch(args.id, {
+      grade: args.grade,
+      additionalGrades:
+        args.additionalGrades && args.additionalGrades.length > 0
+          ? args.additionalGrades
+          : undefined,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const removeGroupDraft = mutation({
   args: { id: v.id("draftGroups") },
   handler: async (ctx, args) => {

@@ -11,9 +11,10 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation } from 'convex/react';
+import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
-import { ArrowLeftRight, Check, RotateCcw, X } from 'lucide-react';
+import { ArrowLeftRight, Check, ChevronDown, RotateCcw, X } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { DAYS, fmtTime12 } from '@/lib/groups/time-grid';
@@ -22,6 +23,9 @@ import { groupColor } from '@/lib/groups/color';
 // Sentinel column id for the Unassigned pile (no group, no cap). Kept local so
 // this client file doesn't reach into convex/; ops send null for "unassigned".
 const UNASSIGNED = '__unassigned__';
+
+// Grades the centre teaches (mirrors edit-group-dialog's GRADE_OPTIONS).
+const GRADE_OPTIONS = [6, 7, 8, 9, 10, 11] as const;
 
 // One chip = one membership (a student in a specific column). A student in two
 // groups has two chips, keyed by column, so each moves on its own.
@@ -69,6 +73,24 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
   const applyMoves = useMutation(
     (draft ? api.timetableDraftEdit.applyRosterMovesDraft : api.groups.applyRosterMoves) as typeof api.groups.applyRosterMoves,
   );
+
+  // Grade edits apply immediately (they're a group property, not a staged
+  // roster move). Live → groups.setGroupGrades, draft → its draft twin.
+  const setGroupGrades = useMutation(
+    (draft ? api.timetableDraftEdit.setGroupGradesDraft : api.groups.setGroupGrades) as typeof api.groups.setGroupGrades,
+  );
+  const applyGrades = async (groupId: string, primary: number | undefined, extras: number[]) => {
+    try {
+      await setGroupGrades({
+        id: groupId as Id<'groups'>,
+        grade: primary,
+        additionalGrades: extras.length > 0 ? extras : undefined,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not update grades';
+      toast.error(msg.replace(/^.*ConvexError:\s*/, ''));
+    }
+  };
 
   // Flatten the board into chips + per-column metadata. Rebuilt every render
   // from the server snapshot.
@@ -326,6 +348,9 @@ export function OrganizeBoard({ branch = 'live' }: { branch?: 'live' | 'draft' }
                 cap={col.cap}
                 accentSeed={col.groupId}
                 boardGrade={activeGrade}
+                primaryGrade={col.primaryGrade ?? null}
+                extraGrades={col.extraGrades ?? []}
+                onSetGrades={(p, e) => applyGrades(col.groupId, p, e)}
                 chips={allChips.filter((c) => effectiveCol(c.chipKey) === col.groupId)}
                 picked={picked}
                 pending={pending}
@@ -381,6 +406,9 @@ function Column({
   cap,
   accentSeed,
   boardGrade,
+  primaryGrade,
+  extraGrades,
+  onSetGrades,
   chips,
   picked,
   pending,
@@ -396,6 +424,9 @@ function Column({
   cap?: number;
   accentSeed: string | null;
   boardGrade: number | null;
+  primaryGrade?: number | null;
+  extraGrades?: number[];
+  onSetGrades?: (primary: number | undefined, extras: number[]) => void;
   chips: ChipInfo[];
   picked: string | null;
   pending: Map<string, string>;
@@ -418,11 +449,21 @@ function Column({
       style={color ? { borderColor: full ? undefined : color.border } : undefined}
     >
       {/* Header */}
-      <div className="shrink-0 px-2.5 py-2 border-b border-border/40">
+      <div className="shrink-0 px-2.5 py-2 border-b border-border/40 space-y-1">
+        <p className="text-xs font-semibold text-foreground truncate" title={title}>
+          {title}
+        </p>
+        {subtitle && <p className="text-[10px] text-muted-foreground truncate">{subtitle}</p>}
         <div className="flex items-center justify-between gap-1">
-          <p className="text-xs font-semibold text-foreground truncate" title={title}>
-            {title}
-          </p>
+          {onSetGrades ? (
+            <GradeEditor
+              primary={primaryGrade ?? null}
+              extras={extraGrades ?? []}
+              onChange={onSetGrades}
+            />
+          ) : (
+            <span />
+          )}
           <span
             className={cn(
               'text-[10px] font-bold tabular-nums shrink-0',
@@ -433,7 +474,6 @@ function Column({
             {cap != null ? `/${cap}` : ''}
           </span>
         </div>
-        {subtitle && <p className="text-[10px] text-muted-foreground truncate">{subtitle}</p>}
       </div>
 
       {/* Chips */}
@@ -505,5 +545,140 @@ function Column({
         })}
       </div>
     </div>
+  );
+}
+
+// Compact grade chip + popover on a column header. One primary grade (radio,
+// "Any" clears it) plus up to 2 extra grades the group also accepts (checkboxes
+// — this is how you remove an extra grade too). Mirrors the Week-view dialog's
+// picker. Changes apply immediately via onChange; the board refetches.
+function GradeEditor({
+  primary,
+  extras,
+  onChange,
+}: {
+  primary: number | null;
+  extras: number[];
+  onChange: (primary: number | undefined, extras: number[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const label =
+    primary == null
+      ? 'Any'
+      : extras.length === 0
+        ? `${primary}`
+        : extras.length === 1
+          ? `${primary} +${extras[0]}`
+          : `${primary} +${extras.length}`;
+
+  const handlePrimary = (g: number | undefined) => {
+    if (g == null) {
+      onChange(undefined, []); // "Any" → no extras either
+      return;
+    }
+    onChange(g, extras.filter((e) => e !== g)); // new primary can't also be an extra
+  };
+
+  const toggleExtra = (g: number) => {
+    if (primary == null || g === primary) return;
+    if (extras.includes(g)) {
+      onChange(primary, extras.filter((e) => e !== g));
+    } else {
+      if (extras.length >= 2) {
+        toast('Max 2 extra grades');
+        return;
+      }
+      onChange(primary, [...extras, g]);
+    }
+  };
+
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <PopoverPrimitive.Trigger
+        onClick={(e) => e.stopPropagation()} // don't trigger a column drop
+        className={cn(
+          'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold border transition-colors',
+          primary == null
+            ? 'border-dashed border-border text-muted-foreground hover:bg-muted'
+            : 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/15',
+        )}
+      >
+        <span className="truncate max-w-[5.5rem]">{label}</span>
+        <ChevronDown className="w-2.5 h-2.5 shrink-0" />
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Positioner sideOffset={4} className="z-[60]">
+          <PopoverPrimitive.Popup
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 p-2 w-52 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0"
+          >
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+              Primary grade
+            </div>
+            <div className="grid grid-cols-4 gap-1 mb-2">
+              <button
+                type="button"
+                onClick={() => handlePrimary(undefined)}
+                className={cn(
+                  'h-7 rounded text-[11px] border',
+                  primary == null
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'border-input hover:bg-muted',
+                )}
+              >
+                Any
+              </button>
+              {GRADE_OPTIONS.map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => handlePrimary(g)}
+                  className={cn(
+                    'h-7 rounded text-[11px] border',
+                    primary === g
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-input hover:bg-muted',
+                  )}
+                >
+                  G{g}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+              Also accepts (max 2)
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {GRADE_OPTIONS.map((g) => {
+                const isPrimary = g === primary;
+                const isExtra = extras.includes(g);
+                return (
+                  <button
+                    key={g}
+                    type="button"
+                    disabled={isPrimary || primary == null}
+                    onClick={() => toggleExtra(g)}
+                    className={cn(
+                      'h-7 rounded text-[11px] border flex items-center justify-center gap-0.5',
+                      isExtra
+                        ? 'bg-primary/15 text-primary border-primary/40'
+                        : 'border-input hover:bg-muted',
+                      (isPrimary || primary == null) && 'opacity-30 cursor-not-allowed hover:bg-transparent',
+                    )}
+                  >
+                    {isExtra && <Check className="w-2.5 h-2.5" />}
+                    G{g}
+                  </button>
+                );
+              })}
+            </div>
+            {primary == null && (
+              <p className="text-[10px] text-muted-foreground mt-1.5">Pick a primary grade first.</p>
+            )}
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }

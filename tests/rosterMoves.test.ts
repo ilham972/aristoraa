@@ -191,4 +191,14 @@ describe('buildGradeBoard', () => {
     expect(acceptedGradesOf(groups[0])).toEqual([10, 11]);
     expect(acceptedGradesOf(groups[2])).toEqual([]);
   });
+
+  it('exposes primary + extra grades per column (for the header editor)', () => {
+    const rra = col('rra')!;
+    expect(rra.primaryGrade).toBe(10);
+    expect(rra.extraGrades).toEqual([11]);
+    // untyped group → "Any" primary, no extras
+    const ib = col('ibanjalin')!;
+    expect(ib.primaryGrade).toBeNull();
+    expect(ib.extraGrades).toEqual([]);
+  });
 });
