@@ -58,16 +58,14 @@ roomId), `paperSlotTeachers` (optional teacher per slot+room), `paperAttendance`
 ## Planning mode — draft timetable branch (2026-06-18)
 Week-view "Planning" toggle (`planning-mode-bar.tsx`) flips the grid onto a
 private DRAFT copy; live keeps running. Pull = live→draft, Merge = draft→live
-(both behind confirm dialogs), Discard = drop the draft. Engine
-`convex/timetableDraft.ts` (fork/pull/merge/discard/status) + pure tested
-`convex/lib/draftReconcile.ts`. Editing `convex/timetableDraftEdit.ts` mirrors
-every live edit op on the draft tables (reuses toggleBand/validateCaps/
-buildGradeBoard). Tables: draftGroups/draftSlots/draftGroupMembers/
-draftSlotTeachers + draftMeta baseline — only the 4 STRUCTURAL tables, history
-isn't copied. Branch-aware surfaces (all share ONE draft): the Week grid,
-`EditGroupDialog`, and the **Group/organize board** (`OrganizeBoard` `branch`
-prop → gradeBoardDraft/applyRosterMovesDraft). Per-slot teacher draft UI + a
-pre-Merge diff preview still pending. Rules → decisions.md.
+(both behind confirm dialogs), Discard = drop it. Engine
+`convex/timetableDraft.ts` + pure tested `convex/lib/draftReconcile.ts`; editing
+`convex/timetableDraftEdit.ts` mirrors every live op on the draft tables (reuses
+toggleBand/validateCaps/buildGradeBoard). Tables: draftGroups/draftSlots/
+draftGroupMembers/draftSlotTeachers + draftMeta baseline — only the 4 STRUCTURAL
+tables, history isn't copied. Branch-aware surfaces share ONE draft: Week grid,
+`EditGroupDialog`, Group/organize board (each via a `branch`). Per-slot teacher
+draft UI + pre-Merge diff preview pending. Rules → decisions.md.
 
 ## Data flow
 Page calls `api.groups.*` (weekGrid, sessions, toggleSession, members,
@@ -96,7 +94,7 @@ leftover `src/components/groups/attendance-tab.tsx` (536 lines) is dead
 
 ## Where things live
 - Time/band helpers: `src/lib/groups/time-grid.ts` (DAYS, fmtTime12, fmtLKR;
-  exports WEEKDAY_BANDS/bandsForDay/jsDowToDayNum are unused leftovers).
+  WEEKDAY_BANDS/bandsForDay/jsDowToDayNum unused — see legacy-map).
 - Colors: `src/lib/groups/color.ts` — `resolveGroupColor(colorIndex, colorKey)`:
   stored `colorIndex` (tap dialog dot to cycle) else hash of `colorKey` (live id;
   draft passes `sourceId` so live/draft match). Session time: `session-time.ts`.
