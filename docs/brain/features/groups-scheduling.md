@@ -17,10 +17,10 @@
   Tap-to-pick/tap-to-drop; stage then Save (atomic). `organize-board.tsx` +
   `groups.gradeBoard`/`gradeOptions`/`applyRosterMoves`; column/cap/diff logic
   in `convex/lib/rosterMoves.ts` (`buildGradeBoard`, tested). Cap = maxSize ??
-  10; only membership moves (not sessions/fees). Each chip has a × "remove from
-  group" (drops THAT membership → student lands in their own grade's Unassigned;
-  other memberships untouched). Each column header has a grade chip editing the
-  group's primary + extra grades (live & draft) via `groups.setGroupGrades` /
+  10; only membership moves (not sessions/fees). Each chip has a × that drops
+  THAT membership → student's own-grade Unassigned (other memberships untouched).
+  Column header has a grade chip editing primary + extra grades (live & draft)
+  via `groups.setGroupGrades` /
   `setGroupGradesDraft`. Column header also: tap name to rename, a calendar
   icon opens the group's `EditGroupDialog` (weekly sessions), a trash deletes
   (confirm) — all branch-aware. Phantom groups (no members AND no session —
