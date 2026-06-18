@@ -33,6 +33,24 @@ async function seedLive(t: ReturnType<typeof convexTest>) {
   });
 }
 
+describe('fork tolerates legacy/optional group fields', () => {
+  it('forks a group that has the legacy `archived` field set', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const centerId = await ctx.db.insert('centers', { name: 'C', city: 'X', district: 'Y', road: 'Z' });
+      const roomId = await ctx.db.insert('rooms', { centerId, name: 'R1' });
+      await ctx.db.insert('groups', {
+        name: 'Legacy', autoName: false, centerId, archived: false,
+        createdAt: 0, updatedAt: 0, defaultRoomId: roomId,
+      });
+    });
+    await asUser(t).mutation(api.timetableDraft.fork, {});
+    const draftGroups = await t.run((ctx) => ctx.db.query('draftGroups').collect());
+    expect(draftGroups).toHaveLength(1);
+    expect(draftGroups[0].name).toBe('Legacy');
+  });
+});
+
 describe('fork + merge with no edits is a clean no-op', () => {
   it('keeps the same live group and slot ids', async () => {
     const t = convexTest(schema, modules);

@@ -261,6 +261,9 @@ export default defineSchema({
     maxSize: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
+    // Mirror the legacy optional field on `groups` so forking a row that still
+    // carries it validates (copy is field-for-field).
+    archived: v.optional(v.boolean()),
     loggingStartDate: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
