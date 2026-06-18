@@ -44,10 +44,124 @@ function SlotBody({ slot, onClose }: { slot: Slot; onClose: () => void }) {
   const teachers = useQuery(api.teachers.list);
   const rail = useQuery(api.paperClasses.rail);
 
-  const setRoom = useMutation(api.paperClasses.setRoom);
+  // Moving a student between rooms only shuffles columns within THIS slot —
+  // optimistically rewrite the slot detail so the chip jumps instantly.
+  const setRoom = useMutation(api.paperClasses.setRoom).withOptimisticUpdate(
+    (store, { studentId, dayOfWeek, startTime, roomId }) => {
+      const sd = store.getQuery(api.paperClasses.slot, { dayOfWeek, startTime });
+      if (!sd) return;
+      const lite =
+        sd.unassigned.find((s) => s.studentId === studentId) ??
+        sd.rooms.flatMap((r) => r.students).find((s) => s.studentId === studentId);
+      if (!lite) return;
+      const byName = (arr: typeof sd.unassigned) =>
+        [...arr].sort((a, b) => a.name.localeCompare(b.name));
+      const strip = (arr: typeof sd.unassigned) => arr.filter((s) => s.studentId !== studentId);
+      const unassigned = strip(sd.unassigned);
+      const rooms = sd.rooms.map((r) => ({ ...r, students: strip(r.students) }));
+      if (roomId === null) unassigned.push(lite);
+      else {
+        const ri = rooms.findIndex((r) => r.roomId === roomId);
+        if (ri >= 0) rooms[ri] = { ...rooms[ri], students: [...rooms[ri].students, lite] };
+      }
+      store.setQuery(api.paperClasses.slot, { dayOfWeek, startTime }, {
+        ...sd,
+        unassigned: byName(unassigned),
+        rooms: rooms.map((r) => ({ ...r, students: byName(r.students) })),
+      });
+    },
+  );
   const setSlotTeacher = useMutation(api.paperClasses.setSlotTeacher);
-  const unassign = useMutation(api.paperClasses.unassign);
-  const assign = useMutation(api.paperClasses.assign);
+  // Removing a student touches the slot detail AND the global counts — bump
+  // them all down optimistically so the chip and the grid react at once.
+  const unassign = useMutation(api.paperClasses.unassign).withOptimisticUpdate(
+    (store, { studentId, dayOfWeek, startTime }) => {
+      const sd = store.getQuery(api.paperClasses.slot, { dayOfWeek, startTime });
+      if (sd) {
+        const strip = (arr: typeof sd.unassigned) => arr.filter((s) => s.studentId !== studentId);
+        store.setQuery(api.paperClasses.slot, { dayOfWeek, startTime }, {
+          ...sd,
+          total: Math.max(0, sd.total - 1),
+          unassigned: strip(sd.unassigned),
+          rooms: sd.rooms.map((r) => ({ ...r, students: strip(r.students) })),
+        });
+      }
+      const wg = store.getQuery(api.paperClasses.weekGrid, {});
+      if (wg) {
+        const cells = wg.cells
+          .map((c) =>
+            c.dayOfWeek === dayOfWeek && c.startTime === startTime
+              ? { ...c, count: c.count - 1 }
+              : c,
+          )
+          .filter((c) => c.count > 0);
+        store.setQuery(api.paperClasses.weekGrid, {}, { cells });
+      }
+      const rail = store.getQuery(api.paperClasses.rail, {});
+      if (rail) {
+        const next = rail
+          .map((r) =>
+            r.studentId === studentId
+              ? { ...r, assignedHours: Math.max(0, r.assignedHours - 1) }
+              : r,
+          )
+          .sort((a, b) => a.assignedHours - b.assignedHours || a.name.localeCompare(b.name));
+        store.setQuery(api.paperClasses.rail, {}, next);
+      }
+      const sm = store.getQuery(api.paperClasses.studentMap, { studentId });
+      if (sm) {
+        store.setQuery(api.paperClasses.studentMap, { studentId }, {
+          ...sm,
+          paperSlots: sm.paperSlots.filter(
+            (p) => !(p.dayOfWeek === dayOfWeek && p.startTime === startTime),
+          ),
+        });
+      }
+    },
+  );
+  // Add-to-slot from the search panel — mirror the grid drop: insert into the
+  // Unassigned column + bump the grid/rail counts instantly.
+  const assign = useMutation(api.paperClasses.assign).withOptimisticUpdate(
+    (store, { studentId, dayOfWeek, startTime, endTime }) => {
+      const sd = store.getQuery(api.paperClasses.slot, { dayOfWeek, startTime });
+      const inSlot =
+        sd &&
+        (sd.unassigned.some((s) => s.studentId === studentId) ||
+          sd.rooms.some((r) => r.students.some((s) => s.studentId === studentId)));
+      if (inSlot) return;
+      const rail = store.getQuery(api.paperClasses.rail, {});
+      const fromRail = rail?.find((r) => r.studentId === studentId);
+      if (sd && fromRail) {
+        const lite = { studentId, name: fromRail.name, schoolGrade: fromRail.schoolGrade };
+        store.setQuery(api.paperClasses.slot, { dayOfWeek, startTime }, {
+          ...sd,
+          total: sd.total + 1,
+          unassigned: [...sd.unassigned, lite].sort((a, b) => a.name.localeCompare(b.name)),
+        });
+      }
+      const wg = store.getQuery(api.paperClasses.weekGrid, {});
+      if (wg) {
+        const cells = wg.cells.slice();
+        const i = cells.findIndex((c) => c.dayOfWeek === dayOfWeek && c.startTime === startTime);
+        if (i >= 0) cells[i] = { ...cells[i], count: cells[i].count + 1 };
+        else cells.push({ dayOfWeek, startTime, endTime, count: 1 });
+        store.setQuery(api.paperClasses.weekGrid, {}, { cells });
+      }
+      if (rail) {
+        const next = rail
+          .map((r) => (r.studentId === studentId ? { ...r, assignedHours: r.assignedHours + 1 } : r))
+          .sort((a, b) => a.assignedHours - b.assignedHours || a.name.localeCompare(b.name));
+        store.setQuery(api.paperClasses.rail, {}, next);
+      }
+      const sm = store.getQuery(api.paperClasses.studentMap, { studentId });
+      if (sm) {
+        store.setQuery(api.paperClasses.studentMap, { studentId }, {
+          ...sm,
+          paperSlots: [...sm.paperSlots, { dayOfWeek, startTime }],
+        });
+      }
+    },
+  );
 
   // A student currently in the slot, "picked up" to move into a room.
   const [picked, setPicked] = useState<Id<'students'> | null>(null);

@@ -100,22 +100,26 @@ export const studentMap = query({
       .query("groupMembers")
       .withIndex("by_student", (q) => q.eq("studentId", args.studentId))
       .collect();
-    const theorySlots: Array<{ dayOfWeek: number; startTime: string; endTime: string; groupName: string }> = [];
-    for (const m of memberships) {
-      const group = await ctx.db.get(m.groupId);
-      const slots = await ctx.db
-        .query("scheduleSlots")
-        .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
-        .collect();
-      for (const s of slots) {
-        theorySlots.push({
+    // Resolve every group + its slots in parallel (was a sequential N+1 loop —
+    // the pick-a-pill latency the founder felt).
+    const perGroup = await Promise.all(
+      memberships.map(async (m) => {
+        const [group, slots] = await Promise.all([
+          ctx.db.get(m.groupId),
+          ctx.db
+            .query("scheduleSlots")
+            .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
+            .collect(),
+        ]);
+        return slots.map((s) => ({
           dayOfWeek: s.dayOfWeek,
           startTime: s.startTime,
           endTime: s.endTime,
           groupName: group?.name ?? "?",
-        });
-      }
-    }
+        }));
+      }),
+    );
+    const theorySlots = perGroup.flat();
 
     // Outside busy windows.
     const avail = await ctx.db
@@ -169,12 +173,15 @@ export const slot = query({
     const teacherName = new Map(teachers.map((t) => [String(t._id), t.name]));
     const teacherByRoom = new Map(slotTeachers.map((r) => [String(r.roomId), r.teacherId]));
 
-    // Group assigned students by room (null roomId → unassigned).
+    // Group assigned students by room (null roomId → unassigned). Resolve all
+    // student docs in parallel — the sequential get-per-student loop was the
+    // dialog-open latency.
+    const lites = await Promise.all(assignments.map((a) => studentLite(a.studentId)));
     const byRoom = new Map<string, StudentLite[]>();
     const unassigned: StudentLite[] = [];
-    for (const a of assignments) {
-      const lite = await studentLite(a.studentId);
-      if (!lite) continue;
+    assignments.forEach((a, i) => {
+      const lite = lites[i];
+      if (!lite) return;
       if (a.roomId) {
         const k = String(a.roomId);
         const arr = byRoom.get(k) ?? [];
@@ -183,7 +190,7 @@ export const slot = query({
       } else {
         unassigned.push(lite);
       }
-    }
+    });
     const sortByName = (arr: StudentLite[]) => arr.sort((a, b) => a.name.localeCompare(b.name));
     sortByName(unassigned);
 
@@ -233,15 +240,15 @@ export const dayRoster = query({
       .collect();
     const statusByStudent = new Map(attendance.map((r) => [String(r.studentId), r.status]));
 
+    const docs = await Promise.all(studentIds.map((sid) => ctx.db.get(sid as Id<"students">)));
     const students: Array<StudentLite & { present: boolean }> = [];
-    for (const sid of studentIds) {
-      const s = await ctx.db.get(sid as Id<"students">);
+    for (const s of docs) {
       if (!s) continue;
       students.push({
         studentId: s._id,
         name: s.name,
         schoolGrade: s.schoolGrade,
-        present: statusByStudent.get(sid) !== "absent", // default present
+        present: statusByStudent.get(String(s._id)) !== "absent", // default present
       });
     }
     students.sort((a, b) => a.name.localeCompare(b.name));
