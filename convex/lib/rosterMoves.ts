@@ -42,6 +42,11 @@ export function netCountDelta(ops: RosterOp[]): Map<string, number> {
 //     clause is what surfaces untyped/mixed groups (e.g. a group with no grade
 //     field that nonetheless holds grade-G students) so their members aren't
 //     stranded off every board.
+//   • …BUT a phantom group (no members AND no scheduled session) is never
+//     shown — the Week-view tap-to-create mints a `new_group` row before the
+//     user commits, and backing out leaves an abandoned row. Requiring a
+//     member or a session keeps the board consistent with the slot-driven
+//     Week grid.
 //   • EVERY member of a shown column is a movable chip — including off-grade
 //     members (shown with their real grade) and students who are also in other
 //     groups (they appear once per group, moved independently). Nothing is
@@ -109,6 +114,13 @@ export function buildGradeBoard(
     const accepted = acceptedGradesOf(g);
     const declaresGrade = accepted.includes(grade);
     if (!declaresGrade && !hasGradeMember) continue;
+    // Hide phantom groups: a row with NO members AND NO scheduled session is
+    // an abandoned "new_group" (the Week-view tap-to-create mints one before
+    // the user commits). It is never a useful drop target and only clutters
+    // the board. A real but currently-empty group keeps its session, so it
+    // still shows. Mirrors the Week grid, which is slot-driven.
+    const isReal = chips.length > 0 || g.firstSession != null;
+    if (!isReal) continue;
 
     chips.sort((a, b) => a.name.localeCompare(b.name));
     columns.push({

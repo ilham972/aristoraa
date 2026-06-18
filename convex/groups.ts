@@ -9,7 +9,7 @@
 // Conflict detection (mentorBusyAt / studentBusyAt) powers the red/amber
 // cells in the Edit-Group weekly grid. Conflicts never block — they warn.
 
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -1490,5 +1490,60 @@ export const revenueInsights = query({
         activeStudents: activeStudents.size,
       },
     };
+  },
+});
+
+// ── Phantom-group cleanup ───────────────────────────────────────────────────
+// The Week-view tap-to-create mints a `new_group` row before the user commits;
+// backing out leaves an abandoned row with no members and no slots. These are
+// invisible in the slot-driven Week grid but used to clutter the Group board.
+// `auditPhantomGroups` is read-only (run on prod to see the damage);
+// `deletePhantomGroups` removes them. Both treat a group as a phantom ONLY when
+// it has autoName=true AND zero members AND zero schedule slots — a deliberately
+// named group is never touched even if currently empty.
+
+async function isPhantomGroup(
+  ctx: { db: any },
+  g: Doc<"groups">,
+): Promise<boolean> {
+  if (!g.autoName) return false;
+  const member = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group", (q: any) => q.eq("groupId", g._id))
+    .first();
+  if (member) return false;
+  const slot = await ctx.db
+    .query("scheduleSlots")
+    .withIndex("by_group", (q: any) => q.eq("groupId", g._id))
+    .first();
+  return slot === null;
+}
+
+export const auditPhantomGroups = query({
+  args: {},
+  handler: async (ctx) => {
+    const groups = await ctx.db.query("groups").collect();
+    const phantoms: Array<{ _id: Id<"groups">; name: string; grade?: number }> = [];
+    for (const g of groups) {
+      if (await isPhantomGroup(ctx, g)) {
+        phantoms.push({ _id: g._id, name: g.name, grade: g.grade });
+      }
+    }
+    return { total: groups.length, phantomCount: phantoms.length, phantoms };
+  },
+});
+
+export const deletePhantomGroups = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const groups = await ctx.db.query("groups").collect();
+    const deleted: Array<{ _id: Id<"groups">; name: string }> = [];
+    for (const g of groups) {
+      if (await isPhantomGroup(ctx, g)) {
+        await ctx.db.delete(g._id);
+        deleted.push({ _id: g._id, name: g.name });
+      }
+    }
+    return { deletedCount: deleted.length, deleted };
   },
 });

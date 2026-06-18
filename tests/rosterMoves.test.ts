@@ -124,7 +124,10 @@ describe('buildGradeBoard', () => {
     { _id: 'rra', name: 'risla_reeha_asma', grade: 10, additionalGrades: [11] },
     { _id: 'asma2', name: 'asma_other', grade: 10 },
     { _id: 'ibanjalin', name: 'ibanjalin' }, // NO grade declared, mixed members
-    { _id: 'empty10', name: 'new_group', grade: 10 }, // empty grade-10 target
+    // empty but SCHEDULED grade-10 group → a real drop target
+    { _id: 'empty10', name: 'new_group', grade: 10, firstSession: { dayOfWeek: 1, startTime: '16:00' } },
+    // phantom: grade declared but NO members and NO session → abandoned, must hide
+    { _id: 'phantom10', name: 'new_group', grade: 10 },
     { _id: 'g11', name: 'reeha_solo', grade: 11 }, // not a grade-10 column
   ];
   const members: BoardMemberRow[] = [
@@ -164,9 +167,16 @@ describe('buildGradeBoard', () => {
     expect(ib!.members.map((m) => m.studentId).sort()).toEqual(['janusan', 'kavi']);
   });
 
-  it('includes empty groups that declare the grade (drop targets)', () => {
+  it('includes empty groups that declare the grade AND are scheduled (drop targets)', () => {
     expect(col('empty10')).toBeDefined();
     expect(col('empty10')!.members).toEqual([]);
+  });
+
+  it('hides phantom groups with no members and no scheduled session', () => {
+    // The Week-view "tap empty cell" flow mints a `new_group` row before the
+    // user commits; backing out leaves an abandoned, session-less, memberless
+    // row. It must NOT clutter the board even though it declares grade 10.
+    expect(col('phantom10')).toBeUndefined();
   });
 
   it('excludes groups that neither declare grade 10 nor hold a grade-10 member', () => {

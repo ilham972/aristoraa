@@ -65,6 +65,38 @@ because Z.
   drop into a group the student is already in. Pure column/cap/diff logic in
   `convex/lib/rosterMoves.ts` (`buildGradeBoard` + cap math, unit-tested). Only
   MEMBERSHIP moves (not sessions/fees — a fee is group-specific).
+- **Hide phantom groups** (2026-06-19): a column shows only if the group has ≥1
+  member OR ≥1 scheduled session. The Week-view tap-to-create mints a
+  `new_group` row BEFORE the user commits; backing out leaves an abandoned row
+  (no members, no slots). These are invisible in the slot-driven Week grid but
+  used to flood the Group board (84 dead rows found on prod; 5 had a grade set
+  → visible columns). Display fix in `buildGradeBoard`; one-off cleanup via
+  `groups.deletePhantomGroups` (internalMutation, autoName+0 members+0 slots
+  only — never deletes a deliberately named group). `groups.auditPhantomGroups`
+  (query) reports the count read-only. Re-runnable anytime the backlog grows.
+
+## Planning mode — draft timetable "branch" (2026-06-18)
+- **A saved draft branch, edited in the SAME Week view** — toggle "Planning"
+  and the grid reads/writes a private copy; live keeps running untouched.
+  Founder wanted to redesign the timetable safely and reversibly.
+- **Manual Pull (live→draft) + Merge (draft→live), NOT auto-sync** — the draft
+  never absorbs live changes until the user Pulls; live never changes until
+  Merge. This sidesteps automatic conflict resolution (founder's framing).
+- **Separate draft tables, NOT a `branch` flag on live tables** — chose
+  isolation (zero risk to live app/analytics/engine/messaging) over fewer
+  tables. `draftGroups/draftSlots/draftGroupMembers/draftSlotTeachers` mirror
+  the 4 STRUCTURAL tables + `sourceId`; `draftMeta` holds the baseline. History
+  (attendance/scores/sessions) is NOT copied — it hangs off live ids.
+- **Merge patches sources in place (identity preserved)**, NOT swap-and-replace
+  — so history survives. Pure decision logic in `convex/lib/draftReconcile.ts`
+  (fingerprint + baseline; merge never deletes live-only-new rows, pull never
+  overwrites draft edits). Engine `convex/timetableDraft.ts`; branch-aware
+  editing `convex/timetableDraftEdit.ts` reuses live pure libs (toggleBand,
+  validateCaps, buildGradeBoard) so the draft behaves identically.
+- **Pull + Merge sit behind confirm dialogs** (founder: sensitive buttons).
+- One draft at a time (no named scenarios — YAGNI). Standalone "Group" organize
+  board tab is NOT yet branch-aware (still edits live); membership in the draft
+  is done via the branch-aware EditGroupDialog. See ideas-backlog.
 
 ## Paper classes / Library (redesigned student-centric 2026-06-18)
 - **Separate tables, NOT a scheduleSlots flag** — paper classes never drag in
