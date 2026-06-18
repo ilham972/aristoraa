@@ -97,5 +97,9 @@ leftover `src/components/groups/attendance-tab.tsx` (536 lines) is dead
 ## Where things live
 - Time/band helpers: `src/lib/groups/time-grid.ts` (DAYS, fmtTime12, fmtLKR;
   exports WEEKDAY_BANDS/bandsForDay/jsDowToDayNum are unused leftovers).
-- Colors: `src/lib/groups/color.ts`. Session time helper: `session-time.ts`.
+- Colors: `src/lib/groups/color.ts`. Each group has an optional stored
+  `colorIndex` (tap the dialog dot to cycle); unset ⇒ hash of a stable
+  `colorKey` (live id; a draft passes its `sourceId`) so live/draft match.
+  Use `resolveGroupColor(colorIndex, colorKey)`; payloads carry both fields.
+  Session time helper: `session-time.ts`.
 - Attendance backend: `convex/attendance.ts` (marked per session).
