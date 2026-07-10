@@ -30,7 +30,9 @@ mark grid). Backend calls, in lifecycle order:
    finalizeSheetScoring` — a mark per question is good / again / skipped
    (FSRS-style, no partial credit); finalize converts marks into memory-state
    updates + points + repeatCount in one transaction.
-Doubts can be flagged per question (`api.doubts.*`). Sheet sections: Main
+A tappable track-progress strip (`track-progress-strip.tsx`, 2026-07-10)
+sits above the detail pane — current unit x/y + on-track badge → links to
+`/students/[id]/progress`. Doubts can be flagged per question (`api.doubts.*`). Sheet sections: Main
 (driven by TRACK since exam-mode change, not teachingPath), plus Revision and
 Mistakes sections per the path-driven redesign.
 Typed overrides (2026-06-12): pencil on a sheet-view question row opens

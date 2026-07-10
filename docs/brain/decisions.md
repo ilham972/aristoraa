@@ -140,6 +140,20 @@ because Z.
 - **Availability = stored outside windows + derived personal slots** — combined
   for the highlight overlay; app knows personal-class times from group slots.
 
+## Track Progress view (2026-07-10)
+- **Two-tier done rule** — unit is TAUGHT when every concept attempted once,
+  MASTERED when mean mastery also ≥ 0.75. Chose over taught-only (misleads)
+  and mastered-only (board feels stuck while SR does its work).
+- **Compute fresh on open, NO saved progress table** — derives live from
+  track + memoryState (same rows the planner reads) so the view can never
+  drift; Convex reactivity updates it while scoring. A `unitCompletions`
+  event log for parent messaging is DEFERRED, not rejected.
+- **Metro-line visual** (stations/railway) over card checklist — matches the
+  transit brand; per-student page + session-strip placement. Distinct from
+  the REJECTED per-module bars on /students cards (view, not card clutter).
+- **Predictions mirror the planner** — sessions-left math reuses the exact
+  autoMainConcepts constants; never invent a separate pace formula.
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.

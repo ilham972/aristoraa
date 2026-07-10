@@ -50,6 +50,14 @@ cumulative-exam holdouts.
   seeding step may still need it), `config.ts` has no api callers by design
   (direct-import constants), `mastery.ts`/`memory.ts` likewise direct-import.
 
+## Track Progress + 2026-07-10 safety fixes
+- `trackProgress.ts` — live per-student unit/track progress query (metro-line
+  view + session strip); pure math in `convex/lib/trackProgressCore.ts`
+  MUST keep mirroring the planner's pacing constants.
+- Planner fixes: track units now unioned into pool scope (cross-grade tracks
+  no longer silently skipped); completion stats credit attempts within 48h of
+  sheet date; getSavedSheet is duplicate-row safe (collect, not unique).
+
 ## Rules for changing the engine
 - Read BOTH plan files first; behaviour must match algorithm_plan.md blocks.
 - Constants live ONLY in config.ts. The scorer stays module-blind (slot

@@ -32,6 +32,17 @@ Backend: `convex/timeline.ts`.
   `src/components/learning/student-mastery.tsx` (concept mastery) +
   `student-exam-outlook.tsx` (exam-readiness); engine data via
   `learningEngine/profile.ts` + `studentDashboard.ts`.
+- `/students/[id]/progress` — Track Progress metro line (2026-07-10): the
+  student's track as a vertical railway — units = stations (★ mastered /
+  ✓ taught / pulsing NOW / ○ upcoming), two-tier done rule (taught = all
+  concepts attempted; mastered = + mean mastery ≥ 0.75), prediction banner
+  (projected finish vs target exam, sessions/week from real schedule), ⚠
+  badges for out-of-scope + uncropped-frontier concepts. Computed FRESH per
+  open (no saved table — founder decision) by
+  `learningEngine/trackProgress.ts` over pure math in
+  `convex/lib/trackProgressCore.ts` (unit-tested; mirrors planner pacing).
+  Compact strip of the same data sits in the session Sheets tab
+  (`track-progress-strip.tsx`); links from student cards + Mastery page.
 
 ## Adjacent small modules
 - **Doubts** (`convex/doubts.ts`) — flagged per question during scoring;
