@@ -154,6 +154,18 @@ because Z.
 - **Predictions mirror the planner** — sessions-left math reuses the exact
   autoMainConcepts constants; never invent a separate pace formula.
 
+## Lesson Builder (2026-07-11)
+- **Join = shared Main, personal rest** — joined students get the teacher's
+  ticked Main block; warm-up/revision/exam-prep stay per-student. Fully
+  identical sheets REJECTED (kills personalization + feeds wrong memory).
+- **Picker scope = whole unit, grouped by concept**, crop thumbnails, algo
+  picks pre-ticked ("engine-picked with manual override" made real).
+- **Named lesson sets per unit** (`unitLessonSets`, upsert by unit+name) —
+  the teacher's reusable worksheet library; Main-block only BY DESIGN.
+- **Teacher ticks beat the cooldown and prereq gaps** — explicit choice wins;
+  alerts still surface gaps. Serves the founder's layer-by-layer teaching
+  (layer 1 = light intro sweep, deeper layers via revision + harder sets).
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.

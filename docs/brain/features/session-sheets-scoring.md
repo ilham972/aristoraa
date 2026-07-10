@@ -19,9 +19,17 @@ its slots; `?origin=` lets Reset jump back to the entry session.
 ## Sheets tab flow (the core teaching loop)
 `score-sheet-tab.tsx` (list + per-student sheet actions: generate, view,
 print, score) → `sheet-scoring-grid.tsx` (section tabs + inline sheet view +
-mark grid). Backend calls, in lifecycle order:
+mark grid). Generate opens the **Lesson Builder** (`sheet-planner-panel.tsx`,
+full-screen, 2026-07-11): roster chips JOIN students onto one shared Main
+block (warm-up/revision/exam-prep stay personal — never make sheets fully
+identical); whole-unit question picker grouped by concept with crop
+thumbnails, algorithm picks pre-ticked, teacher tick/untick; named per-unit
+lesson presets (`unitLessonSets` via `learningEngine/lessonSets.ts` —
+listUnitQuestions catalog + CRUD). Backend calls, in lifecycle order:
 1. `api.learningEngine.planner.saveSheetForStudent` — generate (planner picks
    LEAF questions only; stems glued at render — stem/leaf model, domain.md).
+   `mainQuestionIdsOverride` = teacher ticks: claim Main first, bypass the
+   7-day cooldown, survive prereq gaps (D.4 alerts still fire).
 2. `api.learningEngine.sheets.listSheetsForSlotDate / getSheetWithCrops` — list/view.
 3. `api.learningEngine.pdf.renderSheetPDF` + `sheets.zipSheetPDFs` — pure-JS
    pdf-lib rendering of cropped question images (sharp was abandoned).
