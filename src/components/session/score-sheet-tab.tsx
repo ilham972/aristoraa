@@ -43,6 +43,7 @@ import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { SheetScoringGrid } from '@/components/session/sheet-scoring-grid';
 import { SheetPlannerPanel } from '@/components/session/sheet-planner-panel';
+import { TrackProgressStrip } from '@/components/session/track-progress-strip';
 import {
   PILL_SORT_RANK,
   PILL_STYLES,
@@ -131,6 +132,16 @@ export function ScoreSheetTab({
       (slotRows ?? []).find((r) => r.studentId === selectedStudentId) ?? null
     );
   }, [slotRows, selectedStudentId]);
+
+  // Full student doc for the selected pill — feeds the track-progress strip.
+  const selectedStudent = useMemo(() => {
+    if (!selectedStudentId) return null;
+    return (
+      (allStudents as StudentLite[] | undefined)?.find(
+        (s) => s._id === selectedStudentId,
+      ) ?? null
+    );
+  }, [allStudents, selectedStudentId]);
 
   // ── Auto-mark present (guarded) ───────────────────────────────────────
   // Called by the grid on the first mark. Marks the student present only if
@@ -360,16 +371,21 @@ export function ScoreSheetTab({
             Select a student above to start scoring.
           </div>
         ) : (
-          <DetailPane
-            row={selectedRow}
-            rowBusy={rowBusy}
-            slotId={slotId}
-            onFirstMark={onFirstMark}
-            onGenerate={() => openPlanner(selectedRow)}
-            onRender={() => doRender(selectedRow, false)}
-            onForceRender={() => doRender(selectedRow, true)}
-            onMarkPrinted={() => doMarkPrinted(selectedRow)}
-          />
+          <>
+            {selectedStudent && !selectedRow.isOffDay && (
+              <TrackProgressStrip student={selectedStudent} />
+            )}
+            <DetailPane
+              row={selectedRow}
+              rowBusy={rowBusy}
+              slotId={slotId}
+              onFirstMark={onFirstMark}
+              onGenerate={() => openPlanner(selectedRow)}
+              onRender={() => doRender(selectedRow, false)}
+              onForceRender={() => doRender(selectedRow, true)}
+              onMarkPrinted={() => doMarkPrinted(selectedRow)}
+            />
+          </>
         )}
       </div>
 

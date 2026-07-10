@@ -6,7 +6,7 @@ import { useMutation } from 'convex/react';
 // storage while the live subscription refreshes (perf phase 3).
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import {
-  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search, CalendarClock,
+  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search, CalendarClock, Route,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -428,6 +428,11 @@ export default function StudentsPage() {
                       <Link href={`/students/${student._id}/mastery`}>
                         <Button variant="ghost" size="icon-xs" title="Mastery">
                           <Brain className="w-3.5 h-3.5" />
+                        </Button>
+                      </Link>
+                      <Link href={`/students/${student._id}/progress`}>
+                        <Button variant="ghost" size="icon-xs" title="Track progress">
+                          <Route className="w-3.5 h-3.5" />
                         </Button>
                       </Link>
                       <Button

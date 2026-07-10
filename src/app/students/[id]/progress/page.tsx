@@ -1,18 +1,21 @@
 'use client';
 
+// /students/[id]/progress — the Track Progress page (metro line).
+// Spec: docs/superpowers/specs/2026-07-10-track-progress-view-design.md
+// Mirrors the mastery page shell; cross-links between the two.
+
 import { use } from 'react';
 import Link from 'next/link';
 import { useQuery } from 'convex/react';
 import { Brain, ChevronLeft, Route } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
-import { StudentMastery } from '@/components/learning/student-mastery';
-import { StudentExamOutlook } from '@/components/learning/student-exam-outlook';
+import { TrackProgress } from '@/components/students/track-progress';
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-export default function StudentMasteryPage({ params }: PageProps) {
+export default function StudentProgressPage({ params }: PageProps) {
   const { id } = use(params);
   const studentId = id as Id<'students'>;
   const student = useQuery(api.students.get, { id: studentId });
@@ -28,14 +31,14 @@ export default function StudentMasteryPage({ params }: PageProps) {
       </Link>
 
       <div className="flex items-center gap-2 mb-4">
-        <Brain className="w-5 h-5 text-primary" />
-        <h1 className="text-lg font-bold text-foreground">Mastery</h1>
+        <Route className="w-5 h-5 text-primary" />
+        <h1 className="text-lg font-bold text-foreground">Track progress</h1>
         <Link
-          href={`/students/${id}/progress`}
+          href={`/students/${id}/mastery`}
           className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted text-muted-foreground hover:text-foreground text-[11px] font-semibold"
         >
-          <Route className="w-3 h-3" />
-          Track progress
+          <Brain className="w-3 h-3" />
+          Mastery
         </Link>
       </div>
 
@@ -59,26 +62,12 @@ export default function StudentMasteryPage({ params }: PageProps) {
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               Student
             </div>
-            <div className="text-sm font-bold text-foreground">
-              {student.name}
-            </div>
+            <div className="text-sm font-bold text-foreground">{student.name}</div>
             <div className="text-[11px] text-muted-foreground">
               Grade {student.schoolGrade}
-              {student.assignedGrades &&
-                student.assignedGrades.length > 1 && (
-                  <>
-                    {' · assigned '}
-                    {student.assignedGrades
-                      .slice()
-                      .sort((a, b) => a - b)
-                      .map((g) => `G${g}`)
-                      .join(', ')}
-                  </>
-                )}
             </div>
           </div>
-          <StudentExamOutlook studentId={studentId} />
-          <StudentMastery studentId={studentId} />
+          <TrackProgress student={student} />
         </>
       )}
     </div>
