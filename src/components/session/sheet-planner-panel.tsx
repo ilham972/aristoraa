@@ -1,23 +1,20 @@
 'use client';
 
-// Lesson Builder — the full-screen generate dialog (2026-07-11, replaces the
-// small stepper-only control panel from 2026-06-12).
+// Lesson Builder — the full-screen generate dialog (2026-07-11).
+// v2 layout (founder feedback, same day): SECTION TABS at the top (Main /
+// Warm-up / Revision / Exam prep — each tab is a future improvement surface),
+// a +/- stepper on Main too (+ ticks the next best unticked question, easy
+// first; − unticks the last — instant, manual ticks preserved), CONCEPT
+// FILTER CHIPS under the unit name (no more mile-long scroll), and
+// full-width readable crops (interactive-PDF feel; tap a crop to zoom).
 //
-// What it adds (founder design, approved in-chat):
-//   • JOIN students: session roster chips — joined students all receive the
-//     SAME ticked Main block (the shared lesson) while Warm-up / Revision /
-//     Exam-prep stay PERSONAL per student (the moat survives).
-//   • QUESTION PICKER: every question of the taught unit, grouped by concept
-//     in teaching order, each row = checkbox + crop thumbnail. The
-//     algorithm's Main picks arrive pre-ticked; the teacher overrides freely
-//     (engine-picked with manual override — a locked founder decision).
-//   • LESSON SETS: save the tick-set as a named preset per unit
-//     ("Fractions — Layer 1") and reuse it for any student/group later.
-//
-// Generation = one saveSheetForStudent call per joined student with the same
-// mainQuestionIdsOverride (ticks, in display order) — same bulk pattern the
-// Sheets tab already uses. An untouched dialog still behaves as before:
-// no ticks changed → the override equals the algorithm's own picks.
+// Core rules (unchanged from v1, founder-locked):
+//   • JOIN students → same ticked Main block; warm-up/revision/exam-prep
+//     stay PERSONAL per student.
+//   • Algorithm's Main picks arrive pre-ticked; teacher overrides freely.
+//   • Named lesson sets per unit ("Fractions — Layer 1") as one-tap presets.
+//   • Generation = one saveSheetForStudent per joined student with
+//     mainQuestionIdsOverride = ticks in display order.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -39,12 +36,13 @@ import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
-type SectionKey = 'warmup' | 'revision' | 'examPrep';
+type PersonalKey = 'warmup' | 'revision' | 'examPrep';
+type TabKey = 'main' | PersonalKey;
 
-const PERSONAL_SECTIONS: Array<{ key: SectionKey; label: string; hint: string }> = [
-  { key: 'warmup', label: 'Warm-up', hint: 'their recent mistakes' },
-  { key: 'revision', label: 'Revision', hint: 'their forgetting curve' },
-  { key: 'examPrep', label: 'Exam prep', hint: 'their mastered concepts' },
+const PERSONAL_TABS: Array<{ key: PersonalKey; label: string; hint: string }> = [
+  { key: 'warmup', label: 'Warm-up', hint: 'each student’s recent mistakes, easiest first' },
+  { key: 'revision', label: 'Revision', hint: 'each student’s forgetting curve — due concepts across all units' },
+  { key: 'examPrep', label: 'Exam prep', hint: 'past-paper questions on each student’s mastered concepts' },
 ];
 
 export type PlannerRosterEntry = {
@@ -78,6 +76,8 @@ export function SheetPlannerPanel({
   onClose: () => void;
   onGenerated: () => void;
 }) {
+  const [tab, setTab] = useState<TabKey>('main');
+
   // ── Who's in this lesson ────────────────────────────────────────────
   const [joined, setJoined] = useState<Set<string>>(
     () => new Set([studentId as unknown as string]),
@@ -95,27 +95,28 @@ export function SheetPlannerPanel({
     });
   };
 
-  // ── Section targets for the PERSONAL sections (unchanged behavior) ──
-  const [targets, setTargets] = useState<Partial<Record<SectionKey, number>>>({});
+  // ── Personal-section targets (steppers on their tabs) ───────────────
+  const [targets, setTargets] = useState<Partial<Record<PersonalKey, number>>>({});
   const [busy, setBusy] = useState(false);
 
   // ── The taught unit + tick state ────────────────────────────────────
-  // null until the plan preview reveals the primary student's frontier.
   const [unitId, setUnitId] = useState<string | null>(null);
+  const [conceptFilter, setConceptFilter] = useState<string | 'all'>('all');
   const [ticked, setTicked] = useState<Set<string>>(() => new Set());
   const seededForUnit = useRef<string | null>(null);
 
-  // Live preview for the PRIMARY student (read-only planSheet — never writes).
-  // Includes the override so the personal-section preview plans around it.
   const tickedArr = useMemo(() => Array.from(ticked), [ticked]);
   const cleanedTargets = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const s of PERSONAL_SECTIONS) {
-      const v = targets[s.key];
-      if (typeof v === 'number') out[s.key] = v;
+    for (const t of PERSONAL_TABS) {
+      const v = targets[t.key];
+      if (typeof v === 'number') out[t.key] = v;
     }
     return Object.keys(out).length > 0 ? out : undefined;
   }, [targets]);
+
+  // Live read-only preview for the PRIMARY student. Includes the override so
+  // the personal sections plan AROUND the ticked questions.
   const plan = useQuery(api.learningEngine.planner.planSheet, {
     studentId,
     dateStr: date,
@@ -141,7 +142,6 @@ export function SheetPlannerPanel({
     if (unitId === null && frontierUnitId) setUnitId(frontierUnitId);
   }, [unitId, frontierUnitId]);
 
-  // Unit question catalog + saved lessons.
   const catalog = useQuery(
     api.learningEngine.lessonSets.listUnitQuestions,
     unitId ? { unitId } : 'skip',
@@ -154,31 +154,25 @@ export function SheetPlannerPanel({
   const deleteLesson = useMutation(api.learningEngine.lessonSets.deleteLessonSet);
   const saveSheet = useMutation(api.learningEngine.planner.saveSheetForStudent);
 
-  // Seed ticks ONCE per unit: frontier unit → the algorithm's own Main picks;
-  // any other unit the teacher navigates to → start empty.
+  // Seed ticks ONCE per unit: frontier unit → the algorithm's own Main
+  // picks; another unit the teacher navigates to → start empty.
   useEffect(() => {
     if (!unitId || seededForUnit.current === unitId) return;
     if (unitId === frontierUnitId) {
       if (!plan) return; // wait for picks
       seededForUnit.current = unitId;
       setTicked(
-        new Set(
-          (plan.main ?? []).map(
-            (p) => p.question._id as unknown as string,
-          ),
-        ),
+        new Set((plan.main ?? []).map((p) => p.question._id as unknown as string)),
       );
     } else {
       seededForUnit.current = unitId;
       setTicked(new Set());
     }
+    setConceptFilter('all');
   }, [unitId, frontierUnitId, plan]);
 
   const algoPicks = useMemo(
-    () =>
-      new Set(
-        (plan?.main ?? []).map((p) => p.question._id as unknown as string),
-      ),
+    () => new Set((plan?.main ?? []).map((p) => p.question._id as unknown as string)),
     [plan],
   );
 
@@ -191,30 +185,54 @@ export function SheetPlannerPanel({
     });
   };
 
-  // Ticks in DISPLAY order (concept order → difficulty) = print order.
-  const orderedTicks = useMemo(() => {
-    if (!catalog) return tickedArr;
+  // Catalog question ids in DISPLAY order (concept order → easy-first),
+  // optionally restricted to the active concept filter.
+  const displayOrder = useMemo(() => {
+    if (!catalog) return [] as string[];
     const out: string[] = [];
     for (const c of catalog.concepts) {
-      for (const q of c.questions) {
-        const k = q.questionId as unknown as string;
-        if (ticked.has(k)) out.push(k);
-      }
+      for (const q of c.questions) out.push(q.questionId as unknown as string);
     }
-    // Keep any ticked ids not visible in the catalog (e.g. preset from an
-    // edited bank) at the end rather than silently dropping them.
-    for (const k of tickedArr) if (!out.includes(k)) out.push(k);
     return out;
-  }, [catalog, ticked, tickedArr]);
+  }, [catalog]);
+
+  // Ticks in display order = print order (unknown ids kept at the end).
+  const orderedTicks = useMemo(() => {
+    const inCatalog = displayOrder.filter((k) => ticked.has(k));
+    for (const k of tickedArr) if (!inCatalog.includes(k)) inCatalog.push(k);
+    return inCatalog;
+  }, [displayOrder, ticked, tickedArr]);
+
+  // Main stepper: + ticks the next unticked question (preferring the concept
+  // being viewed, then the rest, easy-first); − unticks the last ticked.
+  // Instant + never clobbers manual ticks.
+  const bumpMain = (delta: 1 | -1) => {
+    if (!catalog) return;
+    if (delta === -1) {
+      const last = [...displayOrder].reverse().find((k) => ticked.has(k));
+      if (last) toggleTick(last);
+      return;
+    }
+    const preferred =
+      conceptFilter === 'all'
+        ? displayOrder
+        : [
+            ...(catalog.concepts
+              .find((c) => (c.conceptId as unknown as string) === conceptFilter)
+              ?.questions.map((q) => q.questionId as unknown as string) ?? []),
+            ...displayOrder,
+          ];
+    const next = preferred.find((k) => !ticked.has(k));
+    if (next) toggleTick(next);
+    else toast.info('Every question of this unit is already ticked');
+  };
 
   const tickedTimeMin = useMemo(() => {
     if (!catalog) return null;
     let t = 0;
     for (const c of catalog.concepts) {
       for (const q of c.questions) {
-        if (ticked.has(q.questionId as unknown as string)) {
-          t += q.expectedTimeMin ?? 4;
-        }
+        if (ticked.has(q.questionId as unknown as string)) t += q.expectedTimeMin ?? 4;
       }
     }
     return t;
@@ -224,12 +242,18 @@ export function SheetPlannerPanel({
   const isOffDay = plan?.status === 'off-day';
   const loading = plan === undefined;
 
+  const personalCount = (k: PersonalKey): number =>
+    targets[k] ??
+    (k === 'warmup'
+      ? plan?.warmup?.length ?? 0
+      : k === 'revision'
+        ? plan?.revision?.length ?? 0
+        : plan?.examPrep?.length ?? 0);
+
   // ── Save lesson set ─────────────────────────────────────────────────
   const onSaveLesson = async () => {
     if (!unitId || orderedTicks.length === 0) return;
-    const name = window.prompt(
-      'Lesson name (e.g. "Layer 1 — intro", "Layer 2 — hard"):',
-    );
+    const name = window.prompt('Lesson name (e.g. "Layer 1 — intro", "Layer 2 — hard"):');
     if (!name || name.trim().length === 0) return;
     try {
       const res = await saveLesson({
@@ -267,9 +291,7 @@ export function SheetPlannerPanel({
             : {}),
         });
         if (res.status === 'ok') saved += 1;
-        else if (res.status === 'off-day') {
-          errs.push(`${r.studentName}: off day`);
-        }
+        else if (res.status === 'off-day') errs.push(`${r.studentName}: off day`);
       } catch (e) {
         errs.push(`${r.studentName}: ${describeError(e)}`);
       }
@@ -289,11 +311,23 @@ export function SheetPlannerPanel({
     (r) => joined.has(r.studentId as unknown as string) && !r.locked,
   ).length;
 
+  const activeConcept =
+    catalog && conceptFilter !== 'all'
+      ? catalog.concepts.find(
+          (c) => (c.conceptId as unknown as string) === conceptFilter,
+        ) ?? null
+      : null;
+  const visibleConcepts = catalog
+    ? activeConcept
+      ? [activeConcept]
+      : catalog.concepts
+    : [];
+
   // ── Render ──────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border">
+      <div className="shrink-0 flex items-center justify-between px-4 pt-3 pb-2 border-b border-border">
         <div className="min-w-0">
           <div className="text-sm font-bold text-foreground truncate">
             Build lesson · {date}
@@ -311,54 +345,74 @@ export function SheetPlannerPanel({
         </button>
       </div>
 
+      {/* Students row (global) */}
+      <div className="shrink-0 flex gap-1.5 px-4 py-2 overflow-x-auto border-b border-border/60">
+        {roster.map((r) => {
+          const k = r.studentId as unknown as string;
+          const on = joined.has(k);
+          return (
+            <button
+              key={k}
+              disabled={r.locked}
+              onClick={() => toggleJoin(r.studentId)}
+              className={cn(
+                'shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors',
+                on
+                  ? 'bg-primary/15 border-primary/50 text-primary'
+                  : 'bg-muted/40 border-border text-muted-foreground',
+                r.locked && 'opacity-40',
+              )}
+              title={r.locked ? 'Sheet already printed — delete it first' : undefined}
+            >
+              {on && <Check className="w-3 h-3" />}
+              {r.studentName.split(' ')[0]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Section tabs */}
+      <div className="shrink-0 flex px-2 border-b border-border">
+        {(
+          [
+            { key: 'main' as TabKey, label: 'Main', count: orderedTicks.length },
+            ...PERSONAL_TABS.map((t) => ({
+              key: t.key as TabKey,
+              label: t.label,
+              count: personalCount(t.key),
+            })),
+          ]
+        ).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={cn(
+              'flex-1 px-1 py-2.5 text-[11px] font-semibold border-b-2 transition-colors',
+              tab === t.key
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground',
+            )}
+          >
+            {t.label}
+            <span className="ml-1 tabular-nums opacity-80">{t.count}</span>
+          </button>
+        ))}
+      </div>
+
       {isOffDay ? (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
           {studentName} rests today — no sheet will be written.
         </div>
-      ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4 pb-6">
-          {/* ── Students in this lesson ── */}
-          <section>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
-              Students in this lesson — same Main block, personal revision
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {roster.map((r) => {
-                const k = r.studentId as unknown as string;
-                const on = joined.has(k);
-                return (
-                  <button
-                    key={k}
-                    disabled={r.locked}
-                    onClick={() => toggleJoin(r.studentId)}
-                    className={cn(
-                      'inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors',
-                      on
-                        ? 'bg-primary/15 border-primary/50 text-primary'
-                        : 'bg-muted/40 border-border text-muted-foreground',
-                      r.locked && 'opacity-40',
-                    )}
-                    title={r.locked ? 'Sheet already printed — delete it first' : undefined}
-                  >
-                    {on && <Check className="w-3 h-3" />}
-                    {r.studentName.split(' ')[0]}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* ── Unit selector ── */}
-          {track && track.orderedUnitIds.length > 0 && (
-            <section>
-              <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
-                Teaching unit
-              </div>
-              <div className="relative">
+      ) : tab === 'main' ? (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3 pb-6">
+          {/* Unit selector + Main stepper on one compact row */}
+          <div className="flex items-center gap-2">
+            {track && track.orderedUnitIds.length > 0 ? (
+              <div className="relative flex-1 min-w-0">
                 <select
                   value={unitId ?? ''}
                   onChange={(e) => setUnitId(e.target.value || null)}
-                  className="w-full appearance-none rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-foreground pr-9"
+                  className="w-full appearance-none rounded-xl border border-border bg-card px-3 py-2 text-[12px] text-foreground pr-8"
                 >
                   {unitId && !track.orderedUnitIds.includes(unitId) && (
                     <option value={unitId}>{unitName}</option>
@@ -370,253 +424,280 @@ export function SheetPlannerPanel({
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              </div>
-            </section>
-          )}
-
-          {/* ── Saved lessons ── */}
-          {unitId && (
-            <section>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                  Saved lessons for this unit
-                </div>
-                <button
-                  onClick={onSaveLesson}
-                  disabled={orderedTicks.length === 0}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary disabled:opacity-40"
-                >
-                  <BookmarkPlus className="w-3.5 h-3.5" />
-                  Save as lesson
-                </button>
-              </div>
-              {lessonSets && lessonSets.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {lessonSets.map((ls) => (
-                    <span
-                      key={ls._id as unknown as string}
-                      className="inline-flex items-center rounded-xl border border-border bg-muted/40 overflow-hidden"
-                    >
-                      <button
-                        onClick={() =>
-                          setTicked(
-                            new Set(
-                              ls.questionIds.map(
-                                (q) => q as unknown as string,
-                              ),
-                            ),
-                          )
-                        }
-                        className="px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/70"
-                      >
-                        {ls.name}
-                        <span className="ml-1 text-muted-foreground">
-                          ({ls.questionIds.length})
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Delete lesson "${ls.name}"?`)) {
-                            deleteLesson({ id: ls._id }).catch((e) =>
-                              toast.error(describeError(e)),
-                            );
-                          }
-                        }}
-                        className="px-1.5 py-1.5 text-muted-foreground hover:text-red-400"
-                        aria-label={`Delete ${ls.name}`}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[11px] text-muted-foreground italic">
-                  None yet — tick questions below, then “Save as lesson”.
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* ── Question picker ── */}
-          <section>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                Main block — tick the questions to teach
-              </div>
-              <div className="text-[11px] text-muted-foreground">
-                <span className="font-bold text-foreground">{orderedTicks.length}</span> ticked
-                {tickedTimeMin !== null && ` · ~${tickedTimeMin} min`}
-              </div>
-            </div>
-            {!unitId || catalog === undefined ? (
-              <div className="space-y-2 animate-pulse">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 bg-muted rounded-xl" />
-                ))}
-              </div>
-            ) : catalog === null ? (
-              <div className="text-[11px] text-muted-foreground">Not signed in.</div>
-            ) : catalog.concepts.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border/60 p-4 text-center text-[11px] text-muted-foreground">
-                No concepts found for this unit.
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               </div>
             ) : (
-              <div className="space-y-3">
-                {catalog.concepts.map((c) => (
-                  <div key={c.conceptId as unknown as string}>
-                    <div className="text-[11px] font-semibold text-foreground/90 mb-1">
+              <div className="flex-1 min-w-0 text-[12px] font-semibold text-foreground truncate">
+                {unitName ?? '…'}
+              </div>
+            )}
+            <Stepper
+              value={orderedTicks.length}
+              onDec={() => bumpMain(-1)}
+              onInc={() => bumpMain(1)}
+              disabled={!catalog || busy}
+            />
+          </div>
+          <div className="text-[10px] text-muted-foreground -mt-2">
+            {tickedTimeMin !== null && `~${tickedTimeMin} min of work · `}+ ticks the
+            next question, − removes the last
+          </div>
+
+          {/* Saved lessons */}
+          {unitId && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {(lessonSets ?? []).map((ls) => (
+                <span
+                  key={ls._id as unknown as string}
+                  className="inline-flex items-center rounded-lg border border-border bg-muted/40 overflow-hidden"
+                >
+                  <button
+                    onClick={() =>
+                      setTicked(
+                        new Set(ls.questionIds.map((q) => q as unknown as string)),
+                      )
+                    }
+                    className="px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-muted/70"
+                  >
+                    {ls.name}
+                    <span className="ml-1 text-muted-foreground">
+                      ({ls.questionIds.length})
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete lesson "${ls.name}"?`)) {
+                        deleteLesson({ id: ls._id }).catch((e) =>
+                          toast.error(describeError(e)),
+                        );
+                      }
+                    }}
+                    className="px-1 py-1 text-muted-foreground hover:text-red-400"
+                    aria-label={`Delete ${ls.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                onClick={onSaveLesson}
+                disabled={orderedTicks.length === 0}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-primary disabled:opacity-40"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+                Save as lesson
+              </button>
+            </div>
+          )}
+
+          {/* Concept filter chips — small, space-efficient */}
+          {catalog && catalog.concepts.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              <ConceptChip
+                label="all"
+                count={`${orderedTicks.length}`}
+                active={conceptFilter === 'all'}
+                onClick={() => setConceptFilter('all')}
+              />
+              {catalog.concepts.map((c, i) => {
+                const k = c.conceptId as unknown as string;
+                const nTicked = c.questions.filter((q) =>
+                  ticked.has(q.questionId as unknown as string),
+                ).length;
+                return (
+                  <ConceptChip
+                    key={k}
+                    label={`${i + 1}. ${c.conceptName}`}
+                    count={`${nTicked}/${c.questions.length}`}
+                    active={conceptFilter === k}
+                    warn={c.questions.length === 0}
+                    onClick={() => setConceptFilter(conceptFilter === k ? 'all' : k)}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {/* Question list — full-width readable crops */}
+          {!unitId || catalog === undefined ? (
+            <div className="space-y-2 animate-pulse">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-24 bg-muted rounded-xl" />
+              ))}
+            </div>
+          ) : catalog === null ? (
+            <div className="text-[11px] text-muted-foreground">Not signed in.</div>
+          ) : catalog.concepts.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border/60 p-4 text-center text-[11px] text-muted-foreground">
+              No concepts found for this unit.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {visibleConcepts.map((c) => (
+                <div key={c.conceptId as unknown as string}>
+                  {conceptFilter === 'all' && (
+                    <div className="text-[11px] font-semibold text-foreground/90 mb-1.5">
                       {c.conceptName}
-                      <span className="ml-1.5 text-muted-foreground font-normal">
-                        {
-                          c.questions.filter((q) =>
-                            ticked.has(q.questionId as unknown as string),
-                          ).length
-                        }
-                        /{c.questions.length}
-                      </span>
                     </div>
-                    {c.questions.length === 0 ? (
-                      <div className="text-[10px] text-amber-500 mb-1">
-                        ⚠ no questions cropped for this concept
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        {c.questions.map((q) => {
-                          const k = q.questionId as unknown as string;
-                          const on = ticked.has(k);
-                          const byAlgo = algoPicks.has(k);
-                          return (
-                            <div
-                              key={k}
-                              className={cn(
-                                'flex items-center gap-2.5 rounded-xl border px-2.5 py-1.5',
-                                on
-                                  ? 'border-primary/50 bg-primary/5'
-                                  : 'border-border/60 bg-card',
-                              )}
+                  )}
+                  {c.questions.length === 0 ? (
+                    <div className="text-[10px] text-amber-500">
+                      ⚠ no questions cropped for this concept
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {c.questions.map((q) => {
+                        const k = q.questionId as unknown as string;
+                        const on = ticked.has(k);
+                        const byAlgo = algoPicks.has(k);
+                        return (
+                          <div
+                            key={k}
+                            className={cn(
+                              'rounded-xl border overflow-hidden',
+                              on
+                                ? 'border-primary/60 bg-primary/5'
+                                : 'border-border/60 bg-card',
+                            )}
+                          >
+                            {/* Row header: checkbox + label + tags */}
+                            <button
+                              onClick={() => toggleTick(k)}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-left"
                             >
-                              <button
-                                onClick={() => toggleTick(k)}
+                              <span
                                 className={cn(
                                   'w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center transition-colors',
                                   on
                                     ? 'bg-primary border-primary text-primary-foreground'
                                     : 'border-muted-foreground/40 bg-background',
                                 )}
-                                aria-label={on ? 'Untick' : 'Tick'}
                               >
                                 {on && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
-                              </button>
-                              <button
-                                onClick={() => toggleTick(k)}
-                                className="w-10 shrink-0 text-left"
-                              >
-                                <span className="block text-[11px] font-semibold text-foreground">
-                                  {q.label ?? '·'}
+                              </span>
+                              <span className="text-[11px] font-semibold text-foreground">
+                                {q.label ?? 'Q'}
+                              </span>
+                              {q.difficulty !== null && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  d{q.difficulty}
                                 </span>
-                                {q.difficulty !== null && (
-                                  <span className="block text-[9px] text-muted-foreground">
-                                    d{q.difficulty}
-                                  </span>
-                                )}
-                                {byAlgo && (
-                                  <span className="block text-[8px] font-bold uppercase text-primary">
-                                    algo
-                                  </span>
-                                )}
-                              </button>
-                              <div className="flex-1 min-w-0">
-                                {q.overrideImageUrl ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={q.overrideImageUrl}
-                                    alt="Question"
-                                    className="max-w-full h-auto rounded"
-                                    style={{ maxHeight: 72 }}
-                                  />
-                                ) : q.cropBox && q.pageImageUrl ? (
-                                  <CropThumbnail
-                                    imageUrl={q.pageImageUrl}
-                                    imageUrlSmall={q.pageImageUrlSmall}
-                                    cropBox={q.cropBox}
-                                    maxSide={72}
-                                  />
-                                ) : (
-                                  <span className="text-[10px] text-muted-foreground italic">
-                                    no crop image
-                                  </span>
-                                )}
-                              </div>
+                              )}
+                              {byAlgo && (
+                                <span className="px-1.5 py-0.5 rounded bg-primary/15 text-primary text-[8px] font-bold uppercase">
+                                  algo
+                                </span>
+                              )}
+                              <span className="ml-auto text-[10px] text-muted-foreground">
+                                {on ? 'ticked' : 'tap to tick'}
+                              </span>
+                            </button>
+                            {/* Full-width readable crop (tap image to zoom) */}
+                            <div className="px-3 pb-2.5">
+                              {q.overrideImageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={q.overrideImageUrl}
+                                  alt="Question"
+                                  className="w-full h-auto rounded bg-white"
+                                />
+                              ) : q.cropBox && q.pageImageUrl ? (
+                                <CropThumbnail
+                                  imageUrl={q.pageImageUrl}
+                                  imageUrlSmall={q.pageImageUrlSmall}
+                                  cropBox={q.cropBox}
+                                  maxSide={640}
+                                />
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground italic">
+                                  no crop image
+                                </span>
+                              )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* ── Personal sections ── */}
-          <section>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
-              Personal sections — adapt to each student individually
-            </div>
-            <div className="space-y-2">
-              {PERSONAL_SECTIONS.map((s) => {
-                const picks =
-                  s.key === 'warmup'
-                    ? plan?.warmup ?? []
-                    : s.key === 'revision'
-                      ? plan?.revision ?? []
-                      : plan?.examPrep ?? [];
-                const n = targets[s.key] ?? picks.length;
-                return (
-                  <div
-                    key={s.key}
-                    className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs font-semibold text-foreground">
-                          {s.label}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {s.hint}
-                          {loading && ' · loading…'}
-                        </div>
-                      </div>
-                      <Stepper
-                        value={n}
-                        onDec={() =>
-                          setTargets((t) => ({
-                            ...t,
-                            [s.key]: Math.max(0, (t[s.key] ?? picks.length) - 1),
-                          }))
-                        }
-                        onInc={() =>
-                          setTargets((t) => ({
-                            ...t,
-                            [s.key]: Math.min(30, (t[s.key] ?? picks.length) + 1),
-                          }))
-                        }
-                        disabled={loading || busy}
-                      />
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                );
-              })}
+                  )}
+                </div>
+              ))}
             </div>
-            <Link
-              href="/algorithm?tab=tracks"
-              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-            >
-              Change unit order <ArrowRight className="w-3 h-3" />
-            </Link>
-          </section>
+          )}
+        </div>
+      ) : (
+        // ── Personal-section tabs ──
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+          {(() => {
+            const meta = PERSONAL_TABS.find((t) => t.key === tab)!;
+            const picks =
+              tab === 'warmup'
+                ? plan?.warmup ?? []
+                : tab === 'revision'
+                  ? plan?.revision ?? []
+                  : plan?.examPrep ?? [];
+            const unitsPulled = Array.from(
+              new Set(picks.map((p) => p.concept.unitId)),
+            ).map((u) => findUnit(u)?.unit.name ?? u);
+            return (
+              <>
+                <div className="rounded-xl border border-border bg-card px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-foreground">
+                        {meta.label} · personal per student
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{meta.hint}</div>
+                    </div>
+                    <Stepper
+                      value={personalCount(tab as PersonalKey)}
+                      onDec={() =>
+                        setTargets((t) => ({
+                          ...t,
+                          [tab]: Math.max(0, personalCount(tab as PersonalKey) - 1),
+                        }))
+                      }
+                      onInc={() =>
+                        setTargets((t) => ({
+                          ...t,
+                          [tab]: Math.min(30, personalCount(tab as PersonalKey) + 1),
+                        }))
+                      }
+                      disabled={loading || busy}
+                    />
+                  </div>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1">
+                    Preview for {studentName.split(' ')[0]}
+                  </div>
+                  {loading ? (
+                    <div className="text-[11px] text-muted-foreground">loading…</div>
+                  ) : picks.length === 0 ? (
+                    <div className="text-[11px] text-muted-foreground italic">
+                      nothing to pull yet
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-muted-foreground">
+                      {picks.length} question{picks.length === 1 ? '' : 's'} from{' '}
+                      {unitsPulled.slice(0, 4).join(' · ')}
+                      {unitsPulled.length > 4 && ` +${unitsPulled.length - 4} more`}
+                    </div>
+                  )}
+                  <div className="mt-1 text-[10px] text-muted-foreground/80">
+                    Joined students each get their own version of this section.
+                  </div>
+                </div>
+                {tab === 'revision' && (
+                  <Link
+                    href="/algorithm?tab=tracks"
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                  >
+                    Change unit order <ArrowRight className="w-3 h-3" />
+                  </Link>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -640,6 +721,36 @@ export function SheetPlannerPanel({
   );
 }
 
+function ConceptChip({
+  label,
+  count,
+  active,
+  warn,
+  onClick,
+}: {
+  label: string;
+  count: string;
+  active: boolean;
+  warn?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'max-w-[46%] inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] leading-tight transition-colors',
+        active
+          ? 'bg-primary/15 border-primary/50 text-primary font-semibold'
+          : 'bg-muted/30 border-border/70 text-muted-foreground',
+        warn && !active && 'border-amber-500/50 text-amber-500',
+      )}
+    >
+      <span className="truncate">{label}</span>
+      <span className="shrink-0 tabular-nums opacity-80">{count}</span>
+    </button>
+  );
+}
+
 function Stepper({
   value,
   onDec,
@@ -656,7 +767,7 @@ function Stepper({
       <button
         onClick={onDec}
         disabled={disabled || value <= 0}
-        className="w-6 h-6 inline-flex items-center justify-center rounded-md bg-muted text-foreground disabled:opacity-40 hover:bg-muted/70"
+        className="w-7 h-7 inline-flex items-center justify-center rounded-md bg-muted text-foreground disabled:opacity-40 hover:bg-muted/70"
         aria-label="Decrease"
       >
         <Minus className="w-3.5 h-3.5" />
@@ -666,8 +777,8 @@ function Stepper({
       </span>
       <button
         onClick={onInc}
-        disabled={disabled || value >= 30}
-        className="w-6 h-6 inline-flex items-center justify-center rounded-md bg-muted text-foreground disabled:opacity-40 hover:bg-muted/70"
+        disabled={disabled}
+        className="w-7 h-7 inline-flex items-center justify-center rounded-md bg-muted text-foreground disabled:opacity-40 hover:bg-muted/70"
         aria-label="Increase"
       >
         <Plus className="w-3.5 h-3.5" />
