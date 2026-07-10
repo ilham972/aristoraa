@@ -592,21 +592,22 @@ export function SheetPlannerPanel({
                                 {on ? 'ticked' : 'tap to tick'}
                               </span>
                             </button>
-                            {/* Full-width readable crop (tap image to zoom) */}
-                            <div className="px-3 pb-2.5">
+                            {/* Adaptive-size crop (tap image to zoom) */}
+                            <div className="px-3 pb-2.5 max-w-full overflow-hidden">
                               {q.overrideImageUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img
                                   src={q.overrideImageUrl}
                                   alt="Question"
-                                  className="w-full h-auto rounded bg-white"
+                                  className="max-w-full h-auto rounded bg-white"
+                                  style={{ maxHeight: CROP_MAX_H }}
                                 />
                               ) : q.cropBox && q.pageImageUrl ? (
                                 <CropThumbnail
                                   imageUrl={q.pageImageUrl}
                                   imageUrlSmall={q.pageImageUrlSmall}
                                   cropBox={q.cropBox}
-                                  maxSide={640}
+                                  maxSide={adaptiveCropMaxSide(q.cropBox)}
                                 />
                               ) : (
                                 <span className="text-[10px] text-muted-foreground italic">
@@ -734,21 +735,44 @@ function ConceptChip({
   warn?: boolean;
   onClick: () => void;
 }) {
+  // Full name always readable: the chip WRAPS its text instead of truncating
+  // (founder feedback — concept titles are long).
   return (
     <button
       onClick={onClick}
       className={cn(
-        'max-w-[46%] inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] leading-tight transition-colors',
+        'inline-flex items-start gap-1 px-2 py-1 rounded-lg border text-[10px] leading-tight text-left transition-colors',
         active
           ? 'bg-primary/15 border-primary/50 text-primary font-semibold'
           : 'bg-muted/30 border-border/70 text-muted-foreground',
         warn && !active && 'border-amber-500/50 text-amber-500',
       )}
     >
-      <span className="truncate">{label}</span>
+      <span className="whitespace-normal break-words">{label}</span>
       <span className="shrink-0 tabular-nums opacity-80">{count}</span>
     </button>
   );
+}
+
+// Adaptive crop size: each question is sized by its own SHAPE so the list
+// feels like a PDF without any question swallowing the screen (founder
+// feedback, 2026-07-11 v3):
+//   • wide text lines  → up to full content width, short height (readable)
+//   • square figures   → compact (~160px, like the original thumbnails)
+//   • nothing ever exceeds the phone width or ~160px height
+// Tap-to-zoom (built into CropThumbnail) covers anything that needs detail.
+// Pages are A4 scans, so page aspect ≈ 0.707 lets us derive the crop's
+// aspect from the normalized cropBox alone (no image load needed).
+const CROP_MAX_W = 320;
+const CROP_MAX_H = 160;
+function adaptiveCropMaxSide(cropBox: { w: number; h: number }): number {
+  const aspect = (cropBox.w * 0.707) / Math.max(0.0001, cropBox.h);
+  if (aspect >= 1) {
+    // Wide: the constrained (largest) side is the WIDTH.
+    return Math.min(CROP_MAX_W, Math.round(aspect * CROP_MAX_H));
+  }
+  // Tall: the constrained side is the HEIGHT.
+  return CROP_MAX_H;
 }
 
 function Stepper({
