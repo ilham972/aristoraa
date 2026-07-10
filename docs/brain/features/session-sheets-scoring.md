@@ -22,10 +22,12 @@ print, score) → `sheet-scoring-grid.tsx` (section tabs + inline sheet view +
 mark grid). Generate opens the **Lesson Builder** (`sheet-planner-panel.tsx`,
 full-screen, 2026-07-11): roster chips JOIN students onto one shared Main
 block (warm-up/revision/exam-prep stay personal — never make sheets fully
-identical); whole-unit question picker grouped by concept with crop
-thumbnails, algorithm picks pre-ticked, teacher tick/untick; named per-unit
-lesson presets (`unitLessonSets` via `learningEngine/lessonSets.ts` —
-listUnitQuestions catalog + CRUD). Backend calls, in lifecycle order:
+identical); whole-unit question picker grouped by concept with FULL-WIDTH
+readable crops (tap to zoom), algorithm picks pre-ticked, teacher
+tick/untick; v2 layout = section TABS at top + concept filter chips + Main
++/- stepper (+ ticks next easy-first, − unticks last, manual ticks kept);
+named per-unit lesson presets (`unitLessonSets` via
+`learningEngine/lessonSets.ts` — listUnitQuestions catalog + CRUD). Backend calls, in lifecycle order:
 1. `api.learningEngine.planner.saveSheetForStudent` — generate (planner picks
    LEAF questions only; stems glued at render — stem/leaf model, domain.md).
    `mainQuestionIdsOverride` = teacher ticks: claim Main first, bypass the
