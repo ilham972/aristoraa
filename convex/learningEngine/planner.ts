@@ -897,29 +897,31 @@ async function recentCompletionStats(
     return { avgCompletion: null, sampleCount: 0 };
   }
 
-  // Range-scan attemptLog once over the window then bucket per day.
+  // Safety fix (2026-07-10 audit): credit attempts within 48h of the sheet
+  // date, not just the same calendar day. Real life scores sheets the next
+  // morning; the old same-day rule counted those sheets as 0% complete and
+  // misclassified the student as "weak" (shrinking their sheets). The scan
+  // end extends past asOfMs so a yesterday-sheet scored today still counts.
+  const ATTEMPT_CREDIT_WINDOW_MS = 48 * 3_600_000;
   const attempts = await ctx.db
     .query("attemptLog")
     .withIndex("by_student_time", (q) =>
       q
         .eq("studentId", studentId)
         .gte("occurredAt", windowStartMs)
-        .lt("occurredAt", asOfMs),
+        .lt("occurredAt", asOfMs + ATTEMPT_CREDIT_WINDOW_MS),
     )
     .collect();
 
-  // Bucket attempted question ids per YMD (one row per concept × question;
-  // dedupe to physical questionId).
-  const attemptedByDay = new Map<string, Set<string>>();
+  // Attempt times per physical question (one row per concept × question;
+  // dedupe happens naturally via the per-question time list).
+  const attemptTimesByQuestion = new Map<string, number[]>();
   for (const a of attempts) {
     if (!a.questionId) continue;
-    const ymd = ymdFromMs(a.occurredAt);
-    let set = attemptedByDay.get(ymd);
-    if (!set) {
-      set = new Set();
-      attemptedByDay.set(ymd, set);
-    }
-    set.add(a.questionId as unknown as string);
+    const k = a.questionId as unknown as string;
+    const list = attemptTimesByQuestion.get(k);
+    if (list) list.push(a.occurredAt);
+    else attemptTimesByQuestion.set(k, [a.occurredAt]);
   }
 
   let totalRate = 0;
@@ -932,11 +934,13 @@ async function recentCompletionStats(
       ...sheet.examPrepQuestionIds,
     ];
     if (sheetQs.length === 0) continue;
-    const attempted = attemptedByDay.get(sheet.date);
+    const sheetStartMs = parseYmdToMs(sheet.date);
+    const sheetEndMs = sheetStartMs + ATTEMPT_CREDIT_WINDOW_MS;
     let hits = 0;
-    if (attempted) {
-      for (const qId of sheetQs) {
-        if (attempted.has(qId as unknown as string)) hits += 1;
+    for (const qId of sheetQs) {
+      const times = attemptTimesByQuestion.get(qId as unknown as string);
+      if (times && times.some((t) => t >= sheetStartMs && t < sheetEndMs)) {
+        hits += 1;
       }
     }
     totalRate += hits / sheetQs.length;
@@ -1463,22 +1467,51 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
       };
     }
 
-    // ── 3. Candidate pool ───────────────────────────────────────────────
-    const pool = await buildCandidatePool(ctx, {
-      studentId: args.studentId,
-      dateStr: args.dateStr,
-      unitIds: args.unitIds,
-      gradeByModule: args.gradeByModule,
-    });
-    if (!pool) return null;
-
-    // ── 3b. Track resolution (Phase 1 — track model) ────────────────────
+    // ── 3. Track resolution (Phase 1 — track model) ─────────────────────
+    // Resolved BEFORE the candidate pool (safety fix 2026-07-10, see below).
     // When the student rides a track, the Main block walks the track's
     // orderedUnitIds and the budget grade/term come from the track's target
     // exam. trackUnitSet restricts NEW-concept Main candidates; trackRank
     // gives the global ordering. When null, behaviour is unchanged (legacy
     // schoolGrade + per-(grade,term) teachingPath path).
     const track = await resolveTrackForStudent(ctx, student);
+
+    // Safety fix (2026-07-10 audit): a cross-grade track (e.g. remedial G8
+    // units for a G10-scoped student) may contain units OUTSIDE the client-
+    // resolved grade scope. Those units never entered the candidate pool, so
+    // the Main block silently skipped them — a hole in the curriculum with
+    // no warning. Widen BOTH scope inputs with the track's units: unitIds
+    // gains the ids, and gradeByModule gains each track unit's module→grade
+    // pair so computeStudentProfile's isStudied check passes.
+    let poolUnitIds = args.unitIds;
+    let poolGradeByModule = args.gradeByModule;
+    if (track) {
+      const unitSet = new Set(args.unitIds);
+      const gbm: Record<string, number[]> = Object.fromEntries(
+        Object.entries(args.gradeByModule).map(([m, gs]) => [m, [...gs]]),
+      );
+      for (const unitId of track.orderedUnitIds) {
+        unitSet.add(unitId);
+        const m = /^(M[1-6])-G(\d+)-T\d+-\d+$/.exec(unitId);
+        if (!m) continue;
+        const moduleId = m[1];
+        const grade = Number(m[2]);
+        if (!gbm[moduleId]) gbm[moduleId] = [];
+        if (!gbm[moduleId].includes(grade)) gbm[moduleId].push(grade);
+      }
+      poolUnitIds = Array.from(unitSet);
+      poolGradeByModule = gbm;
+    }
+
+    // ── 3b. Candidate pool ──────────────────────────────────────────────
+    const pool = await buildCandidatePool(ctx, {
+      studentId: args.studentId,
+      dateStr: args.dateStr,
+      unitIds: poolUnitIds,
+      gradeByModule: poolGradeByModule,
+    });
+    if (!pool) return null;
+
     const trackUnitSet = track ? new Set(track.orderedUnitIds) : null;
     const trackRank = track
       ? new Map(track.orderedUnitIds.map((id, i) => [id, i] as const))
@@ -2526,12 +2559,18 @@ export const getSavedSheet = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    return ctx.db
+    // Defensive: collect() not unique() — historical backfills/failed retries
+    // can leave two rows for the same (student, date). unique() would THROW
+    // and take the whole read path down; pick the latest instead, matching
+    // the defense saveSheetForStudentImpl already has (safety fix 2026-07-10).
+    const rows = await ctx.db
       .query("generatedSheets")
       .withIndex("by_student_date", (q) =>
         q.eq("studentId", args.studentId).eq("date", args.dateStr),
       )
-      .unique();
+      .collect();
+    if (rows.length === 0) return null;
+    return rows.reduce((a, b) => (a.generatedAt >= b.generatedAt ? a : b));
   },
 });
 
