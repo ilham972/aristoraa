@@ -389,11 +389,22 @@ export function ScoreSheetTab({
         )}
       </div>
 
-      {/* Generate-time control panel */}
+      {/* Lesson Builder (full-screen generate dialog) */}
       {plannerRow &&
         (() => {
           const scope = studentScope(plannerRow.studentId);
           if (!scope) return null;
+          // Roster chips: every non-off-day student in the session; students
+          // with a printed/completed sheet are shown but locked.
+          const plannerRoster = (slotRows ?? [])
+            .filter((r) => !r.isOffDay)
+            .map((r) => ({
+              studentId: r.studentId,
+              studentName: r.studentName,
+              locked:
+                r.sheet?.status === 'printed' ||
+                r.sheet?.status === 'completed',
+            }));
           return (
             <SheetPlannerPanel
               studentId={plannerRow.studentId}
@@ -402,6 +413,8 @@ export function ScoreSheetTab({
               slotId={slotId}
               unitIds={scope.unitIds}
               gradeByModule={scope.gradeByModule}
+              roster={plannerRoster}
+              resolveScope={(id) => studentScope(id)}
               onClose={() => setPlannerRow(null)}
               onGenerated={() => setPlannerRow(null)}
             />
