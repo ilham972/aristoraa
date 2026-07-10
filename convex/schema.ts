@@ -950,6 +950,20 @@ export default defineSchema({
   // absent it falls back to the global session-length heuristic
   // (MINUTES_PER_NEW_CONCEPT). Auto-maturation from observed completion is
   // explicitly out of scope for now (see TODO(maturity) in planner.ts).
+  // Named Main-block "lesson sets" (Lesson Builder, 2026-07-11). A saved
+  // tick-set of question ids for ONE unit — the teacher's reusable worksheet
+  // ("Fractions — Layer 1") offered as a preset whenever a sheet's Main block
+  // teaches that unit, for any student/group. Main-block only BY DESIGN:
+  // warm-up/revision/exam-prep stay personal per student (the moat).
+  unitLessonSets: defineTable({
+    unitId: v.string(),
+    name: v.string(),
+    questionIds: v.array(v.id("questionBank")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    updatedByTeacherId: v.optional(v.id("teachers")),
+  }).index("by_unit", ["unitId"]),
+
   unitPacing: defineTable({
     grade: v.number(),
     term: v.number(),

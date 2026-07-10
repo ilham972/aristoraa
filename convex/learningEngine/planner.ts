@@ -239,6 +239,11 @@ async function buildCandidatePool(
     dateStr: string;
     unitIds: string[];
     gradeByModule: Record<string, number[]>;
+    // Lesson Builder (2026-07-11): question ids the teacher explicitly
+    // ticked for the Main block. These bypass the novelty cooldown (an
+    // explicit choice beats the 7-day rest rule) and keep a prereq-gapped
+    // concept's ticked questions servable (D.4 alerts still surface the gap).
+    forceIncludeQuestionIds?: Set<string>;
   },
 ): Promise<RawPool | null> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dateStr)) {
@@ -300,11 +305,10 @@ async function buildCandidatePool(
   let prereqGappedSkipped = 0;
 
   for (const concept of profile.profile) {
-    if (concept.prereqGap) {
+    if (concept.prereqGap && !args.forceIncludeQuestionIds) {
       prereqGappedSkipped += 1;
       continue;
     }
-    consideredConcepts += 1;
 
     // Read both tag paths via the unified helper so textbook crops (which
     // carry the concept link via linkedExerciseId + unit ordering rather
@@ -315,6 +319,29 @@ async function buildCandidatePool(
       ctx,
       concept.conceptId,
     );
+
+    // Prereq-gapped concept + teacher override: keep ONLY the explicitly
+    // ticked questions (teacher wins; the gap surfaces via D.4 alerts).
+    if (concept.prereqGap) {
+      const forced = taggedQuestionIds.filter((id) =>
+        args.forceIncludeQuestionIds!.has(id as unknown as string),
+      );
+      if (forced.length === 0) {
+        prereqGappedSkipped += 1;
+        continue;
+      }
+      consideredConcepts += 1;
+      taggedConcepts.push(concept);
+      for (const qId of forced) {
+        const qKey = qId as unknown as string;
+        uniqueQuestionIds.add(qKey);
+        const list = conceptByQuestion.get(qKey);
+        if (list) list.push(concept);
+        else conceptByQuestion.set(qKey, [concept]);
+      }
+      continue;
+    }
+    consideredConcepts += 1;
 
     if (taggedQuestionIds.length === 0) {
       plannerGaps.push({
@@ -353,9 +380,10 @@ async function buildCandidatePool(
     if (!concepts || concepts.length === 0) continue;
     // Count-based cooldown: a question rests once used repeatCount times in
     // the window. repeatCount === 1 (default) == the original binary rule.
+    // Teacher-ticked questions (Lesson Builder) bypass the rest entirely.
     const used = usageCountByQuestion.get(qKey) ?? 0;
     const cap = Math.max(1, q.repeatCount ?? 1);
-    if (used >= cap) continue;
+    if (used >= cap && !args.forceIncludeQuestionIds?.has(qKey)) continue;
     const candidateQ: CandidateQuestion = {
       _id: q._id,
       source: q.source,
@@ -1427,6 +1455,12 @@ type PlanSheetArgs = {
     revision?: number;
     examPrep?: number;
   };
+  // Lesson Builder (2026-07-11): the teacher's exact tick-set for the Main
+  // block, in print order. When present, Main = exactly these questions
+  // (cooldown bypassed; the auto path/pacing machinery is skipped) and the
+  // other sections plan around them. Unservable ids (untagged / off-scope)
+  // are dropped with an underfill reason.
+  mainQuestionIdsOverride?: Id<"questionBank">[];
 };
 
 export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
@@ -1504,11 +1538,18 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     }
 
     // ── 3b. Candidate pool ──────────────────────────────────────────────
+    const forceInclude =
+      args.mainQuestionIdsOverride && args.mainQuestionIdsOverride.length > 0
+        ? new Set(
+            args.mainQuestionIdsOverride.map((id) => id as unknown as string),
+          )
+        : undefined;
     const pool = await buildCandidatePool(ctx, {
       studentId: args.studentId,
       dateStr: args.dateStr,
       unitIds: poolUnitIds,
       gradeByModule: poolGradeByModule,
+      ...(forceInclude ? { forceIncludeQuestionIds: forceInclude } : {}),
     });
     if (!pool) return null;
 
@@ -1775,6 +1816,38 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         .map((c) => c.conceptId as unknown as string),
     );
 
+    // ── 9a0. Main override (Lesson Builder, 2026-07-11) ─────────────────
+    // The teacher's exact ticks claim their questions FIRST so no other
+    // section can steal them via the shared seen-set. Order preserved (it
+    // becomes the print order). Ids with no servable candidate pairing
+    // (untagged / outside the widened scope) are dropped + flagged.
+    let mainPicked: EnrichedCandidate[] = [];
+    const mainOverridden =
+      args.mainQuestionIdsOverride !== undefined &&
+      args.mainQuestionIdsOverride.length > 0;
+    if (mainOverridden) {
+      const byId = new Map<string, EnrichedCandidate>();
+      for (const c of enriched) {
+        const k = c.question._id as unknown as string;
+        if (!byId.has(k)) byId.set(k, c); // highest-scored concept pairing
+      }
+      let dropped = 0;
+      for (const qid of args.mainQuestionIdsOverride!) {
+        const k = qid as unknown as string;
+        if (seen.has(k)) continue;
+        const cand = byId.get(k);
+        if (!cand) {
+          dropped += 1;
+          continue;
+        }
+        seen.add(k);
+        mainPicked.push(cand);
+      }
+      if (dropped > 0) {
+        underFillReasons.push("main-override-question-unservable");
+      }
+    }
+
     // ── 9a. Exam-prep slot ──────────────────────────────────────────────
     // Primary: past-paper + mastery ≥ floor. In exam-week mode, ignore
     // module-of-day; out of exam week, also ignore module (past-paper
@@ -1821,8 +1894,10 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     // difficulty-fit factor already favours easy questions for brand-new
     // concepts (mastery ≈ 0 → skill ≈ 1). Exam-week keeps the existing
     // exam-term focus (module boundaries already collapsed).
-    let mainPicked: EnrichedCandidate[] = [];
-    if (mainBudget.qCap > 0 && !phaseInfo.examWeekMode) {
+    // Skipped entirely when the Lesson Builder override filled Main (9a0).
+    if (mainOverridden) {
+      // Main already holds the teacher's exact ticks.
+    } else if (mainBudget.qCap > 0 && !phaseInfo.examWeekMode) {
       const primary = enriched.filter((c) =>
         newConceptIds.has(c.concept.conceptId as unknown as string),
       );
@@ -2098,6 +2173,7 @@ export const planSheet = query({
         examPrep: v.optional(v.number()),
       }),
     ),
+    mainQuestionIdsOverride: v.optional(v.array(v.id("questionBank"))),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -2228,6 +2304,7 @@ export const saveSheetForStudent = mutation({
         examPrep: v.optional(v.number()),
       }),
     ),
+    mainQuestionIdsOverride: v.optional(v.array(v.id("questionBank"))),
   },
   handler: async (ctx, args) => {
     try {
@@ -2261,6 +2338,7 @@ async function saveSheetForStudentImpl(
       revision?: number;
       examPrep?: number;
     };
+    mainQuestionIdsOverride?: Id<"questionBank">[];
   },
 ) {
     const identity = await ctx.auth.getUserIdentity();
@@ -2279,6 +2357,7 @@ async function saveSheetForStudentImpl(
       debugSessionMinutes: args.debugSessionMinutes,
       debugSheetLength: args.debugSheetLength,
       sectionTargets: args.sectionTargets,
+      mainQuestionIdsOverride: args.mainQuestionIdsOverride,
     });
     if (!result) {
       return { status: "no-student", written: false } as const;
