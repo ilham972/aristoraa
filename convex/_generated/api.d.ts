@@ -26,6 +26,7 @@ import type * as learningEngine_backfill from "../learningEngine/backfill.js";
 import type * as learningEngine_calendar from "../learningEngine/calendar.js";
 import type * as learningEngine_config from "../learningEngine/config.js";
 import type * as learningEngine_coverage from "../learningEngine/coverage.js";
+import type * as learningEngine_coverageMode from "../learningEngine/coverageMode.js";
 import type * as learningEngine_cropIntegrity from "../learningEngine/cropIntegrity.js";
 import type * as learningEngine_derivedConcepts from "../learningEngine/derivedConcepts.js";
 import type * as learningEngine_difficultyTab from "../learningEngine/difficultyTab.js";
@@ -131,6 +132,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/calendar": typeof learningEngine_calendar;
   "learningEngine/config": typeof learningEngine_config;
   "learningEngine/coverage": typeof learningEngine_coverage;
+  "learningEngine/coverageMode": typeof learningEngine_coverageMode;
   "learningEngine/cropIntegrity": typeof learningEngine_cropIntegrity;
   "learningEngine/derivedConcepts": typeof learningEngine_derivedConcepts;
   "learningEngine/difficultyTab": typeof learningEngine_difficultyTab;
