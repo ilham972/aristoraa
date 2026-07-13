@@ -17,6 +17,7 @@ import { v } from "convex/values";
 import type { GenericMutationCtx } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
 import { questionsTaggedToConcept } from "./derivedConcepts";
+import { analyzeCropIntegrity } from "./cropIntegrity";
 
 type MutationCtx = GenericMutationCtx<DataModel>;
 
@@ -75,6 +76,43 @@ export const listUnitQuestions = query({
       return out;
     }
 
+    // Stem crops glued above a leaf at print time (2026-07-13): the picker
+    // shows them too, so a sub-part is never displayed without its
+    // instruction text. Same source of truth as the PDF renderer
+    // (analyzeCropIntegrity), cached because siblings share stems.
+    type StemRef = {
+      stemId: Id<"questionBank">;
+      cropBox: { x: number; y: number; w: number; h: number } | null;
+      pageImageUrl: string | null;
+      pageImageUrlSmall: string | null;
+      overrideImageUrl: string | null;
+    };
+    const stemCache = new Map<string, StemRef | null>();
+    async function stemRef(id: Id<"questionBank">): Promise<StemRef | null> {
+      const key = id as unknown as string;
+      const cached = stemCache.get(key);
+      if (cached !== undefined) return cached;
+      const s = await ctx.db.get(id);
+      let ref: StemRef | null = null;
+      if (s) {
+        const pageId = s.textbookPageId ?? s.pastPaperPageId;
+        const urls = pageId
+          ? await pageUrls(pageId)
+          : { full: null, small: null };
+        ref = {
+          stemId: s._id,
+          cropBox: s.cropBox ?? null,
+          pageImageUrl: urls.full,
+          pageImageUrlSmall: urls.small,
+          overrideImageUrl: s.overrideRender
+            ? await ctx.storage.getUrl(s.overrideRender.storageId)
+            : null,
+        };
+      }
+      stemCache.set(key, ref);
+      return ref;
+    }
+
     // A question tagged to two concepts of the same unit appears ONCE,
     // under the first concept in teaching order (the picker is a flat
     // tick-list; duplicates would double-tick).
@@ -92,6 +130,7 @@ export const listUnitQuestions = query({
         pageImageUrl: string | null;
         pageImageUrlSmall: string | null;
         overrideImageUrl: string | null;
+        stems: StemRef[]; // print order: main stem first, then sub-stem
       }>;
     }> = [];
 
@@ -108,6 +147,21 @@ export const listUnitQuestions = query({
         const urls = pageId
           ? await pageUrls(pageId)
           : { full: null, small: null };
+        // Only dotted textbook keys ("5.a", "5.a.i") can have stems — skip
+        // the integrity scan for whole questions and past-paper crops.
+        const stems: StemRef[] = [];
+        if (q.source === "textbook" && q.linkedQuestionKey?.includes(".")) {
+          const integrity = await analyzeCropIntegrity(ctx, q._id);
+          if (
+            integrity.kind === "ok-sub-with-stem" ||
+            integrity.kind === "ok-leaf3-with-stems"
+          ) {
+            for (const sid of integrity.stemQuestionIds) {
+              const ref = await stemRef(sid);
+              if (ref) stems.push(ref);
+            }
+          }
+        }
         questions.push({
           questionId: q._id,
           source: q.source,
@@ -120,6 +174,7 @@ export const listUnitQuestions = query({
           overrideImageUrl: q.overrideRender
             ? await ctx.storage.getUrl(q.overrideRender.storageId)
             : null,
+          stems,
         });
       }
       // Stable, teaching-friendly ordering: easy → hard within the concept.

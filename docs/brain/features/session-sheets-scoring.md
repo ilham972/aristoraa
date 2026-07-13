@@ -22,9 +22,13 @@ print, score) → `sheet-scoring-grid.tsx` (section tabs + inline sheet view +
 mark grid). Generate opens the **Lesson Builder** (`sheet-planner-panel.tsx`,
 full-screen, 2026-07-11): roster chips JOIN students onto one shared Main
 block (warm-up/revision/exam-prep stay personal — never make sheets fully
-identical); whole-unit question picker grouped by concept with FULL-WIDTH
-readable crops (tap to zoom), algorithm picks pre-ticked, teacher
-tick/untick; v2 layout = section TABS at top + concept filter chips + Main
+identical); whole-unit question picker grouped by concept, algorithm picks
+pre-ticked, teacher tick/untick; v4 list (2026-07-13) = dense 2-col grid,
+every crop at TRUE aspect ratio (text never shrinks below page scale),
+narrow crops pack 2-up / wide span full width, STEM crops shown as shared
+context rows above sub-part runs (listUnitQuestions reuses
+analyzeCropIntegrity — same stems the PDF glues), tap tile = tick /
+magnifier = zoom; section TABS at top + concept filter chips + Main
 +/- stepper (+ ticks next easy-first, − unticks last, manual ticks kept);
 named per-unit lesson presets (`unitLessonSets` via
 `learningEngine/lessonSets.ts` — listUnitQuestions catalog + CRUD). Backend calls, in lifecycle order:

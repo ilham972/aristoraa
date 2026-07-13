@@ -924,7 +924,7 @@ export function CropThumbnail({
   );
 }
 
-function FullCropDialog({
+export function FullCropDialog({
   imageUrl,
   cropBox,
   naturalDims,

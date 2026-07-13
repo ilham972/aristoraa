@@ -48,6 +48,7 @@ import type * as learningEngine_trackProgress from "../learningEngine/trackProgr
 import type * as learningEngine_tracks from "../learningEngine/tracks.js";
 import type * as lib_draftReconcile from "../lib/draftReconcile.js";
 import type * as lib_naming from "../lib/naming.js";
+import type * as lib_offDays from "../lib/offDays.js";
 import type * as lib_paperClasses from "../lib/paperClasses.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_roster from "../lib/roster.js";
@@ -152,6 +153,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/tracks": typeof learningEngine_tracks;
   "lib/draftReconcile": typeof lib_draftReconcile;
   "lib/naming": typeof lib_naming;
+  "lib/offDays": typeof lib_offDays;
   "lib/paperClasses": typeof lib_paperClasses;
   "lib/phone": typeof lib_phone;
   "lib/roster": typeof lib_roster;
