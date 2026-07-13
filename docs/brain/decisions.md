@@ -166,6 +166,19 @@ because Z.
   alerts still surface gaps. Serves the founder's layer-by-layer teaching
   (layer 1 = light intro sweep, deeper layers via revision + harder sets).
 
+## Data Entry "Book" tab (2026-07-13)
+- **Exercises + Page Nos sub-tabs MERGED** into one Book tab with the
+  uploaded book embedded — the physical-book trip was the bottleneck.
+  Chose one continuous read-the-book-once pass (pills top, viewer middle,
+  sticky entry bar bottom) over per-unit sheets or viewer-beside-dialogs.
+- **Two dots per unit pill** (pages/exercises), amber = partial, green =
+  both — founder's own refinement of a single done state.
+- **Mark start/Mark end** capture the on-screen page; next unit's start
+  prefills from previous end + 1. Review (x.0) still creation-only.
+- Viewer serves small thumbnails (`listSmallPages`); full-res stays
+  crop/PDF-only. Old per-layer dialogs deleted, ExercisePickerBody's grid
+  moved into the count drawer.
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.

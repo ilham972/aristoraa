@@ -34,6 +34,12 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
 ## /settings + crop tools
 - `/settings` — app config (`convex/settings.ts`), textbook/past-paper
   management (textbooks, pastPapers modules).
+- Data Entry sub-tabs (2026-07-13): old Exercises + Page Nos merged into one
+  "Book" tab (`book-entry-view.tsx`) — whole uploaded book scrolls inline
+  (small thumbnails via `textbookPages.listSmallPages`), unit pills show two
+  dots (pages/exercises; amber partial, green complete), Mark start/end grabs
+  the on-screen page, one Save logs pages + exercise count (+review), then
+  auto-advances with next start prefilled (prev end + 1).
 - `/settings/crop/[unitId]` + `/settings/past-paper-crop/[paperId]` — the
   question-cropping workbenches that feed the question bank (the engine's
   raw material). Crop validation: `learningEngine/cropIntegrity.ts`.

@@ -84,6 +84,31 @@ export const getPageImage = query({
   },
 });
 
+// Whole-book page list for the Data Entry "Book" tab viewer. Serves the
+// downscaled thumbnail variant when available so scrolling a 150+ page book
+// stays light on phones; falls back to full-res for pages the "Optimize
+// images" backfill hasn't processed yet.
+export const listSmallPages = query({
+  args: { textbookId: v.id("textbooks") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const pages = await ctx.db
+      .query("textbookPages")
+      .withIndex("by_textbook", (q) => q.eq("textbookId", args.textbookId))
+      .collect();
+    pages.sort((a, b) => a.pageNumber - b.pageNumber);
+
+    const results: { pageNumber: number; url: string | null }[] = [];
+    for (const p of pages) {
+      const url = await ctx.storage.getUrl(p.smallStorageId ?? p.storageId);
+      results.push({ pageNumber: p.pageNumber, url });
+    }
+    return results;
+  },
+});
+
 export const getPagesInRange = query({
   args: {
     textbookId: v.id("textbooks"),

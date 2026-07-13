@@ -19,8 +19,9 @@ import { SubQuestionInline } from '@/components/sub-question-inline';
 import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
 import { ConceptsUnitView } from '@/components/settings/concepts-unit-drawer';
 import { DifficultyTab } from '@/components/settings/difficulty-tab';
+import { BookEntryView } from '@/components/settings/book-entry-view';
 
-type Layer = 'exercises' | 'pages' | 'details' | 'concepts' | 'past-papers' | 'difficulty';
+type Layer = 'units' | 'details' | 'concepts' | 'past-papers' | 'difficulty';
 
 interface BookUnit {
   id: string;
@@ -37,7 +38,7 @@ const SS_DETAIL = 'dataEntry.detailUnitId';
 const SS_CONCEPTS = 'dataEntry.conceptsUnitId';
 
 const isLayer = (v: string | null): v is Layer =>
-  v === 'exercises' || v === 'pages' || v === 'details' || v === 'concepts' || v === 'past-papers' || v === 'difficulty';
+  v === 'units' || v === 'details' || v === 'concepts' || v === 'past-papers' || v === 'difficulty';
 
 export function DataEntryTab() {
   const router = useRouter();
@@ -48,9 +49,6 @@ export function DataEntryTab() {
   const allUnitMeta = useQuery(api.unitMetadata.list);
 
   // === MUTATIONS ===
-  const bulkAddMutation = useMutation(api.exercises.bulkAdd);
-  const trimMutation = useMutation(api.exercises.trimToCount);
-  const setUnitPagesMutation = useMutation(api.unitMetadata.setPages);
   const addConceptMutation = useMutation(api.exercises.addConcept);
   const renameConceptMutation = useMutation(api.exercises.renameConcept);
   const updateQcMutation = useMutation(api.exercises.updateQuestionCount);
@@ -65,19 +63,13 @@ export function DataEntryTab() {
     return window.sessionStorage.getItem(SS_BOOK);
   });
   const [activeLayer, setActiveLayer] = useState<Layer>(() => {
-    if (typeof window === 'undefined') return 'exercises';
+    if (typeof window === 'undefined') return 'units';
     const v = window.sessionStorage.getItem(SS_LAYER);
-    return isLayer(v) ? v : 'exercises';
+    // Legacy values from before the Exercises + Page Nos merge map to the
+    // combined Book tab.
+    if (v === 'exercises' || v === 'pages') return 'units';
+    return isLayer(v) ? v : 'units';
   });
-
-  // === LAYER 1 — Exercise dialog ===
-  const [exDialogUnit, setExDialogUnit] = useState<BookUnit | null>(null);
-  const [reviewToggle, setReviewToggle] = useState(false);
-
-  // === LAYER 2 — Page dialog ===
-  const [pgDialogUnit, setPgDialogUnit] = useState<BookUnit | null>(null);
-  const [pgStart, setPgStart] = useState('');
-  const [pgEnd, setPgEnd] = useState('');
 
   // === LAYER 3 — Detail view ===
   // We hold the detail-unit *id* (not the BookUnit object) so it can be
@@ -209,17 +201,6 @@ export function DataEntryTab() {
   const getExercisesOnly = (unitId: string) =>
     getUnitExercises(unitId).filter(e => (e.type || 'exercise') === 'exercise');
 
-  const getMaxExNum = (unitId: string) =>
-    getExercisesOnly(unitId)
-      .filter(e => !e.name.endsWith('.0'))
-      .reduce((max, ex) => {
-        const sub = parseInt(ex.name.split('.')[1]);
-        return !isNaN(sub) && sub > max ? sub : max;
-      }, 0);
-
-  const unitHasReview = (unitId: string) =>
-    getUnitExercises(unitId).some(e => e.name.endsWith('.0'));
-
   const getUnitMeta = (unitId: string) =>
     allUnitMeta?.find(m => m.unitId === unitId);
 
@@ -227,13 +208,6 @@ export function DataEntryTab() {
     getUnitExercises(unitId).filter(e => e.type === 'concept');
 
   const isUnitDone = (unit: BookUnit): boolean => {
-    if (activeLayer === 'exercises') {
-      return getExercisesOnly(unit.id).length > 0;
-    }
-    if (activeLayer === 'pages') {
-      const meta = getUnitMeta(unit.id);
-      return meta?.startPage != null && meta?.endPage != null;
-    }
     if (activeLayer === 'concepts') {
       // Concepts subtab "done" = unit has at least one concept-type row AND
       // every concept has a video URL set. This is the metric that matters
@@ -248,10 +222,13 @@ export function DataEntryTab() {
 
   const layerDoneCount = (layer: Layer): number =>
     bookUnits.filter(u => {
-      if (layer === 'exercises') return getExercisesOnly(u.id).length > 0;
-      if (layer === 'pages') {
+      if (layer === 'units') {
         const meta = getUnitMeta(u.id);
-        return meta?.startPage != null && meta?.endPage != null;
+        return (
+          getExercisesOnly(u.id).length > 0 &&
+          meta?.startPage != null &&
+          meta?.endPage != null
+        );
       }
       if (layer === 'concepts') {
         const cs = getUnitConcepts(u.id);
@@ -263,57 +240,11 @@ export function DataEntryTab() {
 
   // === HANDLERS ===
   const handleUnitTap = (unit: BookUnit) => {
-    if (activeLayer === 'exercises') {
-      setReviewToggle(unitHasReview(unit.id));
-      setExDialogUnit(unit);
-    } else if (activeLayer === 'pages') {
-      const meta = getUnitMeta(unit.id);
-      setPgStart(meta?.startPage?.toString() || '');
-      setPgEnd(meta?.endPage?.toString() || '');
-      setPgDialogUnit(unit);
-    } else if (activeLayer === 'concepts') {
+    if (activeLayer === 'concepts') {
       setConceptsUnitId(unit.id);
     } else {
       setDetailUnitId(unit.id);
     }
-  };
-
-  const handleExerciseSelect = async (count: number) => {
-    if (!exDialogUnit) return;
-    const { id: unitId, number: unitNumber } = exDialogUnit;
-    const currentMax = getMaxExNum(unitId);
-    const isNew = getExercisesOnly(unitId).length === 0;
-
-    if (isNew) {
-      await bulkAddMutation({ unitId, unitNumber, lastExercise: count, hasReview: reviewToggle });
-      toast.success(`Generated exercises for unit ${unitNumber}`);
-    } else if (count > currentMax) {
-      await bulkAddMutation({
-        unitId,
-        unitNumber,
-        lastExercise: count,
-        hasReview: false,
-        startFrom: currentMax + 1,
-      });
-      toast.success(`Added exercises ${unitNumber}.${currentMax + 1} – ${unitNumber}.${count}`);
-    } else if (count < currentMax) {
-      await trimMutation({ unitId, unitNumber, keepUpTo: count });
-      toast.success(`Trimmed to ${unitNumber}.1 – ${unitNumber}.${count}`);
-    }
-    setExDialogUnit(null);
-  };
-
-  const handlePageSave = async () => {
-    if (!pgDialogUnit) return;
-    const start = parseInt(pgStart);
-    const end = parseInt(pgEnd);
-    if (isNaN(start) || isNaN(end) || start > end || start < 1) {
-      toast.error('Enter valid page numbers');
-      return;
-    }
-    await setUnitPagesMutation({ unitId: pgDialogUnit.id, startPage: start, endPage: end });
-    toast.success(`Pages set for unit ${pgDialogUnit.number}`);
-    setPgDialogUnit(null);
   };
 
   const handleSaveConcept = async () => {
@@ -679,8 +610,7 @@ export function DataEntryTab() {
       <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4">
         {(
           [
-            { key: 'exercises', label: 'Exercises' },
-            { key: 'pages', label: 'Page Nos' },
+            { key: 'units', label: 'Book' },
             { key: 'details', label: 'Details' },
             { key: 'concepts', label: 'Concepts' },
             { key: 'past-papers', label: 'Past Papers' },
@@ -830,101 +760,46 @@ export function DataEntryTab() {
       {activeLayer !== 'past-papers' && activeLayer !== 'difficulty' && (
         !selectedBook ? (
           <p className="text-sm text-muted-foreground text-center py-8">Select a book to start</p>
+        ) : bookUnits.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">
+            No units found for this book&apos;s range
+          </p>
+        ) : activeLayer === 'units' ? (
+          /* Combined Exercises + Page Nos entry with embedded book viewer.
+             Keyed by book so switching books resets selection/form state. */
+          <BookEntryView
+            key={selectedBook._id}
+            textbook={selectedBook}
+            bookUnits={bookUnits}
+            allExercises={allExercises || []}
+            allUnitMeta={allUnitMeta || []}
+          />
         ) : (
-          <>
-            {/* Unit grid */}
-            {bookUnits.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No units found for this book&apos;s range
-              </p>
-            ) : (
-              <div className="grid grid-cols-5 gap-2">
-                {bookUnits.map(unit => {
-                  const done = isUnitDone(unit);
-                  return (
-                    <button
-                      key={unit.id}
-                      onClick={() => handleUnitTap(unit)}
-                      className={`p-2 rounded-xl border text-center transition-all active:scale-95 ${
-                        done
-                          ? 'bg-emerald-500/10 border-emerald-500/30'
-                          : 'bg-card border-border/50 hover:border-primary/30'
-                      }`}
-                    >
-                      <div className={`text-lg font-bold ${done ? 'text-emerald-400' : 'text-foreground'}`}>
-                        {unit.number}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
-                        {unit.name.replace(/^\d+\.\s*/, '')}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </>
+          <div className="grid grid-cols-5 gap-2">
+            {bookUnits.map(unit => {
+              const done = isUnitDone(unit);
+              return (
+                <button
+                  key={unit.id}
+                  onClick={() => handleUnitTap(unit)}
+                  className={`p-2 rounded-xl border text-center transition-all active:scale-95 ${
+                    done
+                      ? 'bg-emerald-500/10 border-emerald-500/30'
+                      : 'bg-card border-border/50 hover:border-primary/30'
+                  }`}
+                >
+                  <div className={`text-lg font-bold ${done ? 'text-emerald-400' : 'text-foreground'}`}>
+                    {unit.number}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
+                    {unit.name.replace(/^\d+\.\s*/, '')}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         )
       )}
-
-      {/* ─── LAYER 1: Exercise Count Dialog ─── */}
-      <Dialog open={!!exDialogUnit} onOpenChange={open => !open && setExDialogUnit(null)}>
-        <DialogContent className="max-w-sm mx-auto">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Unit {exDialogUnit?.number}: Exercises</DialogTitle>
-          </DialogHeader>
-          {exDialogUnit && (
-            <ExercisePickerBody
-              unit={exDialogUnit}
-              currentMax={getMaxExNum(exDialogUnit.id)}
-              isNew={getExercisesOnly(exDialogUnit.id).length === 0}
-              hasReview={unitHasReview(exDialogUnit.id)}
-              reviewToggle={reviewToggle}
-              onReviewToggle={() => setReviewToggle(r => !r)}
-              onSelect={handleExerciseSelect}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ─── LAYER 2: Page Number Dialog ─── */}
-      <Dialog open={!!pgDialogUnit} onOpenChange={open => !open && setPgDialogUnit(null)}>
-        <DialogContent className="max-w-xs mx-auto">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Unit {pgDialogUnit?.number}: Page Range</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex gap-3 items-center">
-              <div className="flex-1">
-                <Label className="text-xs">Start Page</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={pgStart}
-                  onChange={e => setPgStart(e.target.value)}
-                  placeholder="e.g. 45"
-                  className="font-mono mt-1"
-                  autoFocus
-                />
-              </div>
-              <span className="text-muted-foreground mt-5">—</span>
-              <div className="flex-1">
-                <Label className="text-xs">End Page</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={pgEnd}
-                  onChange={e => setPgEnd(e.target.value)}
-                  placeholder="e.g. 62"
-                  className="font-mono mt-1"
-                />
-              </div>
-            </div>
-            <Button onClick={handlePageSave} className="w-full rounded-xl">
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
         <PagesOverviewDrawer
           open={!!pagesDrawerUnit}
@@ -1587,79 +1462,6 @@ function ExerciseCard({
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function ExercisePickerBody({
-  unit,
-  currentMax,
-  isNew,
-  hasReview,
-  reviewToggle,
-  onReviewToggle,
-  onSelect,
-}: {
-  unit: BookUnit;
-  currentMax: number;
-  isNew: boolean;
-  hasReview: boolean;
-  reviewToggle: boolean;
-  onReviewToggle: () => void;
-  onSelect: (count: number) => void;
-}) {
-  const toggleOn = isNew ? reviewToggle : hasReview;
-
-  return (
-    <div className="space-y-4">
-      {/* Review toggle */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={isNew ? onReviewToggle : undefined}
-          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-            toggleOn ? 'bg-primary' : 'bg-muted-foreground/30'
-          } ${!isNew ? 'opacity-50 cursor-default' : ''}`}
-          disabled={!isNew}
-        >
-          <span
-            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${toggleOn ? 'translate-x-5' : ''}`}
-          />
-        </button>
-        <div>
-          <p className="text-sm font-medium">Review ({unit.number}.0)</p>
-          {!isNew && (
-            <p className="text-[11px] text-muted-foreground">{hasReview ? 'Already added' : 'Not added'}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Number grid */}
-      <div>
-        <p className="text-xs text-muted-foreground mb-2">
-          {isNew ? 'Select number of exercises:' : `Current: ${currentMax}. Tap to change.`}
-        </p>
-        <div className="grid grid-cols-6 gap-1.5">
-          {Array.from({ length: 30 }, (_, i) => i + 1).map(n => {
-            const isCurrent = !isNew && n === currentMax;
-            const isLower = !isNew && n < currentMax;
-            return (
-              <button
-                key={n}
-                onClick={() => onSelect(n)}
-                className={`h-10 rounded-lg text-sm font-medium transition-all ${
-                  isCurrent
-                    ? 'bg-emerald-500 text-white'
-                    : isLower
-                      ? 'bg-muted hover:bg-destructive/10 hover:text-destructive text-muted-foreground'
-                      : 'bg-muted hover:bg-primary/10 hover:text-primary text-foreground'
-                }`}
-              >
-                {n}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
   );
 }
 
