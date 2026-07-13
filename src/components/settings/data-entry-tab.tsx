@@ -19,9 +19,8 @@ import { SubQuestionInline } from '@/components/sub-question-inline';
 import { getSubLabel, type SubQuestionsMap } from '@/lib/sub-questions';
 import { ConceptsUnitView } from '@/components/settings/concepts-unit-drawer';
 import { DifficultyTab } from '@/components/settings/difficulty-tab';
-import { BookEntryView } from '@/components/settings/book-entry-view';
 
-type Layer = 'units' | 'details' | 'concepts' | 'past-papers' | 'difficulty';
+type Layer = 'details' | 'concepts' | 'past-papers' | 'difficulty';
 
 interface BookUnit {
   id: string;
@@ -38,7 +37,7 @@ const SS_DETAIL = 'dataEntry.detailUnitId';
 const SS_CONCEPTS = 'dataEntry.conceptsUnitId';
 
 const isLayer = (v: string | null): v is Layer =>
-  v === 'units' || v === 'details' || v === 'concepts' || v === 'past-papers' || v === 'difficulty';
+  v === 'details' || v === 'concepts' || v === 'past-papers' || v === 'difficulty';
 
 export function DataEntryTab() {
   const router = useRouter();
@@ -63,12 +62,11 @@ export function DataEntryTab() {
     return window.sessionStorage.getItem(SS_BOOK);
   });
   const [activeLayer, setActiveLayer] = useState<Layer>(() => {
-    if (typeof window === 'undefined') return 'units';
+    if (typeof window === 'undefined') return 'details';
     const v = window.sessionStorage.getItem(SS_LAYER);
-    // Legacy values from before the Exercises + Page Nos merge map to the
-    // combined Book tab.
-    if (v === 'exercises' || v === 'pages') return 'units';
-    return isLayer(v) ? v : 'units';
+    // Legacy values from before Exercises + Page Nos moved to the top-level
+    // Book tab fall back to Details.
+    return isLayer(v) ? v : 'details';
   });
 
   // === LAYER 3 — Detail view ===
@@ -222,14 +220,6 @@ export function DataEntryTab() {
 
   const layerDoneCount = (layer: Layer): number =>
     bookUnits.filter(u => {
-      if (layer === 'units') {
-        const meta = getUnitMeta(u.id);
-        return (
-          getExercisesOnly(u.id).length > 0 &&
-          meta?.startPage != null &&
-          meta?.endPage != null
-        );
-      }
       if (layer === 'concepts') {
         const cs = getUnitConcepts(u.id);
         return cs.length > 0 && cs.every(c => !!c.videoUrl);
@@ -610,7 +600,6 @@ export function DataEntryTab() {
       <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4">
         {(
           [
-            { key: 'units', label: 'Book' },
             { key: 'details', label: 'Details' },
             { key: 'concepts', label: 'Concepts' },
             { key: 'past-papers', label: 'Past Papers' },
@@ -764,16 +753,6 @@ export function DataEntryTab() {
           <p className="text-sm text-muted-foreground text-center py-8">
             No units found for this book&apos;s range
           </p>
-        ) : activeLayer === 'units' ? (
-          /* Combined Exercises + Page Nos entry with embedded book viewer.
-             Keyed by book so switching books resets selection/form state. */
-          <BookEntryView
-            key={selectedBook._id}
-            textbook={selectedBook}
-            bookUnits={bookUnits}
-            allExercises={allExercises || []}
-            allUnitMeta={allUnitMeta || []}
-          />
         ) : (
           <div className="grid grid-cols-5 gap-2">
             {bookUnits.map(unit => {

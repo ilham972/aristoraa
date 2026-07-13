@@ -5,12 +5,13 @@ import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
 import { GeneralTab } from '@/components/settings/general-tab';
 import { CurriculumTab } from '@/components/settings/curriculum-tab';
 import { ContentTab } from '@/components/settings/content-tab';
+import { BookTab } from '@/components/settings/book-tab';
 import { DataEntryTab } from '@/components/settings/data-entry-tab';
 import { TagsTab } from '@/components/settings/tags-tab';
 
-type Tab = 'general' | 'content' | 'curriculum' | 'tags' | 'data-entry';
+type Tab = 'general' | 'content' | 'book' | 'curriculum' | 'tags' | 'data-entry';
 
-const TAB_KEYS: Tab[] = ['general', 'content', 'curriculum', 'tags', 'data-entry'];
+const TAB_KEYS: Tab[] = ['general', 'content', 'book', 'curriculum', 'tags', 'data-entry'];
 const SS_KEY = 'settings.activeTab';
 
 function readPersistedTab(): Tab {
@@ -22,6 +23,7 @@ function readPersistedTab(): Tab {
 const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'general', label: 'General', adminOnly: false },
   { key: 'content', label: 'Content', adminOnly: true },
+  { key: 'book', label: 'Book', adminOnly: true },
   { key: 'curriculum', label: 'Curriculum', adminOnly: true },
   { key: 'tags', label: 'Tags', adminOnly: true },
   { key: 'data-entry', label: 'Data Entry', adminOnly: true },
@@ -78,6 +80,7 @@ export default function SettingsPage() {
 
       {activeTab === 'general' && <GeneralTab isAdmin={isAdmin || !teacher} />}
       {activeTab === 'content' && <ContentTab />}
+      {activeTab === 'book' && <BookTab />}
       {activeTab === 'curriculum' && <CurriculumTab />}
       {activeTab === 'tags' && <TagsTab />}
       {activeTab === 'data-entry' && <DataEntryTab />}

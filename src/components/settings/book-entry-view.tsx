@@ -49,11 +49,16 @@ export function BookEntryView({
   bookUnits,
   allExercises,
   allUnitMeta,
+  fullscreen = false,
 }: {
   textbook: { _id: Id<'textbooks'>; grade: number; part: number; totalPages: number };
   bookUnits: BookEntryUnit[];
   allExercises: ExerciseRow[];
   allUnitMeta: UnitMetaRow[];
+  // Full-screen focus mode (Book tab overlay): the viewer stretches to fill
+  // the remaining height and the entry bar sits at the real screen bottom
+  // (the app's bottom nav is hidden by the host while this is on).
+  fullscreen?: boolean;
 }) {
   const pages = useQuery(api.textbookPages.listSmallPages, { textbookId: textbook._id });
 
@@ -374,9 +379,9 @@ export function BookEntryView({
   const contentStyle = { zoom: scale } as CSSProperties & { zoom: number };
 
   return (
-    <>
+    <div className={fullscreen ? 'flex flex-col flex-1 min-h-0' : ''}>
       {/* ─── Unit pill strip ─── */}
-      <div ref={stripRef} className="flex gap-1.5 overflow-x-auto no-scrollbar pb-2 mb-2">
+      <div ref={stripRef} className="flex gap-1.5 overflow-x-auto no-scrollbar pb-2 mb-2 shrink-0">
         {bookUnits.map(unit => {
           const pg = pagesDone(unit.id);
           const ex = exercisesDone(unit.id);
@@ -426,7 +431,9 @@ export function BookEntryView({
       {/* ─── Book viewer ─── */}
       <div
         ref={scrollRef}
-        className="rounded-xl border border-border/50 bg-muted/30 overflow-auto h-[50vh] min-h-[300px]"
+        className={`rounded-xl border border-border/50 bg-muted/30 overflow-auto overscroll-contain ${
+          fullscreen ? 'flex-1 min-h-0' : 'h-[50vh] min-h-[300px]'
+        }`}
         style={{ touchAction: 'pan-x pan-y' }}
       >
         {!pages ? (
@@ -493,8 +500,12 @@ export function BookEntryView({
       {/* ─── Sticky entry bar (sits above the app's bottom nav) ─── */}
       {selectedUnit && (
         <div
-          className="sticky z-40 mt-3 rounded-xl border border-border bg-card shadow-lg p-3 space-y-2.5"
-          style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom) + 8px)' }}
+          className="sticky z-40 mt-3 rounded-xl border border-border bg-card shadow-lg p-3 space-y-2.5 shrink-0"
+          style={{
+            bottom: fullscreen
+              ? 'calc(env(safe-area-inset-bottom) + 8px)'
+              : 'calc(4rem + env(safe-area-inset-bottom) + 8px)',
+          }}
         >
           <div className="flex items-center gap-2">
             <p className="text-xs font-semibold text-foreground flex-1 truncate">
@@ -627,6 +638,6 @@ export function BookEntryView({
           </div>
         </DrawerContent>
       </Drawer>
-    </>
+    </div>
   );
 }

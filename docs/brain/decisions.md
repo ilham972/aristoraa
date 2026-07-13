@@ -166,7 +166,11 @@ because Z.
   alerts still surface gaps. Serves the founder's layer-by-layer teaching
   (layer 1 = light intro sweep, deeper layers via revision + harder sets).
 
-## Data Entry "Book" tab (2026-07-13)
+## Settings "Book" tab (2026-07-13)
+- **Promoted to its own top-level Settings tab** (next to Content) with a
+  full-screen focus toggle (fixed overlay, bottom nav hidden via
+  NavVisibility) — founder wanted distraction-free entry; Data Entry keeps
+  Details/Concepts/Past Papers/Difficulty only.
 - **Exercises + Page Nos sub-tabs MERGED** into one Book tab with the
   uploaded book embedded — the physical-book trip was the bottleneck.
   Chose one continuous read-the-book-once pass (pills top, viewer middle,
@@ -194,6 +198,12 @@ because Z.
   duplicated copies) which hid the Generate-sheet button on Sundays + dropped
   Sunday reminders. Fixed 2026-07-13: single source `convex/lib/offDays.ts`
   (`DEFAULT_OFF_DAYS = []`); config/sheets/messaging all delegate to it.
+- **Lesson Builder crops: TRUE aspect ratio at page scale, always** (v4,
+  2026-07-13) — never letterbox crops in fixed squares, never shrink text
+  below page scale. Density comes from PACKING (narrow crops 2-up, wide
+  full-width) + slim tick strip, not from scaling down. The picker shows stem
+  crops as shared rows (same analyzeCropIntegrity the PDF render uses) so a
+  sub-part is never displayed without its instruction text.
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.
