@@ -92,6 +92,27 @@ export const PROXIMITY_HORIZON_DAYS = 90;
 // midpoint of the 1..5 scale; matches the algorithm_plan.md fallback.
 export const DEFAULT_QUESTION_DIFFICULTY = 3;
 
+// ─── Coverage mode (manual switch, 2026-07-14) ────────────────────────────
+// When settings.coverageModeActive is ON, the within-concept question choice
+// becomes coverage-first: climb the teacher's easy→hard ladder through
+// UNSEEN questions (finish the book before the exam, no repeats), while
+// spaced repetition still decides WHEN a concept appears. Founder decision:
+// coverage-first is the short-runway mode; the fit-Gaussian engine is the
+// long-runway default.
+// The ladder-next unseen question gets fit 1.0; each further rung decays so
+// the next rung decisively outranks its siblings within the concept.
+export const COVERAGE_LADDER_DECAY = 0.8;
+export const COVERAGE_LADDER_FLOOR = 0.3;
+// A question this many difficulty points above the student's current skill
+// is NOT the next rung (not ready — it waits until mastery grows). For weak
+// students this defers the hardest tail automatically ("skip the last
+// layer" without a manual flag).
+export const COVERAGE_MAX_STEP_UP = 2;
+// Already-seen questions keep their Gaussian fit damped by this factor, so
+// they only win once every eligible unseen rung is exhausted — then the
+// engine gracefully degrades to today's repeat behaviour.
+export const COVERAGE_SEEN_FIT_DAMP = 0.25;
+
 // ─── Phase D.3: slot allocator / sheet sizing / phase-of-term reweighting ──
 
 // Default off-days when a student has no `offDays` field set. The centre runs

@@ -66,6 +66,11 @@ import {
   questionsTaggedToConcept,
 } from "./derivedConcepts";
 import {
+  coverageLadderFits,
+  type CoverageFitOverride,
+  type CoverageQuestion,
+} from "./coverageMode";
+import {
   NOVELTY_COOLDOWN_DAYS,
   W_IMPORTANCE,
   W_URGENCY,
@@ -181,6 +186,8 @@ type CandidateQuestion = {
   _id: Id<"questionBank">;
   source: string;
   difficulty: number | null;
+  // Lesson Builder drag order — the coverage-mode ladder tie-break.
+  pickerOrder: number | null;
   linkedExerciseId: Id<"exercises"> | null;
   linkedQuestionKey: string | null;
   pastPaperId: Id<"pastPapers"> | null;
@@ -388,6 +395,7 @@ async function buildCandidatePool(
       _id: q._id,
       source: q.source,
       difficulty: q.difficulty ?? null,
+      pickerOrder: q.pickerOrder ?? null,
       linkedExerciseId: q.linkedExerciseId ?? null,
       linkedQuestionKey: q.linkedQuestionKey ?? null,
       pastPaperId: q.pastPaperId ?? null,
@@ -553,6 +561,11 @@ export type ScoreBreakdown = ScoreFactors & {
   // entirely so the factor breakdown UI can label the row honestly.
   urgencyOverride: number | null;
   urgencyOverrideReason: string | null;
+  // Coverage mode (2026-07-14): when active, the Gaussian difficulty-fit is
+  // replaced by the coverage-ladder value (see coverageMode.ts) and the
+  // reason names the rung — same honesty contract as the urgency override.
+  fitOverride: number | null;
+  fitOverrideReason: string | null;
 };
 
 // Pure scoring function. Inputs are already-resolved memory state + exam
@@ -572,6 +585,10 @@ export function scoreCandidate(args: {
   // surfaces in the ScoreBreakdown for the audit trail / UI labelling.
   urgencyOverride?: number | null;
   urgencyOverrideReason?: string | null;
+  // Coverage mode: when set, replaces the Gaussian difficulty-fit entirely
+  // (clamped to [0,1]). Reason surfaces in the ScoreBreakdown.
+  fitOverride?: number | null;
+  fitOverrideReason?: string | null;
 }): ScoreBreakdown {
   const importance = clamp01(args.importance);
 
@@ -588,13 +605,16 @@ export function scoreCandidate(args: {
           (overdue > 0 ? URGENCY_OVERDUE_BOOST : 0),
       );
 
-  // Difficulty fit (Gaussian peak).
+  // Difficulty fit (Gaussian peak) — unless coverage mode supplies a
+  // ladder override (replaces, not stacks, same honesty rule as urgency).
   const studentSkillOnConcept = 1 + 4 * clamp01(args.mastery); // 1..5
   const qDifficulty = args.qDifficulty ?? DEFAULT_QUESTION_DIFFICULTY;
   const delta = qDifficulty - studentSkillOnConcept;
-  const fit = clamp01(
-    Math.exp(-(delta * delta) / (2 * FIT_SIGMA * FIT_SIGMA)),
-  );
+  const hasFitOverride =
+    args.fitOverride !== undefined && args.fitOverride !== null;
+  const fit = hasFitOverride
+    ? clamp01(args.fitOverride as number)
+    : clamp01(Math.exp(-(delta * delta) / (2 * FIT_SIGMA * FIT_SIGMA)));
 
   // Novelty: 1.0 here because D.1 already filtered the cooldown window.
   const novelty = 1;
@@ -629,7 +649,75 @@ export function scoreCandidate(args: {
     urgencyOverrideReason: hasOverride
       ? args.urgencyOverrideReason ?? null
       : null,
+    fitOverride: hasFitOverride ? clamp01(args.fitOverride as number) : null,
+    fitOverrideReason: hasFitOverride
+      ? args.fitOverrideReason ?? null
+      : null,
   };
+}
+
+// ── Coverage mode — per-(concept, question) fit overrides ────────────────
+// Reads the manual switch; when ON, builds the ladder overrides for the
+// whole candidate pool in one pass. Seen = the question appeared on ANY of
+// the student's sheets strictly BEFORE dateStr (today's own draft never
+// damps a same-day regenerate). Returns null when the mode is off, so both
+// call sites stay zero-cost on the default path.
+async function buildCoverageOverrides(
+  ctx: ReadCtx,
+  args: {
+    studentId: Id<"students">;
+    dateStr: string;
+    candidates: RawCandidate[];
+  },
+): Promise<Map<string, CoverageFitOverride> | null> {
+  const settings = await ctx.db.query("settings").first();
+  if (settings?.coverageModeActive !== true) return null;
+
+  const priorSheets = await ctx.db
+    .query("generatedSheets")
+    .withIndex("by_student_date", (q) =>
+      q.eq("studentId", args.studentId).lt("date", args.dateStr),
+    )
+    .collect();
+  const seenEver = new Set<string>();
+  for (const s of priorSheets) {
+    for (const qId of s.warmupQuestionIds) seenEver.add(qId as unknown as string);
+    for (const qId of s.mainQuestionIds) seenEver.add(qId as unknown as string);
+    for (const qId of s.revisionQuestionIds ?? [])
+      seenEver.add(qId as unknown as string);
+    for (const qId of s.examPrepQuestionIds)
+      seenEver.add(qId as unknown as string);
+  }
+
+  // Group the pool per concept, then let the pure ladder helper decide.
+  const byConcept = new Map<
+    string,
+    { skill: number; questions: CoverageQuestion[] }
+  >();
+  for (const c of args.candidates) {
+    const cid = c.concept.conceptId as unknown as string;
+    let g = byConcept.get(cid);
+    if (!g) {
+      g = { skill: 1 + 4 * Math.min(1, Math.max(0, c.concept.mastery)), questions: [] };
+      byConcept.set(cid, g);
+    }
+    g.questions.push({
+      id: c.question._id as unknown as string,
+      difficulty: c.question.difficulty,
+      pickerOrder: c.question.pickerOrder,
+      seen: seenEver.has(c.question._id as unknown as string),
+    });
+  }
+
+  const out = new Map<string, CoverageFitOverride>();
+  byConcept.forEach((g, cid) => {
+    const fits = coverageLadderFits({
+      questions: g.questions,
+      studentSkill: g.skill,
+    });
+    fits.forEach((v, qid) => out.set(`${cid}|${qid}`, v));
+  });
+  return out;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -695,6 +783,14 @@ export const scoredCandidatePool = query({
       factors: ScoreBreakdown;
     };
 
+    // Coverage mode (2026-07-14): same overrides the real planner applies,
+    // so this inspection view matches what generation will do.
+    const coverage = await buildCoverageOverrides(ctx, {
+      studentId: args.studentId,
+      dateStr: args.dateStr,
+      candidates: pool.candidates,
+    });
+
     const scored: ScoredCandidate[] = pool.candidates.map((c) => {
       const daysToExam = daysToExamForTerm(c.concept.term);
       const backstop = examBackstopUrgency({
@@ -703,6 +799,9 @@ export const scoredCandidatePool = query({
         daysToExam,
         asOfMs: pool.asOfMs,
       });
+      const cov = coverage?.get(
+        `${c.concept.conceptId as unknown as string}|${c.question._id as unknown as string}`,
+      );
       const factors = scoreCandidate({
         importance: c.concept.importance,
         R: c.concept.R,
@@ -714,6 +813,8 @@ export const scoredCandidatePool = query({
         asOfMs: pool.asOfMs,
         urgencyOverride: backstop.fired ? 1.0 : null,
         urgencyOverrideReason: backstop.reason,
+        fitOverride: cov ? cov.fit : null,
+        fitOverrideReason: cov ? cov.reason : null,
       });
       return {
         question: c.question,
@@ -1589,6 +1690,14 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     // 1.0 when the natural review interval would slip past the exam-prep
     // deadline. Replaces (does not stack on top of) the standard urgency
     // formula so the factor breakdown remains honest.
+    // Coverage mode (2026-07-14, manual switch): within a concept the next
+    // UNSEEN ladder question outranks its siblings via a fit override —
+    // spaced repetition still owns WHEN, this owns WHICH. Null when off.
+    const coverage = await buildCoverageOverrides(ctx, {
+      studentId: args.studentId,
+      dateStr: args.dateStr,
+      candidates: pool.candidates,
+    });
     const scored: ScoredCandidate[] = pool.candidates.map((c) => {
       const daysToExam = daysToExamForTerm(c.concept.term);
       const backstop = examBackstopUrgency({
@@ -1597,6 +1706,9 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         daysToExam,
         asOfMs: pool.asOfMs,
       });
+      const cov = coverage?.get(
+        `${c.concept.conceptId as unknown as string}|${c.question._id as unknown as string}`,
+      );
       const factors = scoreCandidate({
         importance: c.concept.importance,
         R: c.concept.R,
@@ -1608,6 +1720,8 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         asOfMs: pool.asOfMs,
         urgencyOverride: backstop.fired ? 1.0 : null,
         urgencyOverrideReason: backstop.reason,
+        fitOverride: cov ? cov.fit : null,
+        fitOverrideReason: cov ? cov.reason : null,
       });
       return {
         question: c.question,
@@ -2136,6 +2250,7 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         ...pool.meta,
         scoredCount: scored.length,
         pickedCount: totalPicked,
+        coverageModeActive: coverage !== null,
         weights: {
           importance: W_IMPORTANCE,
           urgency: W_URGENCY,

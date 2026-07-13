@@ -9,6 +9,7 @@ type SettingsShape = {
   allowManualSlotSelection: boolean;
   defaultCenterId: Id<"centers"> | undefined;
   tuitionName?: string;
+  coverageModeActive: boolean;
 };
 
 export const get = query({
@@ -17,6 +18,7 @@ export const get = query({
     const fallback: SettingsShape = {
       allowManualSlotSelection: false,
       defaultCenterId: undefined,
+      coverageModeActive: false,
     };
     if (!identity) return fallback;
     const row = await ctx.db.query("settings").first();
@@ -25,7 +27,28 @@ export const get = query({
       allowManualSlotSelection: row.allowManualSlotSelection ?? false,
       defaultCenterId: row.defaultCenterId,
       tuitionName: row.tuitionName,
+      coverageModeActive: row.coverageModeActive ?? false,
     };
+  },
+});
+
+// Manual coverage-mode switch (2026-07-14). Dedicated setter, same pattern
+// as setDefaultCenter — the exam-calendar page toggles this one value
+// without touching the rest of the settings row.
+export const setCoverageMode = mutation({
+  args: { active: v.boolean() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db.query("settings").first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { coverageModeActive: args.active });
+    } else {
+      await ctx.db.insert("settings", {
+        tuitionName: "Aristora",
+        coverageModeActive: args.active,
+      });
+    }
   },
 });
 

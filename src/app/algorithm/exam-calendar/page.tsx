@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const GRADES = [6, 7, 8, 9, 10, 11];
@@ -77,6 +78,8 @@ export default function ExamCalendarPage() {
   const updateById = useMutation(api.learningEngine.calendar.updateById);
   const remove = useMutation(api.learningEngine.calendar.remove);
   const setExamMode = useMutation(api.learningEngine.calendar.setExamMode);
+  const settings = useQuery(api.settings.get);
+  const setCoverageMode = useMutation(api.settings.setCoverageMode);
 
   const [openGrade, setOpenGrade] = useState<number | null>(7);
   const [draft, setDraft] = useState<DraftForm | null>(null);
@@ -202,6 +205,59 @@ export default function ExamCalendarPage() {
         backstop, retention-debt &ldquo;marks at risk&rdquo; estimates, and the
         Phase G predictor.
       </p>
+
+      {/* Coverage mode — global manual switch (2026-07-14). Sibling of the
+          per-exam exam-mode toggles below: both are "runway" levers. */}
+      <div
+        className={cn(
+          'mb-4 rounded-xl border px-3 py-2.5',
+          settings?.coverageModeActive
+            ? 'border-primary/60 bg-primary/10'
+            : 'border-border bg-card',
+        )}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-foreground">
+              Coverage mode {settings?.coverageModeActive ? '— ON' : ''}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">
+              Short exam runway: revision climbs each concept&rsquo;s easy→hard
+              ladder through <b>unseen</b> book questions (no repeats) until the
+              pool is finished. Off = normal difficulty-matched revision.
+              Timing stays spaced repetition either way.
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              const next = !(settings?.coverageModeActive ?? false);
+              try {
+                await setCoverageMode({ active: next });
+                toast.success(
+                  next
+                    ? 'Coverage mode ON — finish the book, no repeats'
+                    : 'Coverage mode off — difficulty-matched revision',
+                );
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Failed to update');
+              }
+            }}
+            disabled={settings === undefined}
+            className={cn(
+              'shrink-0 w-11 h-6 rounded-full transition-colors relative',
+              settings?.coverageModeActive ? 'bg-primary' : 'bg-muted',
+            )}
+            aria-label="Toggle coverage mode"
+          >
+            <span
+              className={cn(
+                'absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all',
+                settings?.coverageModeActive ? 'left-[22px]' : 'left-0.5',
+              )}
+            />
+          </button>
+        </div>
+      </div>
 
       <button
         onClick={() => openCreate(openGrade ?? 7)}

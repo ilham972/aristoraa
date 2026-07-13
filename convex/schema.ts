@@ -81,6 +81,13 @@ export default defineSchema({
     allowManualSlotSelection: v.optional(v.boolean()),
     // Default centre used as the starting value for new groups.
     defaultCenterId: v.optional(v.id("centers")),
+    // Manual "coverage mode" switch (Founder, 2026-07-14). When true, the
+    // planner's within-concept question choice becomes coverage-first: the
+    // next UNSEEN question in the teacher's easy→hard order (the ladder)
+    // instead of the Gaussian difficulty-fit — so students work through the
+    // whole book before the exam without repeats. Timing (when a concept is
+    // due) stays pure spaced repetition. Like exam mode, NEVER auto-toggled.
+    coverageModeActive: v.optional(v.boolean()),
   }),
 
   centers: defineTable({

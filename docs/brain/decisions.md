@@ -213,6 +213,17 @@ because Z.
   (a sub-part is never shown without instruction). "Book order" pill is a
   VIEW-ONLY lens (families together, stems once) for inspecting algo picks —
   founder explicitly rejected it changing print order.
+- **Coverage-first mode is MANUAL and replaces fit, never SR timing**
+  (2026-07-14). Founder insight: each book question is a distinct exam
+  pattern — pulling a FRESH question on a due concept IS the repetition, so
+  with a short exam runway students should climb each concept's easy→hard
+  ladder through unseen questions (whole book, no repeats) before moving to
+  past papers. Chose a fit-factor override inside the existing engine over
+  the founder's first idea (prebuilt layered revision sheets) — prebuilt
+  sheets lose personal timing + interleave and re-create blocked practice
+  (founder diagnosed this himself). Manual switch like exam mode; default
+  engine = long-runway fallback. Weak students: hard tail deferred by
+  skill+2 cap, not a manual flag. 100% book coverage is a TARGET, not law.
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.
