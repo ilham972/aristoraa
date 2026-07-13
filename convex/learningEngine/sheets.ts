@@ -36,26 +36,12 @@ import {
   type CropIntegrityWithMessage,
 } from "./cropIntegrity";
 import { effectiveStudentIdsForSlot } from "../lib/roster";
+import { isOffDayForDate } from "../lib/offDays";
 
-// Local copy of the planner's module-of-day mapping. Defaults are Sunday off
-// only; per-student `offDays` overrides this. Names match what students.offDays
-// stores ("sunday", "monday", ...).
-const WEEKDAY_NAMES: Record<number, string> = {
-  0: "sunday",
-  1: "monday",
-  2: "tuesday",
-  3: "wednesday",
-  4: "thursday",
-  5: "friday",
-  6: "saturday",
-};
-
+// Off-day check delegates to the shared single source of truth. No default
+// off-days — a student is off only on weekdays listed in their `offDays`.
 function isOffDayFor(student: Doc<"students">, dateStr: string): boolean {
-  const ms = Date.parse(`${dateStr}T00:00:00.000Z`);
-  if (Number.isNaN(ms)) return false;
-  const weekday = WEEKDAY_NAMES[new Date(ms).getUTCDay()] ?? "";
-  const offDays = (student.offDays ?? ["sunday"]).map((d) => d.toLowerCase());
-  return offDays.includes(weekday);
+  return isOffDayForDate(student.offDays, dateStr);
 }
 
 export type SheetRowForDashboard = {

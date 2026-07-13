@@ -176,6 +176,11 @@ because Z.
   accepted, swap = one file).
 - **Day-of-week = 1=Mon..7=Sun** everywhere (a 0-based assumption once
   silently dropped Sunday slots).
+- **No default off-days** — centre runs 7 days/week. A student is off ONLY on
+  weekdays explicitly in `students.offDays`. Default was `["sunday"]` (three
+  duplicated copies) which hid the Generate-sheet button on Sundays + dropped
+  Sunday reminders. Fixed 2026-07-13: single source `convex/lib/offDays.ts`
+  (`DEFAULT_OFF_DAYS = []`); config/sheets/messaging all delegate to it.
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.

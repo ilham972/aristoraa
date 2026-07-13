@@ -94,11 +94,11 @@ export const DEFAULT_QUESTION_DIFFICULTY = 3;
 
 // ─── Phase D.3: slot allocator / sheet sizing / phase-of-term reweighting ──
 
-// Default off-day if a student has no `offDays` field set. Sri Lankan tuition
-// week is M1 Mon … M6 Sat, Sun off — but the user has confirmed off-days
-// vary per student (homeschool / weekend-batch / different centres), so this
-// is only the fallback. Lowercase weekday name to match the schema field.
-export const DEFAULT_OFF_DAYS = ["sunday"] as const;
+// Default off-days when a student has no `offDays` field set. The centre runs
+// every day — there are NO default off-days; a student is off only on weekdays
+// explicitly listed in their `offDays`. Single source of truth lives in
+// convex/lib/offDays.ts (also used by the Sheets tab + WhatsApp reminders).
+export { DEFAULT_OFF_DAYS } from "../lib/offDays";
 
 // Daily sheet target sizes, in QUESTIONS. Used as caps when packing by time
 // budget — weak student's sheet won't exceed SHEET_LEN_WEAK questions even

@@ -31,6 +31,7 @@ import {
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { tryNormalizeToE164SL } from "../lib/phone";
+import { DEFAULT_OFF_DAYS } from "../lib/offDays";
 import { pickBestTemplate, renderTemplate } from "./templates";
 import { effectiveRosterFor } from "../sessionRecords";
 import { isQuietHourColombo, nextNonQuietMs } from "./policy";
@@ -176,11 +177,12 @@ function passesFilters(student: Doc<"students">, f: Filters): boolean {
   return true;
 }
 
-// offDays defaults to ["sunday"] (sheet-planner convention). A student whose
-// off-day is tomorrow's weekday is excluded — we don't tell a parent their
-// child "has class tomorrow" on a day the child rests.
+// A student whose off-day is tomorrow's weekday is excluded — we don't tell a
+// parent their child "has class tomorrow" on a day the child rests. There are
+// no default off-days (DEFAULT_OFF_DAYS is empty); a student is off only on
+// weekdays listed in their `offDays`.
 function isOffDay(student: Doc<"students">, weekdayLower: string): boolean {
-  const off = student.offDays ?? ["sunday"];
+  const off = student.offDays ?? DEFAULT_OFF_DAYS;
   return off.map((d) => d.toLowerCase()).includes(weekdayLower);
 }
 
