@@ -64,6 +64,7 @@ export function BookEntryView({
 
   const bulkAddMutation = useMutation(api.exercises.bulkAdd);
   const trimMutation = useMutation(api.exercises.trimToCount);
+  const setReviewMutation = useMutation(api.exercises.setReview);
   const setUnitPagesMutation = useMutation(api.unitMetadata.setPages);
 
   // === DERIVED LOOKUPS ===
@@ -352,6 +353,17 @@ export function BookEntryView({
         }
       }
 
+      // Review reconcile for units that already have exercises. (New units get
+      // their review from bulkAdd above; there's nothing to reconcile.)
+      if (!isNew && reviewVal !== stats.hasReview) {
+        await setReviewMutation({
+          unitId: selectedUnit.id,
+          unitNumber: selectedUnit.number,
+          hasReview: reviewVal,
+        });
+        savedSomething = true;
+      }
+
       if (!savedSomething) {
         toast.info('Nothing new to save');
         return;
@@ -573,20 +585,17 @@ export function BookEntryView({
                 : 'Set exercises…'}
             </button>
             <button
-              onClick={() => selectedIsNew && setReviewVal(r => !r)}
-              disabled={!selectedIsNew}
+              onClick={() => setReviewVal(r => !r)}
               title={
-                selectedIsNew
-                  ? `Unit has a review exercise (${selectedUnit.number}.0)`
-                  : selectedStats.hasReview
-                    ? 'Review already added'
-                    : 'No review — set at creation'
+                reviewVal
+                  ? `Unit has a review exercise (${selectedUnit.number}.0) — tap to remove`
+                  : `No review exercise — tap to add ${selectedUnit.number}.0`
               }
               className={`h-9 px-2.5 rounded-lg text-xs font-medium transition-all shrink-0 ${
                 reviewVal
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground'
-              } ${!selectedIsNew ? 'opacity-50' : ''}`}
+              }`}
             >
               Rev{reviewVal ? ' ✓' : ''}
             </button>

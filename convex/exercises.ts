@@ -244,6 +244,51 @@ export const trimToCount = mutation({
   },
 });
 
+// Add or remove a unit's review exercise (`N.0`) AFTER the unit already has
+// exercises. bulkAdd can only set the review flag at creation time, so this is
+// the path the Book-entry Rev toggle uses to correct a unit's review state
+// later. Removing also deletes any scoring entries recorded against `N.0`.
+export const setReview = mutation({
+  args: {
+    unitId: v.string(),
+    unitNumber: v.number(),
+    hasReview: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const { unitId, unitNumber, hasReview } = args;
+    const items = await ctx.db
+      .query("exercises")
+      .withIndex("by_unit", (q) => q.eq("unitId", unitId))
+      .collect();
+    const review = items.find(
+      (e) => (e.type || "exercise") === "exercise" && e.name.endsWith(".0"),
+    );
+
+    if (hasReview && !review) {
+      // Insert with the lowest order so the review sits first in the unit.
+      const minOrder = items.length > 0 ? Math.min(...items.map((e) => e.order)) : 0;
+      await ctx.db.insert("exercises", {
+        unitId,
+        name: `${unitNumber}.0`,
+        questionCount: 0,
+        order: minOrder - 1,
+        type: "exercise",
+      });
+    } else if (!hasReview && review) {
+      const entries = await ctx.db.query("entries").collect();
+      for (const entry of entries) {
+        if (entry.exerciseId === review._id) {
+          await ctx.db.delete(entry._id);
+        }
+      }
+      await ctx.db.delete(review._id);
+    }
+  },
+});
+
 export const setSubQuestions = mutation({
   args: {
     id: v.id("exercises"),

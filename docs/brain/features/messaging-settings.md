@@ -42,7 +42,10 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
   the on-screen page, one Save logs pages + exercise count (+review), then
   auto-advances with next start prefilled (prev end + 1). Full-screen
   toggle = fixed overlay + bottom nav hidden (NavVisibility); shares the
-  selected-book sessionStorage key with Data Entry.
+  selected-book sessionStorage key with Data Entry. Rev toggle works on
+  units that ALREADY have exercises (not just new ones): Save reconciles via
+  `exercises.setReview` — adds/removes the `N.0` review row (untoggle also
+  deletes its scoring entries). (2026-07-13 fix)
 - `/settings/crop/[unitId]` + `/settings/past-paper-crop/[paperId]` — the
   question-cropping workbenches that feed the question bank (the engine's
   raw material). Crop validation: `learningEngine/cropIntegrity.ts`.
