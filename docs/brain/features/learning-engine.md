@@ -18,8 +18,9 @@ cumulative-exam holdouts.
      urgency (1−retrievability, overdue boost), fit (Gaussian difficulty↔skill
      match), novelty (hard-filtered, factor kept for future soft-novelty),
      proximity (days to exam via examCalendar).
-   - COVERAGE MODE (manual switch settings.coverageModeActive, toggled on
-     /algorithm/exam-calendar, 2026-07-14): fit is OVERRIDDEN per concept by
+   - COVERAGE MODE (manual switch settings.coverageModeActive, toggles on
+     Settings→General AND /algorithm/exam-calendar, 2026-07-14): fit is
+     OVERRIDDEN per concept by
      the easy→hard ladder over UNSEEN questions (coverageMode.ts, pure +
      unit-tested) — finish the book before the exam, no repeats; seen Qs
      damped ×0.25; too-hard tail (>skill+2) deferred (weak students skip it
