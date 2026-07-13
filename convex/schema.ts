@@ -534,6 +534,11 @@ export default defineSchema({
       h: v.number(),
     })),
     difficulty: v.optional(v.number()), // 1-5
+    // Exact position within its concept's Lesson Builder list (2026-07-13).
+    // Written by drag-reorder (which also rewrites difficulty by position);
+    // the catalog sort tie-breaks on it so the teacher's dragged order is
+    // reproduced exactly (difficulty alone has only 5 buckets).
+    pickerOrder: v.optional(v.number()),
     answerKey: v.optional(v.string()), // added later
     expectedTimeMin: v.optional(v.number()),
     // TEMPORARY-REMEDY repeat multiplier (Coverage drawer). Default 1 (== unset).

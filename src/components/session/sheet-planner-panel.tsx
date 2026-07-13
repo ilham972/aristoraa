@@ -28,10 +28,28 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation } from 'convex/react';
 import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   ArrowRight,
+  ArrowUpDown,
   BookmarkPlus,
+  BookOpen,
   Check,
   ChevronDown,
+  GripVertical,
   Minus,
   Plus,
   Sparkles,
@@ -113,6 +131,13 @@ export function SheetPlannerPanel({
   const [conceptFilter, setConceptFilter] = useState<string | 'all'>('all');
   const [ticked, setTicked] = useState<Set<string>>(() => new Set());
   const seededForUnit = useRef<string | null>(null);
+  // View modes (2026-07-13): bookView = textbook-order LENS (view only —
+  // print/tick order stays canonical easy-first; the founder uses it to
+  // inspect how the algorithm picked). arranging = drag-reorder mode where
+  // order IS difficulty (persists pickerOrder + rewrites difficulty 1-5).
+  const [bookView, setBookView] = useState(false);
+  const [arranging, setArranging] = useState(false);
+  const [arrangeOrder, setArrangeOrder] = useState<Record<string, string[]>>({});
 
   const tickedArr = useMemo(() => Array.from(ticked), [ticked]);
   const cleanedTargets = useMemo(() => {
@@ -162,6 +187,9 @@ export function SheetPlannerPanel({
   const saveLesson = useMutation(api.learningEngine.lessonSets.saveLessonSet);
   const deleteLesson = useMutation(api.learningEngine.lessonSets.deleteLessonSet);
   const saveSheet = useMutation(api.learningEngine.planner.saveSheetForStudent);
+  const reorderQuestions = useMutation(
+    api.learningEngine.lessonSets.reorderConceptQuestions,
+  );
 
   // Seed ticks ONCE per unit: frontier unit → the algorithm's own Main
   // picks; another unit the teacher navigates to → start empty.
@@ -178,6 +206,9 @@ export function SheetPlannerPanel({
       setTicked(new Set());
     }
     setConceptFilter('all');
+    setBookView(false);
+    setArranging(false);
+    setArrangeOrder({});
   }, [unitId, frontierUnitId, plan]);
 
   const algoPicks = useMemo(
@@ -499,6 +530,53 @@ export function SheetPlannerPanel({
             </div>
           )}
 
+          {/* View pills: book-order lens + drag-arrange mode */}
+          {catalog && catalog.concepts.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={() => {
+                  setBookView((v) => !v);
+                  setArranging(false);
+                }}
+                className={cn(
+                  'inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-medium transition-colors',
+                  bookView
+                    ? 'bg-primary/15 border-primary/50 text-primary'
+                    : 'bg-muted/30 border-border/70 text-muted-foreground',
+                )}
+              >
+                <BookOpen className="w-3 h-3" />
+                Book order
+              </button>
+              <button
+                onClick={() => {
+                  setArranging((a) => !a);
+                  setBookView(false);
+                  setArrangeOrder({});
+                }}
+                className={cn(
+                  'inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-medium transition-colors',
+                  arranging
+                    ? 'bg-primary/15 border-primary/50 text-primary'
+                    : 'bg-muted/30 border-border/70 text-muted-foreground',
+                )}
+              >
+                <ArrowUpDown className="w-3 h-3" />
+                {arranging ? 'Done arranging' : 'Arrange'}
+              </button>
+              {bookView && (
+                <span className="text-[9px] text-muted-foreground">
+                  view only — sheets still print easy → hard
+                </span>
+              )}
+              {arranging && (
+                <span className="text-[9px] text-muted-foreground">
+                  drag easy → hard · saves difficulty
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Concept filter chips — small, space-efficient */}
           {catalog && catalog.concepts.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -556,9 +634,26 @@ export function SheetPlannerPanel({
                     <div className="text-[10px] text-amber-500">
                       ⚠ no questions cropped for this concept
                     </div>
+                  ) : arranging ? (
+                    <ArrangeList
+                      questions={c.questions}
+                      orderIds={
+                        arrangeOrder[c.conceptId as unknown as string] ??
+                        c.questions.map((q) => q.questionId as unknown as string)
+                      }
+                      onReorder={(next) => {
+                        setArrangeOrder((s) => ({
+                          ...s,
+                          [c.conceptId as unknown as string]: next,
+                        }));
+                        reorderQuestions({
+                          orderedQuestionIds: next as unknown as Id<'questionBank'>[],
+                        }).catch((e) => toast.error(describeError(e)));
+                      }}
+                    />
                   ) : (
                     <div className="grid grid-cols-2 gap-1.5">
-                      {c.questions.map((q, qi) => {
+                      {(bookView ? sortByBookOrder(c.questions) : c.questions).map((q, qi, qs) => {
                         const k = q.questionId as unknown as string;
                         const on = ticked.has(k);
                         const byAlgo = algoPicks.has(k);
@@ -567,7 +662,7 @@ export function SheetPlannerPanel({
                           stems.length > 0
                             ? stems.map((s) => s.stemId as unknown as string).join('|')
                             : null;
-                        const prevStems = qi > 0 ? c.questions[qi - 1].stems ?? [] : [];
+                        const prevStems = qi > 0 ? qs[qi - 1].stems ?? [] : [];
                         const prevStemKey =
                           prevStems.length > 0
                             ? prevStems
@@ -915,6 +1010,160 @@ function LessonCrop({
         />
       )}
     </>
+  );
+}
+
+// ── Book-order lens ─────────────────────────────────────────────────────
+// Sorts a concept's questions by their textbook identity ("3" < "3.a" <
+// "3.a.ii" < "12.b") so families sit together and stems never repeat.
+// VIEW ONLY — tick/print order stays the canonical easy-first list.
+const ROMAN_ONLY = /^[ivx]+$/;
+const ROMAN_VALS: Record<string, number> = { i: 1, v: 5, x: 10 };
+function romanVal(s: string): number {
+  let total = 0;
+  for (let i = 0; i < s.length; i++) {
+    const v0 = ROMAN_VALS[s[i]] ?? 0;
+    const v1 = i + 1 < s.length ? ROMAN_VALS[s[i + 1]] ?? 0 : 0;
+    total += v0 < v1 ? -v0 : v0;
+  }
+  return total;
+}
+function cmpSeg(a: string, b: string): number {
+  const na = parseInt(a, 10);
+  const nb = parseInt(b, 10);
+  const aNum = Number.isFinite(na);
+  const bNum = Number.isFinite(nb);
+  if (aNum && bNum && na !== nb) return na - nb;
+  if (aNum !== bNum) return aNum ? -1 : 1; // numbered questions first
+  if (!aNum && ROMAN_ONLY.test(a) && ROMAN_ONLY.test(b)) {
+    const d = romanVal(a) - romanVal(b);
+    if (d !== 0) return d; // "ix" before "x"; single i/v/x match alpha order
+  }
+  return a.localeCompare(b);
+}
+function cmpLabel(a: string | null, b: string | null): number {
+  if (!a || !b) return a ? -1 : b ? 1 : 0; // unlabeled sink to the end
+  const as = a.split('.');
+  const bs = b.split('.');
+  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+    if (as[i] === undefined) return -1; // "3" before "3.a"
+    if (bs[i] === undefined) return 1;
+    const d = cmpSeg(as[i].trim().toLowerCase(), bs[i].trim().toLowerCase());
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+function sortByBookOrder<T extends { label: string | null }>(qs: T[]): T[] {
+  return [...qs].sort((a, b) => cmpLabel(a.label, b.label));
+}
+
+// ── Arrange mode: drag order = difficulty ───────────────────────────────
+// Mirror of the backend bucket formula in reorderConceptQuestions — the dN
+// badge on each row previews the difficulty its position will save.
+function difficultyForPosition(i: number, n: number): number {
+  return Math.min(5, Math.floor((i * 5) / n) + 1);
+}
+
+type ArrangeQ = LessonCropRef & {
+  questionId: unknown;
+  label: string | null;
+};
+
+function ArrangeList({
+  questions,
+  orderIds,
+  onReorder,
+}: {
+  questions: ArrangeQ[];
+  orderIds: string[];
+  onReorder: (next: string[]) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
+  const byId = useMemo(() => {
+    const m = new Map<string, ArrangeQ>();
+    for (const q of questions) m.set(q.questionId as string, q);
+    return m;
+  }, [questions]);
+  const onDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = orderIds.indexOf(active.id as string);
+    const to = orderIds.indexOf(over.id as string);
+    if (from < 0 || to < 0) return;
+    onReorder(arrayMove(orderIds, from, to));
+  };
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={onDragEnd}
+    >
+      <SortableContext items={orderIds} strategy={verticalListSortingStrategy}>
+        <div className="space-y-1.5">
+          {orderIds.map((id, i) => {
+            const q = byId.get(id);
+            if (!q) return null; // question left the catalog mid-arrange
+            return (
+              <ArrangeRow
+                key={id}
+                id={id}
+                q={q}
+                index={i}
+                count={orderIds.length}
+              />
+            );
+          })}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function ArrangeRow({
+  id,
+  q,
+  index,
+  count,
+}: {
+  id: string;
+  q: ArrangeQ;
+  index: number;
+  count: number;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(
+        'flex items-center gap-2 rounded-lg border bg-card px-2 py-1.5',
+        isDragging
+          ? 'relative z-10 border-primary ring-2 ring-primary/50 shadow-lg'
+          : 'border-border/60',
+      )}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 p-1.5 -m-1 text-muted-foreground touch-none cursor-grab active:cursor-grabbing"
+        aria-label="Drag to reorder"
+      >
+        <GripVertical className="w-4 h-4" />
+      </button>
+      <span className="w-9 shrink-0 text-[10px] font-semibold text-foreground truncate">
+        {q.label ?? 'Q'}
+      </span>
+      <span className="w-5 shrink-0 text-[9px] tabular-nums text-muted-foreground">
+        d{difficultyForPosition(index, count)}
+      </span>
+      <div className="flex-1 min-w-0">
+        <LessonCrop crop={q} maxH={40} zoomOn="tap" />
+      </div>
+    </div>
   );
 }
 

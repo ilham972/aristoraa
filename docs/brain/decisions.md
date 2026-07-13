@@ -204,6 +204,15 @@ because Z.
   full-width) + slim tick strip, not from scaling down. The picker shows stem
   crops as shared rows (same analyzeCropIntegrity the PDF render uses) so a
   sub-part is never displayed without its instruction text.
+- **Lesson Builder order IS difficulty** (2026-07-13) — dragging a concept's
+  questions rewrites EVERY question's difficulty 1-5 by position (top=easy)
+  + saves exact order in questionBank.pickerOrder (sort tie-break). Founder
+  chose this over order-only because visual ordering replaces the Difficulty
+  subtab workflow. Easy-first display order stays the default AND the print
+  order; stem rows repeat when a family is split by difficulty — intentional
+  (a sub-part is never shown without instruction). "Book order" pill is a
+  VIEW-ONLY lens (families together, stems once) for inspecting algo picks —
+  founder explicitly rejected it changing print order.
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.

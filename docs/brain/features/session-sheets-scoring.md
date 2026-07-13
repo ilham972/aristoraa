@@ -28,7 +28,11 @@ every crop at TRUE aspect ratio (text never shrinks below page scale),
 narrow crops pack 2-up / wide span full width, STEM crops shown as shared
 context rows above sub-part runs (listUnitQuestions reuses
 analyzeCropIntegrity — same stems the PDF glues), tap tile = tick /
-magnifier = zoom; section TABS at top + concept filter chips + Main
+magnifier = zoom; "Book order" pill = textbook-order LENS (view only, print
+stays easy-first — founder inspects algo picks); "Arrange" pill = drag rows
+(dnd-kit) where ORDER IS DIFFICULTY (reorderConceptQuestions writes
+pickerOrder + rewrites difficulty 1-5 by position — same field as the
+Difficulty subtab); section TABS at top + concept filter chips + Main
 +/- stepper (+ ticks next easy-first, − unticks last, manual ticks kept);
 named per-unit lesson presets (`unitLessonSets` via
 `learningEngine/lessonSets.ts` — listUnitQuestions catalog + CRUD). Backend calls, in lifecycle order:

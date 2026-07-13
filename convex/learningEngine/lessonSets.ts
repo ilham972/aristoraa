@@ -124,6 +124,7 @@ export const listUnitQuestions = query({
         questionId: Id<"questionBank">;
         source: string;
         difficulty: number | null;
+        pickerOrder: number | null;
         expectedTimeMin: number | null;
         label: string | null; // "3.a" / "1A.1" — whatever identity exists
         cropBox: { x: number; y: number; w: number; h: number } | null;
@@ -166,6 +167,7 @@ export const listUnitQuestions = query({
           questionId: q._id,
           source: q.source,
           difficulty: q.difficulty ?? null,
+          pickerOrder: q.pickerOrder ?? null,
           expectedTimeMin: q.expectedTimeMin ?? null,
           label: q.questionNumberInPaper ?? q.linkedQuestionKey ?? null,
           cropBox: q.cropBox ?? null,
@@ -177,9 +179,15 @@ export const listUnitQuestions = query({
           stems,
         });
       }
-      // Stable, teaching-friendly ordering: easy → hard within the concept.
+      // Stable, teaching-friendly ordering: easy → hard within the concept;
+      // pickerOrder (written by drag-reorder) tie-breaks equal difficulties
+      // so the teacher's exact dragged order is reproduced. Questions never
+      // dragged sort after dragged ones within their bucket.
       questions.sort(
-        (a, b) => (a.difficulty ?? 3) - (b.difficulty ?? 3),
+        (a, b) =>
+          (a.difficulty ?? 3) - (b.difficulty ?? 3) ||
+          (a.pickerOrder ?? Number.MAX_SAFE_INTEGER) -
+            (b.pickerOrder ?? Number.MAX_SAFE_INTEGER),
       );
       out.push({
         conceptId: concept._id,
@@ -256,5 +264,34 @@ export const deleteLessonSet = mutation({
     if (!identity) throw new Error("Unauthenticated");
     await ctx.db.delete(args.id);
     return { ok: true as const };
+  },
+});
+
+// ── Drag-reorder: order IS difficulty (2026-07-13) ────────────────────────
+// The teacher drags a concept's questions into easy→hard order in the
+// Lesson Builder; this persists it two ways at once:
+//   • pickerOrder = exact position (catalog sort tie-break, so the list
+//     reproduces the dragged order precisely), and
+//   • difficulty  = 1..5 spread evenly over the positions (top fifth = 1 …
+//     bottom fifth = 5) — the same field the Settings→Data Entry Difficulty
+//     subtab writes, so the planner's easy-first picks follow the drag.
+// Overwrites any manually set difficulty for EVERY question in the list —
+// founder-chosen semantics ("order is difficulty").
+export const reorderConceptQuestions = mutation({
+  args: { orderedQuestionIds: v.array(v.id("questionBank")) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const n = args.orderedQuestionIds.length;
+    if (n === 0) return { ok: true as const, updated: 0 };
+    let updated = 0;
+    for (let i = 0; i < n; i++) {
+      const q = await ctx.db.get(args.orderedQuestionIds[i]);
+      if (!q) continue; // deleted mid-drag — skip, positions stay monotonic
+      const difficulty = Math.min(5, Math.floor((i * 5) / n) + 1);
+      await ctx.db.patch(q._id, { pickerOrder: i, difficulty });
+      updated += 1;
+    }
+    return { ok: true as const, updated };
   },
 });
