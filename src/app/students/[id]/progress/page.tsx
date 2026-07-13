@@ -10,6 +10,7 @@ import { useQuery } from 'convex/react';
 import { Brain, ChevronLeft, Route } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { TrackProgress } from '@/components/students/track-progress';
+import { CoverageForecast } from '@/components/students/coverage-forecast';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -68,6 +69,7 @@ export default function StudentProgressPage({ params }: PageProps) {
             </div>
           </div>
           <TrackProgress student={student} />
+          <CoverageForecast student={student} />
         </>
       )}
     </div>

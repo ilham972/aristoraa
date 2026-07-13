@@ -58,6 +58,15 @@ cumulative-exam holdouts.
   seeding step may still need it), `config.ts` has no api callers by design
   (direct-import constants), `mastery.ts`/`memory.ts` likewise direct-import.
 
+## Coverage forecast advisor (2026-07-14)
+`coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`
+(unit-tested): per track unit — book-question pool (questionsTaggedToConcept),
+seen count (all the student's sheets), pace from last 14d of sheets, capacity
+before each term's exam vs remaining → projected % + verdict (done/on-track/
+at-risk/wont-finish/no-exam/no-questions); proportional-share allocation
+across unfinished units. UI `coverage-forecast.tsx` on /students/[id]/progress
+below the metro line. Companion to coverage mode; honest with the mode off too.
+
 ## Track Progress + 2026-07-10 safety fixes
 - `trackProgress.ts` — live per-student unit/track progress query (metro-line
   view + session strip); pure math in `convex/lib/trackProgressCore.ts`
