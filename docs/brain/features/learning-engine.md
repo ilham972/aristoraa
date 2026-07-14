@@ -39,15 +39,15 @@ cumulative-exam holdouts.
    memory updates + points. Single entry point: finalizeSheetScoring.
 
 ## Control panels
-- `/planner` (nav, 2026-07-15) — THE global planning page, 4 tabs: Term
+- `/planner` (nav, 2026-07-15) — THE global planning page, 5 tabs: Term
   (grade → exam countdown + per-group runway cards + crystallize one/all),
-  Forecast (grade-wide student coverage rollup), Tracks + Exams (moved FROM
-  /algorithm — planning inputs live with planning). Exams tab = grade×term
-  grid per year (year stepper; tap cell + to add / date to edit-delete; global
-  Quick entry sets one date/term across all grades). Backend
-  `plannerBoard.ts` (light `plannerGroups` listing; `gradeForecastRollup` =
-  ONE pool walk per track). Board nav slot freed → leaderboard link now in
-  /students header.
+  Calendar (per-group scheme-of-work day-grid to exam day: unit per session,
+  crystallized state, Revision slots, cancelled days, tap-day sheet with
+  delegate/un-plan — `groupPlan.groupTermCalendar`), Forecast (grade-wide
+  student coverage rollup), Tracks + Exams (moved FROM /algorithm). Exams
+  tab = grade×term grid per year (+ global Quick entry). Backend
+  `plannerBoard.ts` (light `plannerGroups`; `gradeForecastRollup` = ONE pool
+  walk per track). Board nav slot freed → leaderboard link in /students.
 - `/algorithm` — inspection only: Coverage, Blueprint, Path (stale
   ?tab=tracks|exams redirect to /planner).
 - `/algorithm/exam-calendar` — standalone page; **exam mode is MANUAL**:
@@ -79,7 +79,10 @@ scheduleSlots.sessionType="revision"; queues = group-claimed-but-unseen Qs
 (delegation + absence catch-up, ONE rule, cap 10); consolidation students
 get the fully-personal planner instead. UI: /groups/[id]/plan (redesigned
 2026-07-15: one runway strip + locked-in rows + unit-SPAN projection) +
-/planner Term board. Heavy walks batched with Promise.all (2026-07-15).
+/planner Term board + Calendar. Heavy walks batched with Promise.all.
+Skeleton is CANCELLATION-AWARE (2026-07-15): dates whose representative
+slot has a sessionLogs `cancelled_by_tutor` row are skipped — the plan
+reflows past them and crystallize never writes onto a cancelled day.
 
 ## Coverage forecast advisor (2026-07-14)
 `coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`
@@ -87,7 +90,9 @@ get the fully-personal planner instead. UI: /groups/[id]/plan (redesigned
 seen count (all the student's sheets), pace from last 14d of sheets, capacity
 before each term's exam vs remaining → projected % + verdict (done/on-track/
 at-risk/wont-finish/no-exam/no-questions); proportional-share allocation
-across unfinished units. UI `coverage-forecast.tsx` on /students/[id]/progress
+across unfinished units. TERM-AWARE (2026-07-15): only units with an
+UPCOMING exam compete for capacity — past terms' leftovers are revision
+material, not a deadline; summary carries datedRemaining/daysToFinishDated. UI `coverage-forecast.tsx` on /students/[id]/progress
 below the metro line; GLOBAL grade rollup on /planner Forecast tab
 (`plannerBoard.gradeForecastRollup`, same pure core + PACE_WINDOW_DAYS).
 

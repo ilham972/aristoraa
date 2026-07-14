@@ -90,15 +90,20 @@ export function CoverageForecast({ student }: { student: StudentLite }) {
               <b>{summary.questionsPerSheet!.toFixed(0)}</b> q/sheet ≈{' '}
               <b>{summary.questionsPerDay!.toFixed(1)}</b> questions/day
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              {summary.totalRemaining} book questions left on the track
-              {summary.daysToFinishAll !== null && (
+            <div className="text-[10px] text-foreground mt-0.5">
+              <b>{summary.datedRemaining}</b> questions due before upcoming exams
+              {summary.daysToFinishDated !== null && (
                 <>
                   {' '}
-                  — at this pace everything finishes in ~
-                  {summary.daysToFinishAll}d ({fmtInDays(summary.daysToFinishAll)})
+                  — done in ~{summary.daysToFinishDated}d (
+                  {fmtInDays(summary.daysToFinishDated)})
                 </>
               )}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">
+              {summary.totalRemaining} left on the whole track
+              {summary.daysToFinishAll !== null && <> (~{summary.daysToFinishAll}d)</>}
+              {' '}— past terms&apos; leftovers are revision material, not a deadline
             </div>
           </>
         ) : (

@@ -257,6 +257,19 @@ because Z.
   repeating unit lists replaced by ONE runway strip + locked-in rows +
   projection collapsed into unit spans. Don't re-add per-session rows for
   un-crystallized sessions.
+- **Forecast demand is TERM-AWARE** (2026-07-15, founder bug report): a
+  unit with no UPCOMING exam never competes for pre-exam capacity — its
+  exam already happened; leftovers are revision material. v1 counted the
+  whole track's backlog ("needs 2051 days, we have 61"). Headline number =
+  datedRemaining (due before real exams), whole-track total is secondary.
+- **Scheme Calendar over prebuilt-year sheets** (2026-07-15): founder asked
+  "can we prebuild every sheet?"; chose a per-group day-grid CALENDAR of
+  the live projection (crystallized week + skeleton beyond, Revision slots,
+  exam days) instead — projections self-correct, frozen sheets go stale.
+  Skeleton made cancellation-aware at the same time (sessionLogs
+  cancelled_by_tutor skips the date, plan reflows → cancel a class in the
+  Day view and the calendar shows the consequence). Delegation stays
+  available from the calendar's day sheet.
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

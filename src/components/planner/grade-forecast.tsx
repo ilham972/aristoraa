@@ -39,6 +39,8 @@ type StudentRow = {
     questionsPerSheet: number | null;
     totalRemaining: number;
     daysToFinishAll: number | null;
+    datedRemaining: number;
+    daysToFinishDated: number | null;
     hasPace: boolean;
   } | null;
 };
@@ -211,10 +213,13 @@ export function GradeForecast({ grade }: { grade: number }) {
                         {s.summary?.hasPace && s.summary.sheetsPerWeek !== null && (
                           <>
                             {' '}· {s.summary.sheetsPerWeek.toFixed(1)} sheets/wk ·{' '}
-                            {s.summary.totalRemaining} Qs left
-                            {s.summary.daysToFinishAll !== null && (
-                              <> · all done in ~{s.summary.daysToFinishAll}d</>
+                            <b className="text-foreground">
+                              {s.summary.datedRemaining} Qs due before exams
+                            </b>
+                            {s.summary.daysToFinishDated !== null && (
+                              <> · needs ~{s.summary.daysToFinishDated}d</>
                             )}
+                            {' '}· whole track {s.summary.totalRemaining} left
                           </>
                         )}
                         {s.summary && !s.summary.hasPace && (

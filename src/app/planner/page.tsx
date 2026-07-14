@@ -18,6 +18,7 @@ import {
   BookOpenCheck,
   CalendarDays,
   CalendarRange,
+  LayoutGrid,
   Route,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -25,11 +26,13 @@ import { TracksTab } from '@/components/algorithm/tracks-tab';
 import { ExamCalendarTab } from '@/components/algorithm/exam-calendar-tab';
 import { TermBoard } from '@/components/planner/term-board';
 import { GradeForecast } from '@/components/planner/grade-forecast';
+import { TermCalendar } from '@/components/planner/term-calendar';
 
-type TabId = 'term' | 'forecast' | 'tracks' | 'exams';
+type TabId = 'term' | 'calendar' | 'forecast' | 'tracks' | 'exams';
 
 const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Route }[] = [
   { id: 'term', label: 'Term', fullLabel: 'Term Planner', icon: CalendarRange },
+  { id: 'calendar', label: 'Calendar', fullLabel: 'Scheme Calendar', icon: LayoutGrid },
   { id: 'forecast', label: 'Forecast', fullLabel: 'Coverage Forecast', icon: BookOpenCheck },
   { id: 'tracks', label: 'Tracks', fullLabel: 'Learning Tracks', icon: Route },
   { id: 'exams', label: 'Exams', fullLabel: 'Exam Calendar', icon: CalendarDays },
@@ -42,9 +45,9 @@ function PlannerPageInner() {
   const searchParams = useSearchParams();
 
   const rawTab = searchParams.get('tab') ?? 'term';
-  const tab: TabId = (['term', 'forecast', 'tracks', 'exams'] as TabId[]).includes(
-    rawTab as TabId,
-  )
+  const tab: TabId = (
+    ['term', 'calendar', 'forecast', 'tracks', 'exams'] as TabId[]
+  ).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'term';
 
@@ -96,8 +99,8 @@ function PlannerPageInner() {
         ))}
       </div>
 
-      {/* Forecast shares the Term tab's grade selection */}
-      {tab === 'forecast' && (
+      {/* Calendar + Forecast share the Term tab's grade selection */}
+      {(tab === 'forecast' || tab === 'calendar') && (
         <div className="flex gap-1 p-1 bg-muted rounded-xl overflow-x-auto mb-3">
           {GRADES.map((g) => (
             <button
@@ -117,6 +120,7 @@ function PlannerPageInner() {
       )}
 
       {tab === 'term' && <TermBoard grade={grade} setGrade={(g) => setParams({ g })} />}
+      {tab === 'calendar' && <TermCalendar grade={grade} />}
       {tab === 'forecast' && <GradeForecast grade={grade} />}
       {tab === 'tracks' && <TracksTab />}
       {tab === 'exams' && <ExamCalendarTab />}

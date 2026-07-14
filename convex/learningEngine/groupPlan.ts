@@ -259,12 +259,40 @@ async function upcomingSessionDates(
     }
   }
   const startMs = Date.parse(`${fromYmd}T00:00:00.000Z`);
-  const out: Array<{ date: string; slotId: Id<"scheduleSlots"> }> = [];
+  const candidates: Array<{ date: string; slotId: Id<"scheduleSlots"> }> = [];
   for (let i = 0; i < horizonDays; i++) {
     const ymd = ymdFromMs(startMs + i * MS_PER_DAY);
     const slotId = byDow.get(dowFromYmd(ymd));
-    if (slotId) out.push({ date: ymd, slotId });
+    if (slotId) candidates.push({ date: ymd, slotId });
   }
+  // Cancellation-aware (2026-07-15): a session logged cancelled_by_tutor is
+  // not a teaching day — the skeleton flows past it (so the whole plan
+  // shifts the moment a class is cancelled) and crystallize never writes a
+  // sheet onto it. Bulk cancel logs every slot of the day, so checking the
+  // representative (earliest, = fused session) slot is sufficient.
+  const cancelled = await cancelledDates(ctx, candidates);
+  return candidates.filter((c) => !cancelled.has(c.date));
+}
+
+// Which of the given (date, slotId) sessions carry a cancelled_by_tutor log.
+async function cancelledDates(
+  ctx: ReadCtx,
+  sessions: Array<{ date: string; slotId: Id<"scheduleSlots"> }>,
+): Promise<Set<string>> {
+  const logs = await Promise.all(
+    sessions.map((c) =>
+      ctx.db
+        .query("sessionLogs")
+        .withIndex("by_slot_date", (q) =>
+          q.eq("slotId", c.slotId).eq("date", c.date),
+        )
+        .collect(),
+    ),
+  );
+  const out = new Set<string>();
+  sessions.forEach((c, i) => {
+    if (logs[i].some((l) => l.status === "cancelled_by_tutor")) out.add(c.date);
+  });
   return out;
 }
 
@@ -817,6 +845,182 @@ export const scanBookExhaustion = internalMutation({
       }
     }
     return { posted };
+  },
+});
+
+// ── Term calendar (global Planner "Calendar" tab, 2026-07-15) ─────────────
+//
+// The whole scheme of work on one day-grid: every session of the group from
+// today to just past the nearest exam — Main sessions with the unit the
+// skeleton assigns them, crystallized/materialized/delegated state,
+// Revision sessions, cancellations (logged in sessionLogs; the skeleton
+// already flows PAST cancelled dates, so cancelling a class visibly shifts
+// everything that follows). Read-only aggregation; every action it links to
+// (crystallize, delegate, cancel) already exists elsewhere.
+
+const CALENDAR_MIN_DAYS = 63; // ~9 weeks even when no exam is scheduled
+const CALENDAR_PAST_EXAM_PAD_DAYS = 7;
+
+export const groupTermCalendar = query({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const now = Date.now();
+    const todayYmd = ymdFromMs(now);
+
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const { units, currentUnitIdx } = skeletonInputs(state);
+    const skeleton = buildGroupSkeleton({
+      sessionDates: state.sessions.map((s) => s.date),
+      units,
+      mainQuestionsPerSession: GROUP_MAIN_QUESTIONS_DEFAULT,
+      spiralShare: GROUP_SPIRAL_SHARE,
+      examDateByTerm: state.examDateByTerm,
+      anyPastUnitStarted: currentUnitIdx > 0,
+    });
+    const skeletonByDate = new Map(skeleton.sessions.map((s) => [s.date, s]));
+    const crystallizedByDate = new Map(
+      state.crystallized.map((c) => [c.date, c]),
+    );
+
+    // Horizon: a week past the nearest upcoming exam, at least ~9 weeks.
+    const upcomingExamDates = Object.values(state.examDateByTerm).sort();
+    const nearestExam = upcomingExamDates[0] ?? null;
+    let horizonDays = CALENDAR_MIN_DAYS;
+    if (nearestExam) {
+      const d = Math.round(
+        (Date.parse(`${nearestExam}T00:00:00.000Z`) -
+          Date.parse(`${todayYmd}T00:00:00.000Z`)) /
+          MS_PER_DAY,
+      );
+      horizonDays = Math.max(
+        CALENDAR_MIN_DAYS,
+        Math.min(d + CALENDAR_PAST_EXAM_PAD_DAYS, GROUP_SKELETON_HORIZON_DAYS),
+      );
+    }
+
+    // Every session occurrence in the window (Main fused per day, each
+    // Revision slot separately), then one batched cancellation check.
+    const allSlots = await ctx.db
+      .query("scheduleSlots")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const mainByDow = new Map<number, Doc<"scheduleSlots">[]>();
+    const revisionByDow = new Map<number, Doc<"scheduleSlots">[]>();
+    for (const s of allSlots) {
+      const bucket =
+        (s.sessionType ?? "main") === "revision" ? revisionByDow : mainByDow;
+      const list = bucket.get(s.dayOfWeek) ?? [];
+      list.push(s);
+      bucket.set(s.dayOfWeek, list);
+    }
+
+    type CalSession = {
+      slotId: Id<"scheduleSlots">;
+      type: "main" | "revision";
+      startTime: string;
+      endTime: string;
+      cancelled: boolean;
+      cancelReason: string | null;
+    };
+    const occurrences: Array<{ date: string; session: CalSession }> = [];
+    const startMs = Date.parse(`${todayYmd}T00:00:00.000Z`);
+    for (let i = 0; i < horizonDays; i++) {
+      const ymd = ymdFromMs(startMs + i * MS_PER_DAY);
+      const dow = dowFromYmd(ymd);
+      const mains = (mainByDow.get(dow) ?? [])
+        .slice()
+        .sort((a, b) => a.startTime.localeCompare(b.startTime));
+      if (mains.length > 0) {
+        occurrences.push({
+          date: ymd,
+          session: {
+            slotId: mains[0]._id,
+            type: "main",
+            startTime: mains[0].startTime,
+            endTime: mains[mains.length - 1].endTime,
+            cancelled: false,
+            cancelReason: null,
+          },
+        });
+      }
+      for (const r of revisionByDow.get(dow) ?? []) {
+        occurrences.push({
+          date: ymd,
+          session: {
+            slotId: r._id,
+            type: "revision",
+            startTime: r.startTime,
+            endTime: r.endTime,
+            cancelled: false,
+            cancelReason: null,
+          },
+        });
+      }
+    }
+    const logsPerOccurrence = await Promise.all(
+      occurrences.map((o) =>
+        ctx.db
+          .query("sessionLogs")
+          .withIndex("by_slot_date", (q) =>
+            q.eq("slotId", o.session.slotId).eq("date", o.date),
+          )
+          .collect(),
+      ),
+    );
+    occurrences.forEach((o, i) => {
+      const log = logsPerOccurrence[i].find(
+        (l) => l.status === "cancelled_by_tutor",
+      );
+      if (log) {
+        o.session.cancelled = true;
+        o.session.cancelReason = log.reason ?? null;
+      }
+    });
+
+    // Assemble sparse day rows (UI paints the full grid).
+    const byDate = new Map<string, CalSession[]>();
+    for (const o of occurrences) {
+      const list = byDate.get(o.date) ?? [];
+      list.push(o.session);
+      byDate.set(o.date, list);
+    }
+    const days = Array.from(byDate.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, sessions]) => {
+        const sk = skeletonByDate.get(date);
+        const c = crystallizedByDate.get(date);
+        return {
+          date,
+          sessions,
+          parts: sk ? sk.parts : null,
+          spiralCount: sk?.spiralCount ?? 0,
+          crystallized: c
+            ? {
+                id: c._id,
+                status: c.status,
+                unitId: c.unitId,
+                newCount: c.newQuestionIds.length,
+                spiralCount: c.spiralQuestionIds.length,
+              }
+            : null,
+        };
+      });
+
+    return {
+      status: "ok" as const,
+      trackName: state.track.name,
+      memberCount: state.students.length,
+      todayYmd,
+      horizonDays,
+      examDates: Object.entries(state.examDateByTerm)
+        .map(([term, date]) => ({ term: Number(term), date }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+      days,
+    };
   },
 });
 
