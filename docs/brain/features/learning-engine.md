@@ -18,14 +18,16 @@ cumulative-exam holdouts.
      urgency (1−retrievability, overdue boost), fit (Gaussian difficulty↔skill
      match), novelty (hard-filtered, factor kept for future soft-novelty),
      proximity (days to exam via examCalendar).
-   - COVERAGE MODE (manual switch settings.coverageModeActive, toggles on
-     Settings→General AND /algorithm/exam-calendar, 2026-07-14): fit is
-     OVERRIDDEN per concept by
-     the easy→hard ladder over UNSEEN questions (coverageMode.ts, pure +
-     unit-tested) — finish the book before the exam, no repeats; seen Qs
-     damped ×0.25; too-hard tail (>skill+2) deferred (weak students skip it
-     automatically). SR timing untouched. fitOverride/Reason in the
-     scoringSnapshot, same honesty contract as urgencyOverride.
+   - COVERAGE LADDER = THE DEFAULT (departments redesign 2026-07-14; the
+     one-day global toggle is retired): fit is OVERRIDDEN per concept by the
+     easy→hard ladder over UNSEEN questions (coverageMode.ts, pure + tested)
+     — finish the book, no repeats; seen Qs damped ×0.25; too-hard tail
+     (>skill+2) deferred. SR timing untouched. fitOverride/Reason in the
+     scoringSnapshot. Per-student fallback: students.learningMode =
+     "consolidation" (manual switch on /students/[id]/progress) returns THAT
+     student to Gaussian fit + repeats; daily engineAlerts.ts cron suggests
+     flips both ways (weighted fail-rate, enter 40% / exit 20% hysteresis,
+     pure math in convex/lib/consolidationCore.ts).
    - D.3 slot allocator: warm-up = OFF-module, Main block = ON-module —
      driven by TRACK since the exam-mode change (not teachingPath) —
      exam-prep = module-agnostic, targets near-mastered via past papers.
@@ -57,6 +59,20 @@ cumulative-exam holdouts.
 - UNWIRED: `backfill.ts` (one-off A.4 backfill tool — founder-gated track
   seeding step may still need it), `config.ts` has no api callers by design
   (direct-import constants), `mastery.ts`/`memory.ts` likewise direct-import.
+
+## Departments: group Main plan + Revision queues (2026-07-14)
+`groupPlan.ts` + pure `convex/lib/groupPlanCore.ts` (tested): the Main block
+of a group session is ONE identical sheet planned at group level. Bookmark =
+DERIVED union (groupSheets rows + members' generatedSheets), never stored.
+Skeleton query = lesson plan to exam day (unit per session, finish-vs-exam
+verdicts); crystallizeUpcoming writes groupSheets rows ~7d ahead (new = next
+unseen ladder of current unit — textbook first, then capped past-paper tail,
+alert cron scanBookExhaustion at the boundary; spiral = unseen Qs from past
+units, weakest group-avg R first). Sheets tab materializes rows per student
+via mainQuestionIdsOverride (PDF/scoring/memory unchanged). Revision dept:
+scheduleSlots.sessionType="revision"; queues = group-claimed-but-unseen Qs
+(delegation + absence catch-up, ONE rule, cap 10); consolidation students
+get the fully-personal planner instead. UI: /groups/[id]/plan.
 
 ## Coverage forecast advisor (2026-07-14)
 `coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`

@@ -224,6 +224,25 @@ because Z.
   (founder diagnosed this himself). Manual switch like exam mode; default
   engine = long-runway fallback. Weak students: hard tail deferred by
   skill+2 cap, not a manual flag. 100% book coverage is a TARGET, not law.
+- **Departments redesign — coverage ladder is FINAL, global toggle retired**
+  (2026-07-14, same day it shipped): ladder = permanent engine default; the
+  Gaussian-with-repeats engine survives ONLY as per-student
+  `learningMode="consolidation"` (manual, alert-suggested both ways — the
+  exam-mode pattern). Repeats are a weak-student remedy, not a mode.
+- **Group Main = one identical prebuilt sheet; personalization lives in the
+  Revision department** (2026-07-14). Group bookmark advances by group
+  sheets, taught OR delegated (delegation = group-level act, founder judges
+  "doable without teaching"); absences + delegations reach students via ONE
+  queue rule (group-claimed-but-personally-unseen). Main sheet = new ladder
+  + spiral (planned repetition, weakest group-avg R first); true reactive SR
+  stays individual. Founder chose skeleton+rolling (~7d crystallize) over
+  all-at-term-start, and weekly Revision sessions for EVERYONE over
+  flagged-only. Note: this supersedes the "prebuilt sheets rejected" line
+  above — prebuilt is now GROUP-level with the spiral, while per-student
+  timing/interleave lives in the Revision layer.
+- **Unit book exhausted → capped past-paper tail + alert** (2026-07-14):
+  finish the textbook first, then ≤6 past-paper Qs per unit flow in
+  (GROUP_PASTPAPER_TAIL_MAX) so the march to the next unit never stalls.
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.

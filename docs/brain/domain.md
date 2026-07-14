@@ -40,7 +40,19 @@ Each entry: what it means here, then [tables in convex/schema.ts | main module].
   [paperStructures*, examCalendar, examTopicTags* | convex/paperStructures.ts,
   convex/learningEngine/coverage.ts, calendar.ts]
 - **repeatCount remedy** — TEMPORARY per-question repeat scheduling stopgap with
-  count-based cooldown; deliberately does NOT touch SR/mastery.
+  count-based cooldown; deliberately does NOT touch SR/mastery. Superseded in
+  spirit by consolidation mode; mechanics still live (bank-level counts).
+- **Learning mode** — per-student engine switch: "normal" (coverage ladder,
+  no repeats — THE default) vs "consolidation" (weak-student fallback:
+  difficulty-matched + repeats). Manual, alert-suggested. [students.learningMode
+  | convex/engineAlerts.ts, convex/lib/consolidationCore.ts]
+- **Group sheet / bookmark / delegation** — the Main department's unit: one
+  identical crystallized sheet per (group, session); bookmark = derived union
+  of consumed question ids; delegation sends a planned sheet to the Revision
+  department (bookmark still advances). Revision sessions
+  (scheduleSlots.sessionType) serve each student's queue =
+  group-claimed-but-personally-unseen questions. [groupSheets |
+  convex/learningEngine/groupPlan.ts, convex/lib/groupPlanCore.ts]
 - **Track** — named cross-grade progression level (replaces grade-based
   position); students promote along tracks shown as a railway map; leagues group
   students for competition. **Flag `LEADERBOARD_PRIMARY='legacy'`**: track system

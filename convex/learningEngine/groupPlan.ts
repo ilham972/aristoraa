@@ -22,7 +22,7 @@
 // the hard tail of a unit belongs here (unlike individual revision, where
 // the per-student ladder defers questions >skill+2).
 
-import { mutation, query } from "../_generated/server";
+import { internalMutation, mutation, query } from "../_generated/server";
 import { v } from "convex/values";
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
@@ -32,6 +32,7 @@ import {
   DEFAULT_QUESTION_DIFFICULTY,
   GROUP_CRYSTALLIZE_AHEAD_DAYS,
   GROUP_MAIN_QUESTIONS_DEFAULT,
+  GROUP_PASTPAPER_TAIL_MAX,
   GROUP_SKELETON_HORIZON_DAYS,
   GROUP_SPIRAL_SHARE,
   REVISION_QUEUE_CAP,
@@ -151,12 +152,20 @@ async function groupSeenSet(
   return seen;
 }
 
-// Per-unit ladders along the track: question ids in teacher order
-// (difficulty, then Lesson Builder drag order, then id) + the question→
-// concept map (spiral ranking needs it). Same tagging helper as the planner.
+// Per-unit ladders along the track: TEXTBOOK questions in teacher order
+// (difficulty, then Lesson Builder drag order, then id), then a capped
+// PAST-PAPER tail (founder decision: finish the book first; when a unit's
+// book runs out, past-paper questions on the same concepts flow in — the
+// daily scan alerts when the current unit crosses that boundary). Also
+// returns the question→concept map (spiral ranking needs it).
 type UnitLadder = {
   unitId: string;
-  ladder: Array<{ qid: string; difficulty: number; pickerOrder: number }>;
+  ladder: Array<{
+    qid: string;
+    difficulty: number;
+    pickerOrder: number;
+    pastPaper: boolean;
+  }>;
   conceptByQuestion: Map<string, string>;
 };
 
@@ -183,24 +192,36 @@ async function buildUnitLadders(
         }
       }
     }
-    const docs: Array<{ qid: string; difficulty: number; pickerOrder: number }> =
-      [];
+    type Rung = {
+      qid: string;
+      difficulty: number;
+      pickerOrder: number;
+      pastPaper: boolean;
+    };
+    const book: Rung[] = [];
+    const paper: Rung[] = [];
     for (const k of Array.from(qids)) {
       const q = await ctx.db.get(k as unknown as Id<"questionBank">);
       if (!q) continue;
-      docs.push({
+      const rung: Rung = {
         qid: k,
         difficulty: q.difficulty ?? DEFAULT_QUESTION_DIFFICULTY,
         pickerOrder: q.pickerOrder ?? Number.MAX_SAFE_INTEGER,
-      });
+        pastPaper: q.source === "past-paper",
+      };
+      (rung.pastPaper ? paper : book).push(rung);
     }
-    docs.sort(
-      (a, b) =>
-        a.difficulty - b.difficulty ||
-        a.pickerOrder - b.pickerOrder ||
-        (a.qid < b.qid ? -1 : 1),
-    );
-    out.push({ unitId, ladder: docs, conceptByQuestion });
+    const byLadder = (a: Rung, b: Rung) =>
+      a.difficulty - b.difficulty ||
+      a.pickerOrder - b.pickerOrder ||
+      (a.qid < b.qid ? -1 : 1);
+    book.sort(byLadder);
+    paper.sort(byLadder);
+    out.push({
+      unitId,
+      ladder: [...book, ...paper.slice(0, GROUP_PASTPAPER_TAIL_MAX)],
+      conceptByQuestion,
+    });
   }
   return out;
 }
@@ -711,6 +732,76 @@ export const groupWeeklySlots = query({
         sessionType: (s.sessionType ?? "main") as "main" | "revision",
       }))
       .sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+  },
+});
+
+// Daily scan (crons.ts): when a group's CURRENT unit has finished every
+// textbook question and is now serving the past-paper tail, tell the
+// founder — he asked to be alerted at exactly this boundary so he stays in
+// control of what "finishing a unit" means. Deduped per (recipient, group,
+// unit) while unactioned, same pattern as exam/consolidation alerts.
+export const scanBookExhaustion = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const todayYmd = ymdFromMs(now);
+    const teachers = await ctx.db.query("teachers").collect();
+    const recipients = teachers.filter(
+      (t) => t.role === "lead" || t.role === "admin",
+    );
+    if (recipients.length === 0) return { posted: 0 };
+
+    const groups = await ctx.db.query("groups").collect();
+    let posted = 0;
+    for (const g of groups) {
+      const loaded = await loadGroupPlanState(ctx, g._id, todayYmd);
+      if (loaded.status !== "ok") continue;
+      const state = loaded.state;
+      // Current unit = first with anything unseen; boundary = its book is
+      // done but its past-paper tail isn't.
+      let current: UnitLadder | null = null;
+      let unseenBook = 0;
+      let unseenPaper = 0;
+      for (const l of state.ladders) {
+        const unseen = l.ladder.filter((q) => !state.seen.has(q.qid));
+        if (unseen.length === 0) continue;
+        current = l;
+        unseenBook = unseen.filter((q) => !q.pastPaper).length;
+        unseenPaper = unseen.filter((q) => q.pastPaper).length;
+        break;
+      }
+      if (!current || unseenBook > 0 || unseenPaper === 0) continue;
+
+      const key = `${g._id as unknown as string}|${current.unitId}`;
+      for (const t of recipients) {
+        const recent = await ctx.db
+          .query("notifications")
+          .withIndex("by_user_created", (q) =>
+            q.eq("userClerkId", t.clerkUserId),
+          )
+          .order("desc")
+          .take(100);
+        const already = recent.some(
+          (n) =>
+            n.type === "group_book_exhausted" &&
+            !n.actionedAt &&
+            (n.payload as { key?: string } | undefined)?.key === key,
+        );
+        if (already) continue;
+        await ctx.db.insert("notifications", {
+          userClerkId: t.clerkUserId,
+          type: "group_book_exhausted",
+          title: `${g.name}: unit book finished — past papers now`,
+          body: `${g.name} has done every textbook question of its current unit. The next ${unseenPaper} Main picks come from past papers tagged to the same concepts; then the plan moves to the next unit.`,
+          priority: "normal",
+          actionUrl: `/groups/${g._id as unknown as string}/plan`,
+          payload: { key, groupId: g._id, unitId: current.unitId },
+          createdAt: now,
+        });
+        posted += 1;
+      }
+    }
+    return { posted };
   },
 });
 

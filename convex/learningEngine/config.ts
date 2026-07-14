@@ -155,6 +155,11 @@ export const GROUP_SKELETON_HORIZON_DAYS = 180;
 // group material + absence catch-up, oldest first) claim the Main block of
 // one revision sheet; personal sections (mistakes, SR) fill around them.
 export const REVISION_QUEUE_CAP = 10;
+// When a unit's TEXTBOOK ladder is finished, the group ladder continues into
+// past-paper questions tagged to the same unit's concepts — capped so a fat
+// past-paper pool can't stall the march to the next unit. The daily scan
+// alerts the founder the moment a group's current unit crosses the boundary.
+export const GROUP_PASTPAPER_TAIL_MAX = 6;
 
 // ─── Phase D.3: slot allocator / sheet sizing / phase-of-term reweighting ──
 

@@ -1,5 +1,13 @@
 # Groups & scheduling — /groups (the app home)
 
+## Departments (2026-07-14)
+`/groups/[id]/plan` = the group lesson-plan page (Main department control):
+skeleton to exam day, crystallize button, delegate/delete planned sheets,
+and a Weekly-sessions section that flips each slot's
+`scheduleSlots.sessionType` between MAIN (group teaching; counts in the
+skeleton) and REVISION (individual queue sheets; excluded). Backend
+`convex/learningEngine/groupPlan.ts` — see learning-engine.md.
+
 ## What the screen does
 `src/app/groups/page.tsx` (~1030 lines) is the daily home. Three views:
 - **Day view (default, date-aware)** — sessions of the selected date; prev/next

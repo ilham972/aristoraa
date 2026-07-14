@@ -25,4 +25,14 @@ crons.daily(
   {},
 );
 
+// Once a day, look for groups whose CURRENT unit has finished all textbook
+// questions (the Main plan is now serving the past-paper tail) and tell the
+// founder. See scanBookExhaustion in convex/learningEngine/groupPlan.ts.
+crons.daily(
+  "group book-exhaustion scan",
+  { hourUTC: 6, minuteUTC: 30 },
+  internal.learningEngine.groupPlan.scanBookExhaustion,
+  {},
+);
+
 export default crons;

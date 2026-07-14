@@ -17,6 +17,11 @@ A session stepper (header) walks prev/next sessions of the SAME group across
 its slots; `?origin=` lets Reset jump back to the entry session.
 
 ## Sheets tab flow (the core teaching loop)
+Departments (2026-07-14): "Generate all" has three shapes, banner-labelled —
+main session WITH a crystallized group sheet → identical Main block for the
+whole roster (then markMaterialized); REVISION session (sessionType) → each
+student's queue (delegated + missed, consolidation students fully personal);
+otherwise the classic per-student path below.
 `score-sheet-tab.tsx` (list + per-student sheet actions: generate, view,
 print, score) → `sheet-scoring-grid.tsx` (section tabs + inline sheet view +
 mark grid). Generate opens the **Lesson Builder** (`sheet-planner-panel.tsx`,
