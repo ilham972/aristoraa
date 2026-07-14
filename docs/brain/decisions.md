@@ -243,6 +243,20 @@ because Z.
 - **Unit book exhausted → capped past-paper tail + alert** (2026-07-14):
   finish the textbook first, then ≤6 past-paper Qs per unit flow in
   (GROUP_PASTPAPER_TAIL_MAX) so the march to the next unit never stalls.
+- **Global Planner = SEE + STEER, nothing new stored** (2026-07-15).
+  `/planner` nav page (Term board per grade + Forecast rollup + Tracks +
+  Exams). Founder chose a derived board steered by EXISTING levers
+  (crystallize, tracks, exam dates, Main/Revision flips) over a stored
+  per-grade "scheme of work" table — group plans can never disagree with
+  the grade plan. Delegation to groups is automatic (each group derives
+  from its track). Tracks + Exams tabs moved OUT of Insights (planning
+  inputs live with planning; Insights keeps inspection: Coverage,
+  Blueprint, Path). Board nav button removed — leaderboard link now sits
+  in the /students header (founder call, frees the nav slot).
+- **Group plan page shows each fact once** (2026-07-15): v1's three
+  repeating unit lists replaced by ONE runway strip + locked-in rows +
+  projection collapsed into unit spans. Don't re-add per-session rows for
+  un-crystallized sessions.
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

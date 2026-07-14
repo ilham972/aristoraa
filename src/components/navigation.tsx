@@ -2,24 +2,23 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Trophy, Users, Settings, BarChart3, CalendarRange, LineChart, MessageSquare, Bell } from 'lucide-react';
+import { Users, Settings, BarChart3, CalendarRange, CalendarCheck, LineChart, MessageSquare, Bell } from 'lucide-react';
 import { useQuery } from 'convex/react';
 import { api } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { useNavVisibility } from '@/contexts/nav-visibility';
 import { useCurrentTeacher } from '@/hooks/useCurrentTeacher';
-import { PRIMARY_BOARD_HREF } from '@/lib/leaderboard-link';
 
-type NavItem = { href: string; label: string; icon: typeof Trophy; leadOnly?: boolean };
+type NavItem = { href: string; label: string; icon: typeof Users; leadOnly?: boolean };
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/groups', label: 'Groups', icon: CalendarRange },
+  // The Board (leaderboard) moved INSIDE the Students page (founder call,
+  // 2026-07-15) to free this slot for the global Planner.
+  { href: '/planner', label: 'Planner', icon: CalendarCheck, leadOnly: true },
   { href: '/analytics', label: 'Analytics', icon: LineChart, leadOnly: true },
   { href: '/algorithm', label: 'Insights', icon: BarChart3, leadOnly: true },
   { href: '/messaging', label: 'Messages', icon: MessageSquare, leadOnly: true },
-  // Board href is founder-gated: PRIMARY_BOARD_HREF stays '/leaderboard' until
-  // LEADERBOARD_PRIMARY flips to 'cohort', then points at the leagues board.
-  { href: PRIMARY_BOARD_HREF, label: 'Board', icon: Trophy },
   { href: '/notifications', label: 'Alerts', icon: Bell },
   { href: '/students', label: 'Students', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },

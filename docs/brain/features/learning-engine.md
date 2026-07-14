@@ -38,15 +38,18 @@ cumulative-exam holdouts.
 3. **Scoring** (`scoring.ts`) — sheet marks → `applyAttempt` per question →
    memory updates + points. Single entry point: finalizeSheetScoring.
 
-## Control panels (src/app/algorithm/*)
-- `/algorithm` (1047 lines) — engine dashboard + per-student inspection.
-- `/algorithm/blueprint` — exam paper structures (paperStructures*) defining
-  composition targets.
-- `/algorithm/coverage` — deployment gate: every studied concept needs
-  ≥ MIN_QUESTIONS_PER_CONCEPT tagged questions (`coverage.ts`).
-- `/algorithm/exam-calendar` — exam dates per (schoolGrade, term) feeding the
-  proximity factor (`calendar.ts`). **Exam mode is MANUAL**: `examModeActive`
-  switch + daily exam-approaching alert cron + bell in bottom nav.
+## Control panels
+- `/planner` (nav, 2026-07-15) — THE global planning page, 4 tabs: Term
+  (grade → exam countdown + per-group runway cards + crystallize one/all),
+  Forecast (grade-wide student coverage rollup), Tracks + Exams (moved FROM
+  /algorithm — planning inputs live with planning). Backend
+  `plannerBoard.ts` (light `plannerGroups` listing; `gradeForecastRollup` =
+  ONE pool walk per track). Board nav slot freed → leaderboard link now in
+  /students header.
+- `/algorithm` — inspection only: Coverage, Blueprint, Path (stale
+  ?tab=tracks|exams redirect to /planner).
+- `/algorithm/exam-calendar` — standalone page; **exam mode is MANUAL**:
+  `examModeActive` switch + daily alert cron (`calendar.ts`).
 - `/algorithm/scoring` — factor weight inspection (`difficultyTab.ts`).
 
 ## Supporting modules
@@ -72,7 +75,9 @@ units, weakest group-avg R first). Sheets tab materializes rows per student
 via mainQuestionIdsOverride (PDF/scoring/memory unchanged). Revision dept:
 scheduleSlots.sessionType="revision"; queues = group-claimed-but-unseen Qs
 (delegation + absence catch-up, ONE rule, cap 10); consolidation students
-get the fully-personal planner instead. UI: /groups/[id]/plan.
+get the fully-personal planner instead. UI: /groups/[id]/plan (redesigned
+2026-07-15: one runway strip + locked-in rows + unit-SPAN projection) +
+/planner Term board. Heavy walks batched with Promise.all (2026-07-15).
 
 ## Coverage forecast advisor (2026-07-14)
 `coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`
@@ -81,7 +86,8 @@ seen count (all the student's sheets), pace from last 14d of sheets, capacity
 before each term's exam vs remaining → projected % + verdict (done/on-track/
 at-risk/wont-finish/no-exam/no-questions); proportional-share allocation
 across unfinished units. UI `coverage-forecast.tsx` on /students/[id]/progress
-below the metro line. Companion to coverage mode; honest with the mode off too.
+below the metro line; GLOBAL grade rollup on /planner Forecast tab
+(`plannerBoard.gradeForecastRollup`, same pure core + PACE_WINDOW_DAYS).
 
 ## Track Progress + 2026-07-10 safety fixes
 - `trackProgress.ts` — live per-student unit/track progress query (metro-line

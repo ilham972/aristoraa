@@ -178,7 +178,8 @@
       "PowerShell(npx convex dev --once 2>&1 | Select-Object -Last 5)",
       "PowerShell(Select-String -Path \"docs\\\\brain\\\\decisions.md\" -Pattern \"^## \" | Select-Object -Last 8 | ForEach-Object { \"$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
       "Bash(npm i *)",
-      "PowerShell(gh api *)"
+      "PowerShell(gh api *)",
+      "Bash(git restore *)"
     ]
   }
 }

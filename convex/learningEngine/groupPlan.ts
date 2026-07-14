@@ -78,7 +78,7 @@ async function resolveTeacherId(
 
 // ── Group resolution helpers ──────────────────────────────────────────────
 
-async function groupMemberStudents(
+export async function groupMemberStudents(
   ctx: ReadCtx,
   groupId: Id<"groups">,
 ): Promise<Doc<"students">[]> {
@@ -86,19 +86,15 @@ async function groupMemberStudents(
     .query("groupMembers")
     .withIndex("by_group", (q) => q.eq("groupId", groupId))
     .collect();
-  const out: Doc<"students">[] = [];
-  for (const m of members) {
-    const s = await ctx.db.get(m.studentId);
-    if (s) out.push(s);
-  }
-  return out;
+  const docs = await Promise.all(members.map((m) => ctx.db.get(m.studentId)));
+  return docs.filter((s): s is Doc<"students"> => s !== null);
 }
 
 // The track the GROUP rides: the majority track among members (ties broken
 // by most members, then track level via _id stability). Null when no member
 // has a track — the group plan requires tracks (the Main block is track-
 // driven since the exam-mode change).
-async function resolveTrackForGroup(
+export async function resolveTrackForGroup(
   ctx: ReadCtx,
   students: Doc<"students">[],
 ): Promise<Doc<"tracks"> | null> {
@@ -135,11 +131,15 @@ async function groupSeenSet(
     for (const qid of row.newQuestionIds) seen.add(qid as unknown as string);
     for (const qid of row.spiralQuestionIds) seen.add(qid as unknown as string);
   }
-  for (const s of students) {
-    const sheets = await ctx.db
-      .query("generatedSheets")
-      .withIndex("by_student_date", (q) => q.eq("studentId", s._id))
-      .collect();
+  const perStudent = await Promise.all(
+    students.map((s) =>
+      ctx.db
+        .query("generatedSheets")
+        .withIndex("by_student_date", (q) => q.eq("studentId", s._id))
+        .collect(),
+    ),
+  );
+  for (const sheets of perStudent) {
     for (const sh of sheets) {
       for (const qid of sh.warmupQuestionIds) seen.add(qid as unknown as string);
       for (const qid of sh.mainQuestionIds) seen.add(qid as unknown as string);
@@ -173,25 +173,27 @@ async function buildUnitLadders(
   ctx: ReadCtx,
   orderedUnitIds: string[],
 ): Promise<UnitLadder[]> {
-  const out: UnitLadder[] = [];
-  for (const unitId of orderedUnitIds) {
+  return Promise.all(
+    orderedUnitIds.map(async (unitId) => {
     const exRows = await ctx.db
       .query("exercises")
       .withIndex("by_unit", (q) => q.eq("unitId", unitId))
       .collect();
     const conceptByQuestion = new Map<string, string>();
     const qids = new Set<string>();
-    for (const row of exRows) {
-      if (row.type !== "concept") continue;
-      const tagged = await questionsTaggedToConcept(ctx, row._id);
-      for (const qid of tagged) {
+    const conceptRows = exRows.filter((row) => row.type === "concept");
+    const taggedPerConcept = await Promise.all(
+      conceptRows.map((row) => questionsTaggedToConcept(ctx, row._id)),
+    );
+    conceptRows.forEach((row, i) => {
+      for (const qid of taggedPerConcept[i]) {
         const k = qid as unknown as string;
         if (!qids.has(k)) {
           qids.add(k);
           conceptByQuestion.set(k, row._id as unknown as string);
         }
       }
-    }
+    });
     type Rung = {
       qid: string;
       difficulty: number;
@@ -200,9 +202,13 @@ async function buildUnitLadders(
     };
     const book: Rung[] = [];
     const paper: Rung[] = [];
-    for (const k of Array.from(qids)) {
-      const q = await ctx.db.get(k as unknown as Id<"questionBank">);
-      if (!q) continue;
+    const qidList = Array.from(qids);
+    const qDocs = await Promise.all(
+      qidList.map((k) => ctx.db.get(k as unknown as Id<"questionBank">)),
+    );
+    qidList.forEach((k, i) => {
+      const q = qDocs[i];
+      if (!q) return;
       const rung: Rung = {
         qid: k,
         difficulty: q.difficulty ?? DEFAULT_QUESTION_DIFFICULTY,
@@ -210,20 +216,20 @@ async function buildUnitLadders(
         pastPaper: q.source === "past-paper",
       };
       (rung.pastPaper ? paper : book).push(rung);
-    }
+    });
     const byLadder = (a: Rung, b: Rung) =>
       a.difficulty - b.difficulty ||
       a.pickerOrder - b.pickerOrder ||
       (a.qid < b.qid ? -1 : 1);
     book.sort(byLadder);
     paper.sort(byLadder);
-    out.push({
+    return {
       unitId,
       ladder: [...book, ...paper.slice(0, GROUP_PASTPAPER_TAIL_MAX)],
       conceptByQuestion,
-    });
-  }
-  return out;
+    };
+    }),
+  );
 }
 
 // Upcoming MAIN session dates for the group: weekly slots expanded over the
@@ -271,11 +277,15 @@ async function groupAvgRByConcept(
   asOfMs: number,
 ): Promise<Map<string, number>> {
   const sums = new Map<string, number>();
-  for (const s of students) {
-    const states = await ctx.db
-      .query("memoryState")
-      .withIndex("by_student", (q) => q.eq("studentId", s._id))
-      .collect();
+  const perStudent = await Promise.all(
+    students.map((s) =>
+      ctx.db
+        .query("memoryState")
+        .withIndex("by_student", (q) => q.eq("studentId", s._id))
+        .collect(),
+    ),
+  );
+  for (const states of perStudent) {
     for (const st of states) {
       const k = st.conceptExerciseId as unknown as string;
       sums.set(k, (sums.get(k) ?? 0) + masteryFromState(st, asOfMs).R);

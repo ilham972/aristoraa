@@ -6,8 +6,9 @@ import { useMutation } from 'convex/react';
 // storage while the live subscription refreshes (perf phase 3).
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import {
-  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search, CalendarClock, Route,
+  BarChart3, Pencil, Trash2, Plus, Activity, GraduationCap, Brain, Search, CalendarClock, Route, Trophy,
 } from 'lucide-react';
+import { PRIMARY_BOARD_HREF } from '@/lib/leaderboard-link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -271,6 +272,13 @@ export default function StudentsPage() {
       <div className="flex items-center justify-between mb-4 gap-2">
         <h1 className="text-lg font-bold text-foreground">Students</h1>
         <div className="flex items-center gap-1.5">
+          {/* Board lives here since 2026-07-15 — its nav slot went to /planner. */}
+          <Link href={PRIMARY_BOARD_HREF}>
+            <Button size="sm" variant="outline" className="rounded-xl gap-1.5">
+              <Trophy className="w-4 h-4" />
+              Board
+            </Button>
+          </Link>
           <Link href="/timeline/compare">
             <Button size="sm" variant="outline" className="rounded-xl gap-1.5">
               <Activity className="w-4 h-4" />

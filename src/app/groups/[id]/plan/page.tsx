@@ -1,18 +1,26 @@
 'use client';
 
-// /groups/[id]/plan — the group lesson plan (departments redesign,
-// 2026-07-14). The Main department's control surface: skeleton to exam day
-// (which unit each session teaches, projected finish vs exam), rolling
-// crystallization of the actual group sheets ~a week ahead, and the status
-// of each crystallized sheet. Backend: learningEngine/groupPlan.ts.
+// /groups/[id]/plan — the group lesson plan (redesigned 2026-07-15).
+// The first version repeated the same unit name across three lists; this
+// layout shows each fact once:
+//   header    — group · track · roster · current unit · crystallize button.
+//   runway    — ONE horizontal strip of remaining units (shared UnitRunway,
+//               same look as the global /planner Term board).
+//   locked in — only the crystallized sheets (the actionable rows:
+//               delegate / delete / status).
+//   projection— upcoming sessions COLLAPSED INTO UNIT SPANS ("Algebra — 5
+//               sessions · Jul 20 → Aug 2"), each expandable to its dates.
+//   sessions  — compact Main/Revision day chips (tap to flip department).
+// Backend: learningEngine/groupPlan.ts (unchanged).
 
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation } from 'convex/react';
 import {
   CalendarRange,
+  ChevronDown,
   ChevronLeft,
-  Layers,
+  ChevronRight,
   SendToBack,
   Sparkles,
   Trash2,
@@ -21,26 +29,8 @@ import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { ALL_CURRICULUM_UNITS } from '@/lib/track-progress-args';
-
-const VERDICT_CHIP: Record<string, { label: string; className: string }> = {
-  done: { label: 'done', className: 'bg-primary/15 text-primary border-primary/40' },
-  'on-track': {
-    label: 'on track',
-    className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/40',
-  },
-  'wont-finish': {
-    label: "won't finish",
-    className: 'bg-red-500/15 text-red-500 border-red-500/40',
-  },
-  'no-exam': {
-    label: 'no exam date',
-    className: 'bg-muted/40 text-muted-foreground border-border',
-  },
-  'after-horizon': {
-    label: 'beyond horizon',
-    className: 'bg-amber-500/15 text-amber-500 border-amber-500/40',
-  },
-};
+import { UnitRunway } from '@/components/planner/unit-runway';
+import { VERDICT_CHIP, fmtWeekdayDate } from '@/components/planner/verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   planned: {
@@ -57,13 +47,41 @@ const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   },
 };
 
-function fmtDate(ymd: string): string {
-  const d = new Date(`${ymd}T00:00:00`);
-  return d.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
+type PlanSession = {
+  date: string;
+  parts: Array<{ unitId: string; newCount: number }>;
+  spiralCount: number;
+  slotId: Id<'scheduleSlots'> | null;
+  crystallized: {
+    id: Id<'groupSheets'>;
+    status: string;
+    unitId: string;
+    newCount: number;
+    spiralCount: number;
+  } | null;
+};
+
+// Consecutive projection sessions grouped by their primary unit.
+type UnitSpan = {
+  unitId: string;
+  sessions: PlanSession[];
+  newTotal: number;
+};
+
+function buildSpans(sessions: PlanSession[]): UnitSpan[] {
+  const spans: UnitSpan[] = [];
+  for (const s of sessions) {
+    const unitId = s.parts[0]?.unitId ?? 'unknown';
+    const last = spans[spans.length - 1];
+    const newSum = s.parts.reduce((sum, p) => sum + p.newCount, 0);
+    if (last && last.unitId === unitId) {
+      last.sessions.push(s);
+      last.newTotal += newSum;
+    } else {
+      spans.push({ unitId, sessions: [s], newTotal: newSum });
+    }
+  }
+  return spans;
 }
 
 export default function GroupPlanPage({
@@ -77,53 +95,46 @@ export default function GroupPlanPage({
   const plan = useQuery(api.learningEngine.groupPlan.groupLessonPlan, {
     groupId,
   });
-  const crystallize = useMutation(
-    api.learningEngine.groupPlan.crystallizeUpcoming,
-  );
-  const deletePlanned = useMutation(api.learningEngine.groupPlan.deletePlanned);
-  const delegateToRevision = useMutation(
-    api.learningEngine.groupPlan.delegateToRevision,
-  );
   const weeklySlots = useQuery(api.learningEngine.groupPlan.groupWeeklySlots, {
     groupId,
   });
-  const setSlotSessionType = useMutation(
-    api.learningEngine.groupPlan.setSlotSessionType,
-  );
+  const crystallize = useMutation(api.learningEngine.groupPlan.crystallizeUpcoming);
+  const deletePlanned = useMutation(api.learningEngine.groupPlan.deletePlanned);
+  const delegateToRevision = useMutation(api.learningEngine.groupPlan.delegateToRevision);
+  const setSlotSessionType = useMutation(api.learningEngine.groupPlan.setSlotSessionType);
   const [busy, setBusy] = useState(false);
+  const [openSpan, setOpenSpan] = useState<string | null>(null);
 
   const unitName = useMemo(() => {
     const m = new Map(ALL_CURRICULUM_UNITS.map((u) => [u.unitId, u.unitName]));
     return (unitId: string) => m.get(unitId) ?? unitId;
   }, []);
 
-  const remainingUnits = useMemo(
-    () =>
-      plan?.status === 'ok'
-        ? plan.units.filter((u) => u.verdict !== 'done')
-        : [],
-    [plan],
+  const sessions = (plan?.status === 'ok' ? plan.sessions : []) as PlanSession[];
+  const lockedIn = sessions.filter((s) => s.crystallized);
+  const spans = useMemo(
+    () => buildSpans(sessions.filter((s) => !s.crystallized)),
+    [sessions],
   );
 
   return (
     <div className="px-4 pt-5 pb-24 max-w-lg mx-auto">
-      <Link
-        href="/groups"
-        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground mb-3"
-      >
-        <ChevronLeft className="w-3.5 h-3.5" />
-        Groups
-      </Link>
-
-      <div className="flex items-center gap-2 mb-1">
-        <CalendarRange className="w-5 h-5 text-primary" />
-        <h1 className="text-lg font-bold text-foreground">Lesson plan</h1>
+      <div className="flex items-center justify-between mb-3">
+        <Link
+          href="/groups"
+          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          Groups
+        </Link>
+        <Link
+          href="/planner"
+          className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+        >
+          <CalendarRange className="w-3.5 h-3.5" />
+          Global planner
+        </Link>
       </div>
-      <p className="text-[11px] text-muted-foreground mb-4">
-        One identical Main sheet per session for the whole group: new book
-        questions easy→hard + a spiral of review from past units. Sheets lock
-        in ("crystallize") a week ahead; the rest is a live projection.
-      </p>
 
       {(group === undefined || plan === undefined) && (
         <div className="space-y-2 animate-pulse">
@@ -145,55 +156,211 @@ export default function GroupPlanPage({
 
       {group && plan?.status === 'ok' && (
         <>
-          <div className="mb-4 rounded-xl border border-border bg-card px-3 py-2.5">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Group
-            </div>
+          {/* Header: everything about the group ONCE */}
+          <div className="mb-3 rounded-xl border border-border bg-card px-3 py-2.5">
             <div className="text-sm font-bold text-foreground">{group.name}</div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground mt-0.5">
               {plan.trackName} · {plan.memberCount} students ·{' '}
               {plan.mainQuestionsPerSession} Qs/session
-              {plan.currentUnitId && (
-                <>
-                  {' '}
-                  · now: <b>{unitName(plan.currentUnitId)}</b>
-                </>
-              )}
             </div>
+            {plan.currentUnitId && (
+              <div className="text-[11px] text-muted-foreground">
+                teaching now:{' '}
+                <b className="text-foreground">{unitName(plan.currentUnitId)}</b>
+              </div>
+            )}
+            <button
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const res = await crystallize({ groupId });
+                  if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
+                  else if (res.written === 0)
+                    toast.info('Nothing to crystallize — the window is already planned.');
+                  else
+                    toast.success(
+                      `Crystallized ${res.written} session sheet${res.written === 1 ? '' : 's'}`,
+                    );
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'Failed');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy}
+              className="w-full mt-2 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Crystallize next {plan.crystallizeAheadDays} days
+            </button>
           </div>
 
-          <button
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const res = await crystallize({ groupId });
-                if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
-                else if (res.written === 0)
-                  toast.info('Nothing to crystallize — the window is already planned.');
-                else
-                  toast.success(
-                    `Crystallized ${res.written} session sheet${res.written === 1 ? '' : 's'}`,
-                  );
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : 'Failed');
-              } finally {
-                setBusy(false);
-              }
-            }}
-            disabled={busy}
-            className="w-full mb-4 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Crystallize next {plan.crystallizeAheadDays} days
-          </button>
+          {/* Unit runway — the one place units are listed */}
+          <div className="mb-4">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+              Unit runway
+            </div>
+            <UnitRunway
+              units={plan.units}
+              unitName={unitName}
+              current={plan.currentUnitId}
+            />
+          </div>
 
-          {/* Weekly sessions — department type per slot */}
+          {/* Locked-in sheets — the actionable rows */}
+          {lockedIn.length > 0 && (
+            <div className="mb-4">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                Locked in
+              </div>
+              <div className="space-y-1.5">
+                {lockedIn.map((s) => {
+                  const c = s.crystallized!;
+                  const chip = STATUS_CHIP[c.status] ?? null;
+                  return (
+                    <div
+                      key={s.date}
+                      className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-foreground">
+                          {fmtWeekdayDate(s.date)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground truncate">
+                          {unitName(c.unitId)} · {c.newCount} new
+                          {c.spiralCount > 0 && <> + {c.spiralCount} spiral</>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {chip && (
+                          <span
+                            className={cn(
+                              'px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
+                              chip.className,
+                            )}
+                          >
+                            {chip.label}
+                          </span>
+                        )}
+                        {c.status === 'planned' && (
+                          <>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await delegateToRevision({ groupSheetId: c.id });
+                                  toast.success(
+                                    'Delegated — the group does this sheet in Revision sessions; the bookmark still advances.',
+                                  );
+                                } catch (e) {
+                                  toast.error(e instanceof Error ? e.message : 'Failed');
+                                }
+                              }}
+                              className="p-1 rounded-md text-muted-foreground hover:text-amber-500"
+                              aria-label="Delegate to Revision department"
+                              title="Group can do this without teaching — send to Revision"
+                            >
+                              <SendToBack className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await deletePlanned({ groupSheetId: c.id });
+                                  toast.success('Sheet un-planned — crystallize again to re-pick.');
+                                } catch (e) {
+                                  toast.error(e instanceof Error ? e.message : 'Failed');
+                                }
+                              }}
+                              className="p-1 rounded-md text-muted-foreground hover:text-red-500"
+                              aria-label="Delete planned sheet"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Projection — unit spans instead of 24 repeated rows */}
+          {spans.length > 0 && (
+            <div className="mb-4">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                Then, projected
+              </div>
+              <div className="space-y-1.5">
+                {spans.map((span) => {
+                  const key = `${span.unitId}|${span.sessions[0].date}`;
+                  const isOpen = openSpan === key;
+                  const first = span.sessions[0].date;
+                  const last = span.sessions[span.sessions.length - 1].date;
+                  const verdict =
+                    plan.units.find((u) => u.unitId === span.unitId)?.verdict ?? 'no-exam';
+                  const chip = VERDICT_CHIP[verdict] ?? VERDICT_CHIP['no-exam'];
+                  return (
+                    <div key={key} className="rounded-xl border border-border bg-card overflow-hidden">
+                      <button
+                        onClick={() => setOpenSpan(isOpen ? null : key)}
+                        className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-muted/40"
+                      >
+                        {isOpen ? (
+                          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-semibold text-foreground truncate">
+                            {unitName(span.unitId)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {span.sessions.length} session{span.sessions.length === 1 ? '' : 's'} ·{' '}
+                            {span.newTotal} new Qs ·{' '}
+                            {fmtWeekdayDate(first)}
+                            {last !== first && <> → {fmtWeekdayDate(last)}</>}
+                          </div>
+                        </div>
+                        <span
+                          className={cn(
+                            'shrink-0 px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
+                            chip.className,
+                          )}
+                        >
+                          {chip.label}
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="border-t border-border px-3 py-1.5">
+                          {span.sessions.map((s) => (
+                            <div
+                              key={s.date}
+                              className="flex items-center justify-between py-1 text-[11px]"
+                            >
+                              <span className="text-foreground">{fmtWeekdayDate(s.date)}</span>
+                              <span className="text-muted-foreground">
+                                {s.parts.map((p) => `${unitName(p.unitId)} ×${p.newCount}`).join(' + ')}
+                                {s.spiralCount > 0 && <> · spiral ×{s.spiralCount}</>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Weekly sessions — compact department chips */}
           {weeklySlots && weeklySlots.length > 0 && (
             <div className="mb-4">
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
                 Weekly sessions — tap to switch department
               </div>
-              <div className="space-y-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {weeklySlots.map((s) => {
                   const isRevision = s.sessionType === 'revision';
                   const dayName = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][
@@ -218,166 +385,29 @@ export default function GroupPlanPage({
                         }
                       }}
                       className={cn(
-                        'w-full rounded-xl border px-3 py-2 flex items-center justify-between gap-2 text-left',
+                        'rounded-lg border px-2 py-1.5 text-left',
                         isRevision
                           ? 'border-amber-500/50 bg-amber-500/10'
                           : 'border-border bg-card',
                       )}
                     >
-                      <span className="text-xs font-semibold text-foreground">
-                        {dayName} {s.startTime}–{s.endTime}
-                      </span>
-                      <span
+                      <div className="text-[11px] font-semibold text-foreground">
+                        {dayName} {s.startTime}
+                      </div>
+                      <div
                         className={cn(
-                          'px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
-                          isRevision
-                            ? 'bg-amber-500/15 text-amber-500 border-amber-500/40'
-                            : 'bg-primary/15 text-primary border-primary/40',
+                          'text-[9px] font-semibold',
+                          isRevision ? 'text-amber-500' : 'text-primary',
                         )}
                       >
                         {isRevision ? 'REVISION' : 'MAIN'}
-                      </span>
+                      </div>
                     </button>
                   );
                 })}
               </div>
             </div>
           )}
-
-          {/* Unit runway */}
-          <div className="mb-4">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-1">
-              <Layers className="w-3 h-3" />
-              Units remaining
-            </div>
-            {remainingUnits.length === 0 && (
-              <div className="rounded-xl border border-border bg-card p-3 text-center text-xs text-muted-foreground">
-                Book finished — every unit on the track is covered. 🎉
-              </div>
-            )}
-            <div className="space-y-1.5">
-              {remainingUnits.map((u) => {
-                const chip = VERDICT_CHIP[u.verdict] ?? VERDICT_CHIP['no-exam'];
-                return (
-                  <div
-                    key={u.unitId}
-                    className="rounded-xl border border-border bg-card px-3 py-2 flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-foreground truncate">
-                        {unitName(u.unitId)}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {u.unseenCount} unseen
-                        {u.projectedFinishDate && (
-                          <> · finishes {fmtDate(u.projectedFinishDate)}</>
-                        )}
-                        {u.examDate && <> · exam {fmtDate(u.examDate)}</>}
-                      </div>
-                    </div>
-                    <span
-                      className={cn(
-                        'shrink-0 px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
-                        chip.className,
-                      )}
-                    >
-                      {chip.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Session-by-session plan */}
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
-            Upcoming sessions
-          </div>
-          <div className="space-y-1.5">
-            {plan.sessions.slice(0, 24).map((s) => {
-              const chip = s.crystallized
-                ? (STATUS_CHIP[s.crystallized.status] ?? null)
-                : null;
-              return (
-                <div
-                  key={s.date}
-                  className={cn(
-                    'rounded-xl border px-3 py-2 flex items-center justify-between gap-2',
-                    s.crystallized
-                      ? 'border-primary/40 bg-primary/5'
-                      : 'border-border bg-card',
-                  )}
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-foreground">
-                      {fmtDate(s.date)}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground truncate">
-                      {s.parts
-                        .map((p) => `${unitName(p.unitId)} ×${p.newCount}`)
-                        .join(' + ')}
-                      {s.spiralCount > 0 && <> · spiral ×{s.spiralCount}</>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {chip && (
-                      <span
-                        className={cn(
-                          'px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
-                          chip.className,
-                        )}
-                      >
-                        {chip.label}
-                      </span>
-                    )}
-                    {s.crystallized?.status === 'planned' && (
-                      <>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await delegateToRevision({
-                                groupSheetId: s.crystallized!.id,
-                              });
-                              toast.success(
-                                'Delegated — the group does this sheet in Revision sessions; the bookmark still advances.',
-                              );
-                            } catch (e) {
-                              toast.error(
-                                e instanceof Error ? e.message : 'Failed',
-                              );
-                            }
-                          }}
-                          className="p-1 rounded-md text-muted-foreground hover:text-amber-500"
-                          aria-label="Delegate to Revision department"
-                          title="Group can do this without teaching — send to Revision"
-                        >
-                          <SendToBack className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await deletePlanned({
-                                groupSheetId: s.crystallized!.id,
-                              });
-                              toast.success('Sheet un-planned — crystallize again to re-pick.');
-                            } catch (e) {
-                              toast.error(
-                                e instanceof Error ? e.message : 'Failed',
-                              );
-                            }
-                          }}
-                          className="p-1 rounded-md text-muted-foreground hover:text-red-500"
-                          aria-label="Delete planned sheet"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         </>
       )}
     </div>
