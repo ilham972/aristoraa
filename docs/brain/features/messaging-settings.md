@@ -33,7 +33,10 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
 
 ## /settings + crop tools
 - `/settings` — app config (`convex/settings.ts`), textbook/past-paper
-  management (textbooks, pastPapers modules).
+  management (textbooks, pastPapers modules). Tabs: General, Content, Book,
+  Tags, Data Entry. (Curriculum tab UI removed 2026-07-15 — superseded by the
+  Book tab; `exercises` backend data untouched. Standalone `/curriculum`
+  route still exists.)
 - Top-level "Book" tab (2026-07-13): replaces the Exercises + Page Nos
   Data-Entry layers (`book-tab.tsx` hosts `book-entry-view.tsx`) — whole
   uploaded book scrolls inline (small thumbnails via
