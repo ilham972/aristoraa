@@ -61,6 +61,11 @@ export type ForecastSummary = {
   totalRemaining: number;
   // At the current pace, days to finish EVERYTHING remaining (all units).
   daysToFinishAll: number | null;
+  // The numbers that actually matter THIS term: remaining across units with
+  // an UPCOMING exam only (past terms' exams are gone — their leftovers are
+  // revision material, not a deadline), and days to clear just those.
+  datedRemaining: number;
+  daysToFinishDated: number | null;
   hasPace: boolean;
 };
 
@@ -107,13 +112,17 @@ export function forecastCoverage(args: {
       projectedPct = coveredPct;
     } else {
       // Units competing for the capacity before THIS unit's exam: everything
-      // unfinished whose exam is on or before it (or has no exam — it still
-      // eats revision slots, so count it; conservative on purpose).
+      // unfinished whose UPCOMING exam is on or before it. Units with no
+      // upcoming exam (past terms, unscheduled) do NOT compete — their exam
+      // already happened, so their leftovers are revision material, not a
+      // deadline (term-aware fix, 2026-07-15: a term-3 unit was drowning
+      // under the whole track's backlog).
       const demand = withDays.reduce(
         (s, o) =>
           s +
           (o.remaining > 0 &&
-          (o.daysToExam === null || o.daysToExam <= u.daysToExam!)
+          o.daysToExam !== null &&
+          o.daysToExam <= u.daysToExam!
             ? o.remaining
             : 0),
         0,
@@ -143,6 +152,11 @@ export function forecastCoverage(args: {
     };
   });
 
+  const datedRemaining = withDays.reduce(
+    (s, u) => s + (u.daysToExam !== null ? u.remaining : 0),
+    0,
+  );
+
   return {
     units,
     summary: {
@@ -153,6 +167,11 @@ export function forecastCoverage(args: {
       daysToFinishAll:
         hasPace && questionsPerDay > 0
           ? Math.ceil(totalRemaining / questionsPerDay)
+          : null,
+      datedRemaining,
+      daysToFinishDated:
+        hasPace && questionsPerDay > 0
+          ? Math.ceil(datedRemaining / questionsPerDay)
           : null,
       hasPace,
     },

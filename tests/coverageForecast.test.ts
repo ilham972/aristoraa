@@ -111,4 +111,28 @@ describe('forecastCoverage', () => {
     expect(r.summary.sheetsPerWeek).toBeCloseTo(7);
     expect(r.summary.questionsPerSheet).toBeCloseTo(10);
   });
+
+  it('past-term backlog does NOT steal capacity from the upcoming exam', () => {
+    // Term-3 exam in 10 days (capacity 100), 50 remaining in term 3. A huge
+    // 1000-question backlog from terms 1+2 (exams already gone → no
+    // daysToExam) must not drown the term-3 verdict.
+    const r = forecastCoverage({
+      units: [
+        unit('t1-backlog', 1, 1000, 0),
+        unit('t2-backlog', 2, 200, 0),
+        unit('t3-current', 3, 50, 0),
+      ],
+      pace: STEADY_PACE, // 10 q/day
+      daysToExamByTerm: { '3': 10 }, // terms 1+2 have no upcoming exam
+    });
+    const t3 = r.units.find((u) => u.unitId === 't3-current')!;
+    expect(t3.verdict).toBe('on-track');
+    expect(t3.projectedPct).toBe(1);
+    expect(r.units[0].verdict).toBe('no-exam');
+    expect(r.units[1].verdict).toBe('no-exam');
+    // Summary separates "everything ever" from "due before an actual exam".
+    expect(r.summary.totalRemaining).toBe(1250);
+    expect(r.summary.datedRemaining).toBe(50);
+    expect(r.summary.daysToFinishDated).toBe(5);
+  });
 });

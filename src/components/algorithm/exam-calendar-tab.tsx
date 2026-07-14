@@ -38,7 +38,7 @@ function daysFromNow(ymd: string): number | null {
 function fmtShort(ymd: string): string {
   const m = YMD_RE.exec(ymd);
   if (!m) return ymd;
-  const [, , mm, dd] = ymd.split('-');
+  const [, mm, dd] = ymd.split('-');
   return `${Number(dd)} ${MONTHS[Number(mm) - 1] ?? mm}`;
 }
 
