@@ -92,13 +92,14 @@ export const PROXIMITY_HORIZON_DAYS = 90;
 // midpoint of the 1..5 scale; matches the algorithm_plan.md fallback.
 export const DEFAULT_QUESTION_DIFFICULTY = 3;
 
-// ─── Coverage mode (manual switch, 2026-07-14) ────────────────────────────
-// When settings.coverageModeActive is ON, the within-concept question choice
-// becomes coverage-first: climb the teacher's easy→hard ladder through
+// ─── Coverage ladder (THE default since the departments redesign) ─────────
+// The within-concept question choice is coverage-first for every student in
+// "normal" learning mode: climb the teacher's easy→hard ladder through
 // UNSEEN questions (finish the book before the exam, no repeats), while
-// spaced repetition still decides WHEN a concept appears. Founder decision:
-// coverage-first is the short-runway mode; the fit-Gaussian engine is the
-// long-runway default.
+// spaced repetition still decides WHEN a concept appears. Founder decision
+// (2026-07-14): a fresh question on a due concept IS the repetition. The
+// Gaussian-fit engine survives only as the per-student "consolidation"
+// fallback (students.learningMode) for flagged weak students.
 // The ladder-next unseen question gets fit 1.0; each further rung decays so
 // the next rung decisively outranks its siblings within the concept.
 export const COVERAGE_LADDER_DECAY = 0.8;
@@ -112,6 +113,25 @@ export const COVERAGE_MAX_STEP_UP = 2;
 // they only win once every eligible unseen rung is exhausted — then the
 // engine gracefully degrades to today's repeat behaviour.
 export const COVERAGE_SEEN_FIT_DAMP = 0.25;
+
+// ─── Consolidation mode — per-student weak-student fallback (2026-07-14) ──
+// The daily engine-alert scan (convex/engineAlerts.ts) watches every
+// student's recent attempts and SUGGESTS flipping students.learningMode; a
+// human always flips the switch (exam-mode pattern). Pure math lives in
+// convex/lib/consolidationCore.ts.
+// Failure rate = weighted wrong / (weighted right + weighted wrong) over the
+// window, "skipped" excluded. Weighted by question difficulty so failing
+// hard questions alone doesn't flag a student the easy questions prove fine.
+export const CONSOLIDATION_WINDOW_DAYS = 14;
+// Suggest turning consolidation ON when a normal student's failure rate
+// crosses this…
+export const CONSOLIDATION_ENTER_FAIL_RATE = 0.4;
+// …and suggest turning it OFF once a consolidation student drops below this
+// (hysteresis gap prevents flip-flopping around one threshold).
+export const CONSOLIDATION_EXIT_FAIL_RATE = 0.2;
+// Below this many attempts in the window the scan stays silent — too little
+// evidence to judge either direction.
+export const CONSOLIDATION_MIN_ATTEMPTS = 12;
 
 // ─── Phase D.3: slot allocator / sheet sizing / phase-of-term reweighting ──
 

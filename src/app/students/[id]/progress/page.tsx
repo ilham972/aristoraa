@@ -11,6 +11,7 @@ import { Brain, ChevronLeft, Route } from 'lucide-react';
 import { api, type Id } from '@/lib/convex';
 import { TrackProgress } from '@/components/students/track-progress';
 import { CoverageForecast } from '@/components/students/coverage-forecast';
+import { LearningModeCard } from '@/components/students/learning-mode-card';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -68,6 +69,7 @@ export default function StudentProgressPage({ params }: PageProps) {
               Grade {student.schoolGrade}
             </div>
           </div>
+          <LearningModeCard studentId={studentId} />
           <TrackProgress student={student} />
           <CoverageForecast student={student} />
         </>

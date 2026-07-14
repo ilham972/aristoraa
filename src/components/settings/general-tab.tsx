@@ -23,7 +23,6 @@ export function GeneralTab({ isAdmin = false }: { isAdmin?: boolean }) {
 
   const settings = useQuery(api.settings.get);
   const saveSettingsMutation = useMutation(api.settings.save);
-  const setCoverageMode = useMutation(api.settings.setCoverageMode);
 
   useEffect(() => setMounted(true), []);
 
@@ -102,42 +101,10 @@ export function GeneralTab({ isAdmin = false }: { isAdmin?: boolean }) {
         </CardContent>
       </Card>
 
-      {/* Coverage mode — engine switch (2026-07-14). Same flag as the card on
-          /algorithm/exam-calendar; founder asked for it here for findability. */}
-      <Card className={settings.coverageModeActive ? 'border-primary/60 bg-primary/5' : 'border-border/50'}>
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="min-w-0 pr-2">
-              <Label className="text-sm font-medium text-foreground">
-                Coverage Mode{settings.coverageModeActive ? ' — ON' : ''}
-              </Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Short exam runway: revision serves each concept&rsquo;s <b>unseen</b> book
-                questions easy→hard (finish the book, no repeats). Off = normal
-                difficulty-matched revision. Review timing stays spaced repetition.
-              </p>
-            </div>
-            <button
-              onClick={async () => {
-                const next = !settings.coverageModeActive;
-                try {
-                  await setCoverageMode({ active: next });
-                  toast.success(
-                    next
-                      ? 'Coverage mode ON — finish the book, no repeats'
-                      : 'Coverage mode off — difficulty-matched revision',
-                  );
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : 'Failed to update');
-                }
-              }}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${settings.coverageModeActive ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${settings.coverageModeActive ? 'translate-x-5' : ''}`} />
-            </button>
-          </div>
-        </CardContent>
-      </Card>
+      {/* The global Coverage Mode toggle (2026-07-14) was retired same-day by
+          the departments redesign: the coverage ladder is the permanent
+          engine default; the weak-student fallback is per student on
+          /students/[id]/progress (learning mode card). */}
 
       {isAdmin && (
         <>

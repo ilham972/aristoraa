@@ -15,4 +15,14 @@ crons.daily(
   {},
 );
 
+// Once a day, look for students whose recent failure rate says their manual
+// learning mode should change (normal → consolidation, or recovered → back),
+// and drop a suggestion into the Lead/Admin bell. See convex/engineAlerts.ts.
+crons.daily(
+  "consolidation-mode reminder scan",
+  { hourUTC: 6, minuteUTC: 15 },
+  internal.engineAlerts.scanAndNotify,
+  {},
+);
+
 export default crons;

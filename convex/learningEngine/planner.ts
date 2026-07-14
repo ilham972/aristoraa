@@ -656,12 +656,14 @@ export function scoreCandidate(args: {
   };
 }
 
-// ── Coverage mode — per-(concept, question) fit overrides ────────────────
-// Reads the manual switch; when ON, builds the ladder overrides for the
-// whole candidate pool in one pass. Seen = the question appeared on ANY of
-// the student's sheets strictly BEFORE dateStr (today's own draft never
-// damps a same-day regenerate). Returns null when the mode is off, so both
-// call sites stay zero-cost on the default path.
+// ── Coverage ladder — per-(concept, question) fit overrides ──────────────
+// THE default since the departments redesign (2026-07-14): every student in
+// "normal" learning mode gets ladder overrides for the whole candidate pool
+// in one pass. Seen = the question appeared on ANY of the student's sheets
+// strictly BEFORE dateStr (today's own draft never damps a same-day
+// regenerate). Returns null ONLY for students flagged into "consolidation"
+// mode (students.learningMode) — their picks fall back to the Gaussian
+// difficulty-fit with repeats, the weak-student consolidation behaviour.
 async function buildCoverageOverrides(
   ctx: ReadCtx,
   args: {
@@ -670,8 +672,8 @@ async function buildCoverageOverrides(
     candidates: RawCandidate[];
   },
 ): Promise<Map<string, CoverageFitOverride> | null> {
-  const settings = await ctx.db.query("settings").first();
-  if (settings?.coverageModeActive !== true) return null;
+  const student = await ctx.db.get(args.studentId);
+  if ((student?.learningMode ?? "normal") === "consolidation") return null;
 
   const priorSheets = await ctx.db
     .query("generatedSheets")
@@ -783,8 +785,9 @@ export const scoredCandidatePool = query({
       factors: ScoreBreakdown;
     };
 
-    // Coverage mode (2026-07-14): same overrides the real planner applies,
-    // so this inspection view matches what generation will do.
+    // Coverage ladder (default engine): same overrides the real planner
+    // applies, so this inspection view matches what generation will do.
+    // Null only for consolidation-mode students.
     const coverage = await buildCoverageOverrides(ctx, {
       studentId: args.studentId,
       dateStr: args.dateStr,
@@ -1690,9 +1693,10 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
     // 1.0 when the natural review interval would slip past the exam-prep
     // deadline. Replaces (does not stack on top of) the standard urgency
     // formula so the factor breakdown remains honest.
-    // Coverage mode (2026-07-14, manual switch): within a concept the next
-    // UNSEEN ladder question outranks its siblings via a fit override —
-    // spaced repetition still owns WHEN, this owns WHICH. Null when off.
+    // Coverage ladder (default engine): within a concept the next UNSEEN
+    // ladder question outranks its siblings via a fit override — spaced
+    // repetition still owns WHEN, this owns WHICH. Null only when this
+    // student is in consolidation mode (per-student weak fallback).
     const coverage = await buildCoverageOverrides(ctx, {
       studentId: args.studentId,
       dateStr: args.dateStr,
@@ -2250,7 +2254,9 @@ export async function planSheetCore(ctx: ReadCtx, args: PlanSheetArgs) {
         ...pool.meta,
         scoredCount: scored.length,
         pickedCount: totalPicked,
-        coverageModeActive: coverage !== null,
+        // Per-student mode (departments redesign): ladder = "normal",
+        // Gaussian-with-repeats fallback = "consolidation".
+        learningMode: coverage !== null ? "normal" : "consolidation",
         weights: {
           importance: W_IMPORTANCE,
           urgency: W_URGENCY,

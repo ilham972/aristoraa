@@ -75,6 +75,26 @@ export const update = mutation({
   },
 });
 
+// Departments redesign (2026-07-14): per-student learning-mode switch.
+// "normal" = coverage ladder (default); "consolidation" = weak-student
+// fallback (difficulty-matched repeats in the individual sections). Manual —
+// the daily engine-alert scan only SUGGESTS flips (convex/engineAlerts.ts).
+export const setLearningMode = mutation({
+  args: {
+    id: v.id("students"),
+    mode: v.union(v.literal("normal"), v.literal("consolidation")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const student = await ctx.db.get(args.id);
+    if (!student) throw new Error("Student not found");
+    await ctx.db.patch(args.id, {
+      learningMode: args.mode === "normal" ? undefined : args.mode,
+    });
+  },
+});
+
 export const setAssignedGrades = mutation({
   args: {
     id: v.id("students"),

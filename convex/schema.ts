@@ -39,6 +39,15 @@ export default defineSchema({
     // Used by /groups revenue helper. Falls back to RATE_DEFAULT_LKR (250)
     // when unset so existing rows need no backfill.
     hourlyRate: v.optional(v.number()),
+    // ─── Departments redesign (2026-07-14): per-student learning mode ──────
+    // "normal" (default, unset) — coverage ladder everywhere: never repeat a
+    //   seen question while unseen ones remain (the book IS the repetition).
+    // "consolidation" — weak-student fallback: this student's INDIVIDUAL
+    //   sections drop the ladder and return to difficulty-matched picks with
+    //   repeats allowed (pre-coverage behaviour). Manual switch; the daily
+    //   engine-alert scan (convex/engineAlerts.ts) suggests on/off, a human
+    //   flips it — same human-in-the-loop pattern as exam mode.
+    learningMode: v.optional(v.string()),
   }).index("by_center", ["centerId"]),
 
   exercises: defineTable({
@@ -81,12 +90,10 @@ export default defineSchema({
     allowManualSlotSelection: v.optional(v.boolean()),
     // Default centre used as the starting value for new groups.
     defaultCenterId: v.optional(v.id("centers")),
-    // Manual "coverage mode" switch (Founder, 2026-07-14). When true, the
-    // planner's within-concept question choice becomes coverage-first: the
-    // next UNSEEN question in the teacher's easy→hard order (the ladder)
-    // instead of the Gaussian difficulty-fit — so students work through the
-    // whole book before the exam without repeats. Timing (when a concept is
-    // due) stays pure spaced repetition. Like exam mode, NEVER auto-toggled.
+    // RETIRED (2026-07-14, same-day): the global coverage-mode switch lived
+    // one day before the departments redesign made the ladder the permanent
+    // default and moved the fallback to students.learningMode. Kept optional
+    // so existing rows validate; no code reads or writes it anymore.
     coverageModeActive: v.optional(v.boolean()),
   }),
 
