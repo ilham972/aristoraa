@@ -104,6 +104,7 @@ export function ScoreSheetTab({
   const markGroupSheetMaterialized = useMutation(
     api.learningEngine.groupPlan.markMaterialized,
   );
+  const consumeCarryRows = useMutation(api.learningEngine.groupPlan.consumeCarryRows);
   const renderPDF = useAction(api.learningEngine.pdf.renderSheetPDF);
   const zipAction = useAction(api.learningEngine.sheets.zipSheetPDFs);
   const markPrinted = useMutation(api.learningEngine.planner.markPrinted);
@@ -273,7 +274,15 @@ export function ScoreSheetTab({
               ? { mainQuestionIdsOverride: queue.questionIds }
               : {}),
         });
-        if (res.status === 'ok') saved += 1;
+        if (res.status === 'ok') {
+          saved += 1;
+          // Carry-over leftovers can't self-clean out of the queue (their
+          // questions are already "seen") — stamp them consumed now that
+          // this student's queue sheet exists.
+          if (queue && queue.carryRowIds.length > 0) {
+            await consumeCarryRows({ rowIds: queue.carryRowIds }).catch(() => {});
+          }
+        }
       } catch (e) {
         errs.push(`${r.studentName}: ${describeError(e)}`);
       }
@@ -305,6 +314,7 @@ export function ScoreSheetTab({
     groupPlanInfo,
     revisionQueues,
     markGroupSheetMaterialized,
+    consumeCarryRows,
   ]);
 
   const bulkRender = useCallback(async () => {

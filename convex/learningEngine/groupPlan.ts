@@ -335,6 +335,11 @@ type GroupPlanState = {
   sessions: Array<{ date: string; slotId: Id<"scheduleSlots"> }>;
   examDateByTerm: Record<number, string>;
   crystallized: Doc<"groupSheets">[];
+  // Questions per Main session — the group's own override, else the default.
+  mainSize: number;
+  // Unconsumed "carry to next Main" leftovers (oldest first): the next
+  // crystallize serves these BEFORE the ladder, then stamps them consumed.
+  mainCarry: Doc<"groupCarryOvers">[];
 };
 
 async function loadGroupPlanState(
@@ -379,9 +384,34 @@ async function loadGroupPlanState(
     )
     .collect();
 
+  const group = await ctx.db.get(groupId);
+  const mainSize = Math.max(
+    1,
+    Math.round(group?.mainQuestionsPerSession ?? GROUP_MAIN_QUESTIONS_DEFAULT),
+  );
+
+  const mainCarry = (
+    await ctx.db
+      .query("groupCarryOvers")
+      .withIndex("by_group", (q) => q.eq("groupId", groupId))
+      .collect()
+  )
+    .filter((r) => r.target === "main" && r.consumedAt === undefined)
+    .sort((a, b) => a.createdAt - b.createdAt);
+
   return {
     status: "ok",
-    state: { students, track, seen, ladders, sessions, examDateByTerm, crystallized },
+    state: {
+      students,
+      track,
+      seen,
+      ladders,
+      sessions,
+      examDateByTerm,
+      crystallized,
+      mainSize,
+      mainCarry,
+    },
   };
 }
 
@@ -389,10 +419,22 @@ function skeletonInputs(state: GroupPlanState): {
   units: SkeletonUnitInput[];
   currentUnitIdx: number;
 } {
+  // Carry-over leftovers are SEEN (they were on a printed sheet) but must be
+  // re-taught, so they re-enter the demand of their unit here — the skeleton,
+  // calendar and exam-capacity math all count them automatically.
+  const carryByUnit = new Map<string, number>();
+  for (const r of state.mainCarry) {
+    carryByUnit.set(
+      r.unitId,
+      (carryByUnit.get(r.unitId) ?? 0) + r.questionIds.length,
+    );
+  }
   const units: SkeletonUnitInput[] = state.ladders.map((l) => ({
     unitId: l.unitId,
     term: termFromUnitId(l.unitId),
-    unseenCount: l.ladder.filter((q) => !state.seen.has(q.qid)).length,
+    unseenCount:
+      l.ladder.filter((q) => !state.seen.has(q.qid)).length +
+      (carryByUnit.get(l.unitId) ?? 0),
   }));
   let currentUnitIdx = units.findIndex((u) => u.unseenCount > 0);
   if (currentUnitIdx < 0) currentUnitIdx = units.length;
@@ -415,7 +457,7 @@ export const groupLessonPlan = query({
     const skeleton = buildGroupSkeleton({
       sessionDates: state.sessions.map((s) => s.date),
       units,
-      mainQuestionsPerSession: GROUP_MAIN_QUESTIONS_DEFAULT,
+      mainQuestionsPerSession: state.mainSize,
       spiralShare: GROUP_SPIRAL_SHARE,
       examDateByTerm: state.examDateByTerm,
       anyPastUnitStarted: currentUnitIdx > 0,
@@ -451,7 +493,7 @@ export const groupLessonPlan = query({
       fits: boolean;
     } | null = null;
     if (nearestExam) {
-      const mainSize = GROUP_MAIN_QUESTIONS_DEFAULT;
+      const mainSize = state.mainSize;
       const spiralCount =
         currentUnitIdx > 0
           ? Math.min(mainSize - 1, Math.round(mainSize * GROUP_SPIRAL_SHARE))
@@ -506,7 +548,7 @@ export const groupLessonPlan = query({
       currentUnitId:
         currentUnitIdx < units.length ? units[currentUnitIdx].unitId : null,
       crystallizeAheadDays: GROUP_CRYSTALLIZE_AHEAD_DAYS,
-      mainQuestionsPerSession: GROUP_MAIN_QUESTIONS_DEFAULT,
+      mainQuestionsPerSession: state.mainSize,
       sessions: skeleton.sessions.map((s) => {
         const c = crystallizedByDate.get(s.date);
         return {
@@ -529,6 +571,59 @@ export const groupLessonPlan = query({
 });
 
 // ── Crystallize: write question-level rows for the rolling window ─────────
+
+// Shared pick sources for crystallize + resize. Spiral pool = unseen
+// questions from units BEFORE the current one, weakest group-average memory
+// first. New queue = carry-over leftovers FIRST (already seen — printed once
+// but not done — so the ladder walk can't re-pick them), then the unseen
+// ladder from the current unit onward, in track order.
+async function buildPickQueues(
+  ctx: ReadCtx,
+  state: GroupPlanState,
+  currentUnitIdx: number,
+  now: number,
+): Promise<{
+  spiralPool: Array<{ qid: string; r: number; idx: number }>;
+  newQueue: Array<{ qid: string; unitId: string }>;
+  carryItems: Array<{ qid: string; unitId: string }>;
+}> {
+  const avgR = await groupAvgRByConcept(ctx, state.students, now);
+  const spiralPool: Array<{ qid: string; r: number; idx: number }> = [];
+  for (let i = 0; i < Math.min(currentUnitIdx, state.ladders.length); i++) {
+    const l = state.ladders[i];
+    l.ladder.forEach((q, idx) => {
+      if (state.seen.has(q.qid)) return;
+      const concept = l.conceptByQuestion.get(q.qid);
+      spiralPool.push({
+        qid: q.qid,
+        r: concept ? (avgR.get(concept) ?? 0) : 0,
+        idx: i * 10_000 + idx,
+      });
+    });
+  }
+  spiralPool.sort((a, b) => a.r - b.r || a.idx - b.idx);
+
+  const newQueue: Array<{ qid: string; unitId: string }> = [];
+  for (let i = currentUnitIdx; i < state.ladders.length; i++) {
+    const l = state.ladders[i];
+    for (const q of l.ladder) {
+      if (!state.seen.has(q.qid)) newQueue.push({ qid: q.qid, unitId: l.unitId });
+    }
+  }
+  const carryItems: Array<{ qid: string; unitId: string }> = [];
+  const queuedIds = new Set(newQueue.map((i) => i.qid));
+  for (const row of state.mainCarry) {
+    for (const qid of row.questionIds) {
+      const k = qid as unknown as string;
+      if (queuedIds.has(k)) continue;
+      queuedIds.add(k);
+      carryItems.push({ qid: k, unitId: row.unitId });
+    }
+  }
+  newQueue.unshift(...carryItems);
+  return { spiralPool, newQueue, carryItems };
+}
+
 
 export const crystallizeUpcoming = mutation({
   args: {
@@ -559,38 +654,16 @@ export const crystallizeUpcoming = mutation({
     );
     if (targets.length === 0) return { status: "ok" as const, written: 0 };
 
-    // Spiral source: unseen questions from units BEFORE the current one,
-    // weakest group-average memory first, then ladder order. Recomputed once
-    // per crystallize call; picks consume the pool so sessions don't repeat.
-    const avgR = await groupAvgRByConcept(ctx, state.students, now);
-    const spiralPool: Array<{ qid: string; r: number; idx: number }> = [];
-    for (let i = 0; i < Math.min(currentUnitIdx, state.ladders.length); i++) {
-      const l = state.ladders[i];
-      l.ladder.forEach((q, idx) => {
-        if (state.seen.has(q.qid)) return;
-        const concept = l.conceptByQuestion.get(q.qid);
-        spiralPool.push({
-          qid: q.qid,
-          r: concept ? (avgR.get(concept) ?? 0) : 0,
-          idx: i * 10_000 + idx,
-        });
-      });
-    }
-    spiralPool.sort((a, b) => a.r - b.r || a.idx - b.idx);
+    const { spiralPool, newQueue, carryItems } = await buildPickQueues(
+      ctx,
+      state,
+      currentUnitIdx,
+      now,
+    );
     let spiralCursor = 0;
-
-    // New-question walk: flat list of unseen ladder questions from the
-    // current unit onward, in track order.
-    const newQueue: Array<{ qid: string; unitId: string }> = [];
-    for (let i = currentUnitIdx; i < state.ladders.length; i++) {
-      const l = state.ladders[i];
-      for (const q of l.ladder) {
-        if (!state.seen.has(q.qid)) newQueue.push({ qid: q.qid, unitId: l.unitId });
-      }
-    }
     let newCursor = 0;
 
-    const mainSize = GROUP_MAIN_QUESTIONS_DEFAULT;
+    const mainSize = state.mainSize;
     let written = 0;
     let spiralActive = currentUnitIdx > 0;
     for (const s of targets) {
@@ -633,6 +706,27 @@ export const crystallizeUpcoming = mutation({
         createdByTeacherId: teacherId ?? undefined,
       });
       written += 1;
+    }
+
+    // Consume the carry rows whose questions just landed on sheets. Carry
+    // items sit at the FRONT of the queue, so the first `newCursor` items
+    // cover them in row order; a partially-placed row keeps its unplaced
+    // remainder for the next crystallize.
+    if (written > 0 && carryItems.length > 0) {
+      const placed = Math.min(newCursor, carryItems.length);
+      let covered = 0;
+      for (const row of state.mainCarry) {
+        if (covered >= placed) break;
+        const n = row.questionIds.length;
+        if (covered + n <= placed) {
+          await ctx.db.patch(row._id, { consumedAt: now });
+        } else {
+          await ctx.db.patch(row._id, {
+            questionIds: row.questionIds.slice(placed - covered),
+          });
+        }
+        covered += n;
+      }
     }
     return { status: "ok" as const, written };
   },
@@ -703,6 +797,207 @@ export const deletePlanned = mutation({
     if (row.status !== "planned")
       throw new Error(`Only planned sheets can be deleted (status: ${row.status})`);
     await ctx.db.delete(args.groupSheetId);
+    // Give back any carry-overs this sheet had absorbed: rows fully contained
+    // in the deleted sheet's questions become live again, so the leftovers
+    // aren't silently lost with the un-plan.
+    const rowIds = new Set(
+      [...row.newQuestionIds, ...row.spiralQuestionIds].map(
+        (q) => q as unknown as string,
+      ),
+    );
+    const carries = await ctx.db
+      .query("groupCarryOvers")
+      .withIndex("by_group", (q) => q.eq("groupId", row.groupId))
+      .collect();
+    for (const c of carries) {
+      if (c.target !== "main" || c.consumedAt === undefined) continue;
+      if (c.questionIds.every((q) => rowIds.has(q as unknown as string))) {
+        await ctx.db.patch(c._id, { consumedAt: undefined });
+      }
+    }
+  },
+});
+
+// ── Planner tuning levers (2026-07-15) ────────────────────────────────────
+
+// Per-group Main-sheet size — the "this group can take more/less per class"
+// lever. Every projection (skeleton, calendar, exam capacity) uses it live.
+export const setGroupMainQuestions = mutation({
+  args: { groupId: v.id("groups"), count: v.number() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const group = await ctx.db.get(args.groupId);
+    if (!group) throw new Error("Group not found");
+    const count = Math.min(15, Math.max(3, Math.round(args.count)));
+    await ctx.db.patch(args.groupId, { mainQuestionsPerSession: count });
+    return { count };
+  },
+});
+
+// Re-pick ONE planned sheet with a different question count (the founder's
+// "change tomorrow's sheet only" case). Deletes the row, then re-picks that
+// date from the fresh bookmark — carry-overs first, same walk as crystallize.
+export const resizePlanned = mutation({
+  args: { groupSheetId: v.id("groupSheets"), count: v.number() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) throw new Error("Group sheet not found");
+    if (row.status !== "planned")
+      throw new Error(`Only planned sheets can be resized (status: ${row.status})`);
+    const size = Math.min(20, Math.max(1, Math.round(args.count)));
+    const now = Date.now();
+    const todayYmd = ymdFromMs(now);
+
+    await ctx.db.delete(args.groupSheetId);
+    const loaded = await loadGroupPlanState(ctx, row.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const { currentUnitIdx } = skeletonInputs(state);
+    const { spiralPool, newQueue, carryItems } = await buildPickQueues(
+      ctx,
+      state,
+      currentUnitIdx,
+      now,
+    );
+
+    const spiralCount =
+      currentUnitIdx > 0
+        ? Math.min(size - 1, Math.round(size * GROUP_SPIRAL_SHARE))
+        : 0;
+    const newCount = size - spiralCount;
+    const newPicks: Id<"questionBank">[] = [];
+    let primaryUnitId: string | null = null;
+    let newCursor = 0;
+    while (newPicks.length < newCount && newCursor < newQueue.length) {
+      const item = newQueue[newCursor++];
+      newPicks.push(item.qid as unknown as Id<"questionBank">);
+      if (primaryUnitId === null) primaryUnitId = item.unitId;
+    }
+    const spiralPicks: Id<"questionBank">[] = [];
+    let spiralCursor = 0;
+    while (spiralPicks.length < spiralCount && spiralCursor < spiralPool.length) {
+      spiralPicks.push(spiralPool[spiralCursor++].qid as unknown as Id<"questionBank">);
+    }
+    if (newPicks.length === 0 && spiralPicks.length === 0) {
+      return { status: "ok" as const, resized: false };
+    }
+    await ctx.db.insert("groupSheets", {
+      groupId: row.groupId,
+      slotId: row.slotId,
+      date: row.date,
+      unitId: primaryUnitId ?? row.unitId,
+      newQuestionIds: newPicks,
+      spiralQuestionIds: spiralPicks,
+      status: "planned",
+      createdAt: now,
+      createdByTeacherId: teacherId ?? undefined,
+    });
+    // Consume the carry rows just re-absorbed (same accounting as crystallize).
+    if (carryItems.length > 0) {
+      const placed = Math.min(newCursor, carryItems.length);
+      let covered = 0;
+      for (const c of state.mainCarry) {
+        if (covered >= placed) break;
+        const n = c.questionIds.length;
+        if (covered + n <= placed) await ctx.db.patch(c._id, { consumedAt: now });
+        else await ctx.db.patch(c._id, { questionIds: c.questionIds.slice(placed - covered) });
+        covered += n;
+      }
+    }
+    return { status: "ok" as const, resized: true, size };
+  },
+});
+
+// Log a session's unfinished tail AFTER class. The teacher picks how many
+// questions (from the END of the sheet — sessions run out of time at the
+// tail) and where they go: "main" = the whole group re-does them next Main
+// session (crystallize serves them first); "revision" = every member gets
+// them in their personal revision queue. Re-logging the same sheet+target
+// replaces the previous log (idempotent tuning, not accumulation).
+export const carryOverLeftover = mutation({
+  args: {
+    groupSheetId: v.id("groupSheets"),
+    count: v.number(),
+    target: v.union(v.literal("main"), v.literal("revision")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) throw new Error("Group sheet not found");
+    if (row.status !== "materialized")
+      throw new Error(
+        "Leftovers can only be logged on a session whose sheets were generated",
+      );
+    const all = [...row.newQuestionIds, ...row.spiralQuestionIds];
+    const n = Math.min(all.length, Math.max(1, Math.round(args.count)));
+    const qids = all.slice(all.length - n);
+    const now = Date.now();
+
+    // Replace any previous unconsumed log for this sheet+target.
+    const existing = (
+      await ctx.db
+        .query("groupCarryOvers")
+        .withIndex("by_group", (q) => q.eq("groupId", row.groupId))
+        .collect()
+    ).filter(
+      (c) =>
+        c.sourceSheetId === args.groupSheetId &&
+        c.target === args.target &&
+        c.consumedAt === undefined,
+    );
+    for (const c of existing) await ctx.db.delete(c._id);
+
+    if (args.target === "main") {
+      await ctx.db.insert("groupCarryOvers", {
+        groupId: row.groupId,
+        sourceSheetId: args.groupSheetId,
+        unitId: row.unitId,
+        questionIds: qids,
+        target: "main",
+        createdAt: now,
+        createdByTeacherId: teacherId ?? undefined,
+      });
+      return { count: n, target: args.target, rows: 1 };
+    }
+    // revision → one row per current member.
+    const students = await groupMemberStudents(ctx, row.groupId);
+    for (const s of students) {
+      await ctx.db.insert("groupCarryOvers", {
+        groupId: row.groupId,
+        studentId: s._id,
+        sourceSheetId: args.groupSheetId,
+        unitId: row.unitId,
+        questionIds: qids,
+        target: "revision",
+        createdAt: now,
+        createdByTeacherId: teacherId ?? undefined,
+      });
+    }
+    return { count: n, target: args.target, rows: students.length };
+  },
+});
+
+// Stamp revision-target carry rows consumed — called by the Sheets tab right
+// after it generates a student's revision-queue sheet (the queue can't
+// self-clean for carries: their questions are already "seen").
+export const consumeCarryRows = mutation({
+  args: { rowIds: v.array(v.id("groupCarryOvers")) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const now = Date.now();
+    for (const id of args.rowIds) {
+      const row = await ctx.db.get(id);
+      if (row && row.target === "revision" && row.consumedAt === undefined) {
+        await ctx.db.patch(id, { consumedAt: now });
+      }
+    }
   },
 });
 
@@ -744,7 +1039,12 @@ async function revisionQueueForStudent(
   student: Doc<"students">,
   todayYmd: string,
   cap: number,
-): Promise<Id<"questionBank">[]> {
+): Promise<{
+  questionIds: Id<"questionBank">[];
+  // Unconsumed carry rows whose questions were placed — the Sheets tab
+  // stamps these consumed right after it generates the queue sheet.
+  carryRowIds: Id<"groupCarryOvers">[];
+}> {
   // Personal seen set (all sections, all time).
   const sheets = await ctx.db
     .query("generatedSheets")
@@ -758,6 +1058,35 @@ async function revisionQueueForStudent(
       seen.add(qid as unknown as string);
     for (const qid of sh.examPrepQuestionIds)
       seen.add(qid as unknown as string);
+  }
+
+  const out: Id<"questionBank">[] = [];
+  const carryRowIds: Id<"groupCarryOvers">[] = [];
+
+  // Carry-over leftovers FIRST: questions from an unfinished Main session
+  // the teacher sent to revision. They are already "seen" (printed once),
+  // so they must bypass the seen-check — dedupe only within the queue.
+  const inQueue = new Set<string>();
+  const carries = (
+    await ctx.db
+      .query("groupCarryOvers")
+      .withIndex("by_student", (q) => q.eq("studentId", student._id))
+      .collect()
+  )
+    .filter((r) => r.target === "revision" && r.consumedAt === undefined)
+    .sort((a, b) => a.createdAt - b.createdAt);
+  for (const r of carries) {
+    if (out.length >= cap) break;
+    let placedAny = false;
+    for (const qid of r.questionIds) {
+      if (out.length >= cap) break;
+      const k = qid as unknown as string;
+      if (inQueue.has(k)) continue;
+      inQueue.add(k);
+      out.push(qid);
+      placedAny = true;
+    }
+    if (placedAny) carryRowIds.push(r._id);
   }
 
   const memberships = await ctx.db
@@ -778,17 +1107,16 @@ async function revisionQueueForStudent(
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
 
-  const out: Id<"questionBank">[] = [];
   for (const r of rows) {
     for (const qid of [...r.newQuestionIds, ...r.spiralQuestionIds]) {
-      if (out.length >= cap) return out;
+      if (out.length >= cap) return { questionIds: out, carryRowIds };
       const k = qid as unknown as string;
-      if (seen.has(k)) continue;
+      if (seen.has(k) || inQueue.has(k)) continue;
       seen.add(k);
       out.push(qid);
     }
   }
-  return out;
+  return { questionIds: out, carryRowIds };
 }
 
 // Revision queues for a whole revision-session roster. Returns null unless
@@ -807,20 +1135,21 @@ export const revisionQueuesForSlotDate = query({
     const students = await groupMemberStudents(ctx, slot.groupId);
     const queues: Record<
       string,
-      { questionIds: Id<"questionBank">[]; consolidation: boolean }
+      {
+        questionIds: Id<"questionBank">[];
+        carryRowIds: Id<"groupCarryOvers">[];
+        consolidation: boolean;
+      }
     > = {};
     for (const s of students) {
       const consolidation = (s.learningMode ?? "normal") === "consolidation";
+      const q = consolidation
+        ? { questionIds: [], carryRowIds: [] }
+        : await revisionQueueForStudent(ctx, s, args.dateStr, REVISION_QUEUE_CAP);
       queues[s._id as unknown as string] = {
         consolidation,
-        questionIds: consolidation
-          ? []
-          : await revisionQueueForStudent(
-              ctx,
-              s,
-              args.dateStr,
-              REVISION_QUEUE_CAP,
-            ),
+        questionIds: q.questionIds,
+        carryRowIds: q.carryRowIds,
       };
     }
     return { queues };
@@ -948,7 +1277,7 @@ export const groupTermCalendar = query({
     const skeleton = buildGroupSkeleton({
       sessionDates: state.sessions.map((s) => s.date),
       units,
-      mainQuestionsPerSession: GROUP_MAIN_QUESTIONS_DEFAULT,
+      mainQuestionsPerSession: state.mainSize,
       spiralShare: GROUP_SPIRAL_SHARE,
       examDateByTerm: state.examDateByTerm,
       anyPastUnitStarted: currentUnitIdx > 0,
@@ -1082,10 +1411,65 @@ export const groupTermCalendar = query({
         };
       });
 
+    // Syllabus target: when everything due before the nearest exam actually
+    // finishes at the current plan — the founder's "how many days early"
+    // number. Null finish = doesn't finish inside the plan horizon.
+    let syllabus: {
+      finishDate: string | null;
+      daysBeforeExam: number | null;
+    } | null = null;
+    if (nearestExam) {
+      let lastDueIdx = -1;
+      skeleton.units.forEach((u, i) => {
+        if (u.examDate !== null && u.examDate <= nearestExam) lastDueIdx = i;
+      });
+      const inScope = skeleton.units
+        .filter((_, i) => i <= lastDueIdx)
+        .filter((u) => u.verdict !== "done");
+      if (inScope.length === 0) {
+        syllabus = { finishDate: todayYmd, daysBeforeExam: null };
+      } else if (inScope.some((u) => u.projectedFinishDate === null)) {
+        syllabus = { finishDate: null, daysBeforeExam: null };
+      } else {
+        const finish = inScope
+          .map((u) => u.projectedFinishDate!)
+          .sort()
+          .pop()!;
+        syllabus = {
+          finishDate: finish,
+          daysBeforeExam: Math.round(
+            (Date.parse(`${nearestExam}T00:00:00.000Z`) -
+              Date.parse(`${finish}T00:00:00.000Z`)) /
+              MS_PER_DAY,
+          ),
+        };
+      }
+    }
+
+    // Today's revision-queue depth across the roster (the debt the Revision
+    // department is carrying right now).
+    let queueStudents = 0;
+    let queueTotal = 0;
+    for (const s of state.students) {
+      if ((s.learningMode ?? "normal") === "consolidation") continue;
+      const q = await revisionQueueForStudent(ctx, s, todayYmd, REVISION_QUEUE_CAP);
+      if (q.questionIds.length > 0) {
+        queueStudents += 1;
+        queueTotal += q.questionIds.length;
+      }
+    }
+
     return {
       status: "ok" as const,
       trackName: state.track.name,
       memberCount: state.students.length,
+      mainQuestionsPerSession: state.mainSize,
+      pendingMainCarry: state.mainCarry.reduce(
+        (s, r) => s + r.questionIds.length,
+        0,
+      ),
+      syllabus,
+      revisionQueueNow: { students: queueStudents, totalQs: queueTotal },
       todayYmd,
       horizonDays,
       examDates: Object.entries(state.examDateByTerm)

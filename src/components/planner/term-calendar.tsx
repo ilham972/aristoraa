@@ -99,8 +99,17 @@ export function TermCalendar({ grade }: { grade: number }) {
   );
   const delegateToRevision = useMutation(api.learningEngine.groupPlan.delegateToRevision);
   const deletePlanned = useMutation(api.learningEngine.groupPlan.deletePlanned);
+  const setGroupMainQuestions = useMutation(
+    api.learningEngine.groupPlan.setGroupMainQuestions,
+  );
+  const resizePlanned = useMutation(api.learningEngine.groupPlan.resizePlanned);
+  const carryOverLeftover = useMutation(api.learningEngine.groupPlan.carryOverLeftover);
   const unitName = useUnitName();
   const [openDate, setOpenDate] = useState<string | null>(null);
+  // Day-sheet tuning state: resize target count / leftover count steppers.
+  const [resizeCount, setResizeCount] = useState<number | null>(null);
+  const [leftoverCount, setLeftoverCount] = useState(1);
+  const [busy, setBusy] = useState(false);
 
   const dayByDate = useMemo(() => {
     const m = new Map<string, CalDay>();
@@ -147,6 +156,7 @@ export function TermCalendar({ grade }: { grade: number }) {
   }
 
   const openDay = openDate ? dayByDate.get(openDate) : undefined;
+  const okCal = cal && cal.status === 'ok' ? cal : null;
   const today = todayYmd();
 
   return (
@@ -187,7 +197,7 @@ export function TermCalendar({ grade }: { grade: number }) {
 
       {cal?.status === 'ok' && (
         <>
-          <div className="text-[11px] text-muted-foreground mb-2">
+          <div className="text-[11px] text-muted-foreground mb-1.5">
             {cal.trackName} · {cal.memberCount} students
             {cal.examDates.length > 0 && (
               <>
@@ -195,6 +205,88 @@ export function TermCalendar({ grade }: { grade: number }) {
                 {cal.examDates.map((e) => `T${e.term} ${e.date}`).join(', ')}
               </>
             )}
+          </div>
+
+          {/* Tuning row: the syllabus target + the Qs/session lever */}
+          <div className="mb-2 rounded-xl border border-border bg-card px-3 py-2 space-y-1.5">
+            {cal.syllabus && cal.syllabus.finishDate !== null && (
+              <div className="text-[11px]">
+                <span
+                  className={cn(
+                    'font-semibold',
+                    cal.syllabus.daysBeforeExam !== null && cal.syllabus.daysBeforeExam >= 0
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-red-500',
+                  )}
+                >
+                  Syllabus done ~{fmtWeekdayDate(cal.syllabus.finishDate)}
+                  {cal.syllabus.daysBeforeExam !== null && (
+                    <>
+                      {' '}
+                      ({cal.syllabus.daysBeforeExam >= 0
+                        ? `${cal.syllabus.daysBeforeExam}d before the exam`
+                        : `${-cal.syllabus.daysBeforeExam}d AFTER the exam`})
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
+            {cal.syllabus && cal.syllabus.finishDate === null && (
+              <div className="text-[11px] font-semibold text-red-500">
+                Syllabus doesn&apos;t finish inside this plan — add sessions,
+                raise Qs/session, or delegate to Revision.
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-muted-foreground">
+                Questions per Main session
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await setGroupMainQuestions({
+                        groupId: groupId!,
+                        count: cal.mainQuestionsPerSession - 1,
+                      });
+                      toast.success(`Now ${r.count} Qs/session — plan reflowed`);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : 'Failed');
+                    }
+                  }}
+                  className="w-7 h-7 rounded-lg border border-border text-foreground font-bold"
+                >
+                  −
+                </button>
+                <span className="w-8 text-center text-sm font-bold text-foreground tabular-nums">
+                  {cal.mainQuestionsPerSession}
+                </span>
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await setGroupMainQuestions({
+                        groupId: groupId!,
+                        count: cal.mainQuestionsPerSession + 1,
+                      });
+                      toast.success(`Now ${r.count} Qs/session — plan reflowed`);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : 'Failed');
+                    }
+                  }}
+                  className="w-7 h-7 rounded-lg border border-border text-foreground font-bold"
+                >
+                  +
+                </button>
+              </span>
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              {cal.pendingMainCarry > 0 && (
+                <>↩ {cal.pendingMainCarry} leftover Qs queued for the next Main · </>
+              )}
+              Revision queue now: {cal.revisionQueueNow.totalQs} Qs across{' '}
+              {cal.revisionQueueNow.students} student
+              {cal.revisionQueueNow.students === 1 ? '' : 's'}
+            </div>
           </div>
 
           {/* Legend */}
@@ -253,7 +345,11 @@ export function TermCalendar({ grade }: { grade: number }) {
                     <button
                       key={date}
                       disabled={!hasContent}
-                      onClick={() => setOpenDate(date)}
+                      onClick={() => {
+                        setOpenDate(date);
+                        setResizeCount(null);
+                        setLeftoverCount(1);
+                      }}
                       className={cn(
                         'relative rounded-lg border px-0.5 pt-3.5 pb-1 min-h-[3.1rem] text-left',
                         examTerm !== undefined ? 'border-red-500' : 'border-border',
@@ -388,13 +484,14 @@ export function TermCalendar({ grade }: { grade: number }) {
                             : openDay.crystallized.status === 'materialized'
                               ? 'sheets generated'
                               : 'delegated to revision'}
-                        </b>
+                        </b>{' '}
+                        · 1 group sheet → {okCal?.memberCount ?? 0} student sheets
                       </>
                     ) : openDay.parts ? (
                       <>
                         {openDay.parts.map((p) => `${unitName(p.unitId)} ×${p.newCount}`).join(' + ')}
                         {openDay.spiralCount > 0 && <> · spiral ×{openDay.spiralCount}</>}
-                        {' '}· projected (not locked yet)
+                        {' '}· projected (not locked yet) → {okCal?.memberCount ?? 0} student sheets
                       </>
                     ) : (
                       <>Free session — book finished or beyond the plan.</>
@@ -403,7 +500,10 @@ export function TermCalendar({ grade }: { grade: number }) {
                 )}
                 {s.type === 'revision' && !s.cancelled && (
                   <div className="text-[11px] text-muted-foreground mt-0.5">
-                    Personal queue sheets (catch-up + delegated material).
+                    Personal queue sheets (catch-up + delegated + leftovers).
+                    Queue today: {okCal?.revisionQueueNow.totalQs ?? 0} Qs across{' '}
+                    {okCal?.revisionQueueNow.students ?? 0} student
+                    {(okCal?.revisionQueueNow.students ?? 0) === 1 ? '' : 's'}.
                   </div>
                 )}
                 <Link
@@ -414,6 +514,155 @@ export function TermCalendar({ grade }: { grade: number }) {
                 </Link>
               </div>
             ))}
+
+            {/* Resize a still-planned sheet (e.g. tomorrow's) — re-picks that
+                date with the new count; carry-overs stay first in line. */}
+            {openDay?.crystallized?.status === 'planned' && (
+              <div className="mt-2 rounded-lg border border-border px-2.5 py-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">
+                  Questions for THIS session
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  {(() => {
+                    const current =
+                      openDay.crystallized!.newCount + openDay.crystallized!.spiralCount;
+                    const value = resizeCount ?? current;
+                    return (
+                      <>
+                        <button
+                          onClick={() => setResizeCount(Math.max(1, value - 1))}
+                          className="w-7 h-7 rounded-lg border border-border text-foreground font-bold"
+                        >
+                          −
+                        </button>
+                        <span className="w-8 text-center text-sm font-bold text-foreground tabular-nums">
+                          {value}
+                        </span>
+                        <button
+                          onClick={() => setResizeCount(Math.min(20, value + 1))}
+                          className="w-7 h-7 rounded-lg border border-border text-foreground font-bold"
+                        >
+                          +
+                        </button>
+                        <button
+                          disabled={busy || value === current}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await resizePlanned({
+                                groupSheetId: openDay.crystallized!.id,
+                                count: value,
+                              });
+                              toast.success(`Re-picked with ${value} questions`);
+                              setResizeCount(null);
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : 'Failed');
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                          className="ml-1 px-2.5 h-7 rounded-lg bg-primary text-primary-foreground text-[11px] font-semibold disabled:opacity-40"
+                        >
+                          Apply
+                        </button>
+                      </>
+                    );
+                  })()}
+                </span>
+              </div>
+            )}
+
+            {/* Log the unfinished tail after class — teacher decides where it
+                goes: whole group re-does it next Main, or it lands in every
+                member's revision queue. Both reshape the calendar instantly. */}
+            {openDay?.crystallized?.status === 'materialized' && (
+              <div className="mt-2 rounded-lg border border-border px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-[11px] text-muted-foreground">
+                    Didn&apos;t finish? Last
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <button
+                      onClick={() => setLeftoverCount(Math.max(1, leftoverCount - 1))}
+                      className="w-7 h-7 rounded-lg border border-border text-foreground font-bold"
+                    >
+                      −
+                    </button>
+                    <span className="w-8 text-center text-sm font-bold text-foreground tabular-nums">
+                      {Math.min(
+                        leftoverCount,
+                        openDay.crystallized!.newCount + openDay.crystallized!.spiralCount,
+                      )}
+                    </span>
+                    <button
+                      onClick={() =>
+                        setLeftoverCount(
+                          Math.min(
+                            openDay.crystallized!.newCount +
+                              openDay.crystallized!.spiralCount,
+                            leftoverCount + 1,
+                          ),
+                        )
+                      }
+                      className="w-7 h-7 rounded-lg border border-border text-foreground font-bold"
+                    >
+                      +
+                    </button>
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">questions →</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        const r = await carryOverLeftover({
+                          groupSheetId: openDay.crystallized!.id,
+                          count: leftoverCount,
+                          target: 'main',
+                        });
+                        toast.success(
+                          `${r.count} Qs will lead the next Main session — plan reflowed`,
+                        );
+                        setOpenDate(null);
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : 'Failed');
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    className="flex-1 px-2 py-2 rounded-lg border border-primary/50 text-primary text-[11px] font-semibold disabled:opacity-40"
+                  >
+                    Next Main session
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        const r = await carryOverLeftover({
+                          groupSheetId: openDay.crystallized!.id,
+                          count: leftoverCount,
+                          target: 'revision',
+                        });
+                        toast.success(
+                          `${r.count} Qs queued for revision (${r.rows} students)`,
+                        );
+                        setOpenDate(null);
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : 'Failed');
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    className="flex-1 px-2 py-2 rounded-lg border border-amber-500/50 text-amber-600 dark:text-amber-400 text-[11px] font-semibold disabled:opacity-40"
+                  >
+                    Revision queues
+                  </button>
+                </div>
+              </div>
+            )}
 
             {openDay?.crystallized?.status === 'planned' && (
               <div className="flex gap-2 mt-2">

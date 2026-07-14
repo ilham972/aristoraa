@@ -271,6 +271,15 @@ because Z.
   in the Forecast but reframed as "need X Qs/day, doing Y" (the passive
   "needs 438 days" framing is rejected). Pace changes/absences are handled
   IN the system: skeleton reflow + revision queues + extra time slots.
+- **Unfinished-session leftovers = explicit carry queue, never un-seeing**
+  (2026-07-15). Teacher logs the sheet's unfinished TAIL (last N) after
+  class and chooses the destination: next Main (whole group re-does it —
+  crystallize serves carries first, consumes on write) or Revision queues
+  (per-member rows, consumed when the queue sheet generates). Chose an
+  explicit `groupCarryOvers` queue OVER making the derived bookmark
+  "un-see" questions — un-seeing fights every derived count and risks
+  re-pick loops; a consumable queue keeps the bookmark honest. Carry
+  demand feeds the skeleton so the calendar shifts immediately.
 - **Scheme Calendar over prebuilt-year sheets** (2026-07-15): founder asked
   "can we prebuild every sheet?"; chose a per-group day-grid CALENDAR of
   the live projection (crystallized week + skeleton beyond, Revision slots,

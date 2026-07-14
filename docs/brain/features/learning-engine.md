@@ -85,6 +85,16 @@ get the fully-personal planner instead. UI: /groups/[id]/plan (redesigned
 Skeleton is CANCELLATION-AWARE (2026-07-15): dates whose representative
 slot has a sessionLogs `cancelled_by_tutor` row are skipped — the plan
 reflows past them and crystallize never writes onto a cancelled day.
+Tuning levers (2026-07-15, all on the /planner Calendar): per-group
+`groups.mainQuestionsPerSession` (setGroupMainQuestions, clamp 3–15);
+`resizePlanned` re-picks ONE planned sheet with a new count; leftover log
+`groupCarryOvers` (carryOverLeftover: last-N tail of a materialized sheet →
+target "main" = next crystallize serves them FIRST then stamps consumedAt,
+target "revision" = one row per member, prepended to their queue, consumed
+by the Sheets tab via consumeCarryRows after generating). skeletonInputs
+adds unconsumed main-carry to unit demand, so skeleton/calendar/examPlan
+all count re-teaching; deletePlanned un-consumes absorbed carries. The
+bookmark is NEVER un-seen — carries are an explicit queue on top.
 
 ## Coverage forecast advisor (2026-07-14)
 `coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`

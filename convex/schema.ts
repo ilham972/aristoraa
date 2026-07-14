@@ -164,6 +164,10 @@ export default defineSchema({
     defaultRoomId: v.optional(v.id("rooms")),    // used when toggling a new cell in the weekly grid
     type: v.optional(v.string()),                // "small" | "medium" | "large" | "private"
     maxSize: v.optional(v.number()),
+    // Per-group Main-sheet size (departments tuning, 2026-07-15): questions
+    // per group session. Unset ⇒ GROUP_MAIN_QUESTIONS_DEFAULT. The planner
+    // lever for "this group can take more/less per class".
+    mainQuestionsPerSession: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
     // Explicit colour palette index, set when the user taps the dialog's colour
@@ -921,6 +925,27 @@ export default defineSchema({
   })
     .index("by_group_date", ["groupId", "date"])
     .index("by_slot_date", ["slotId", "date"]),
+
+  // Leftover carry-overs (departments, 2026-07-15): questions from a
+  // materialized group sheet the session didn't finish, re-routed by the
+  // teacher AFTER class. target="main" (group-level, no studentId): the next
+  // crystallize serves them FIRST, then stamps consumedAt — the bookmark is
+  // never "un-seen". target="revision" (one row per member): prepended to
+  // that student's revision queue and consumed when their queue sheet is
+  // generated. Unconsumed rows also count into the Term tab's exam demand.
+  groupCarryOvers: defineTable({
+    groupId: v.id("groups"),
+    studentId: v.optional(v.id("students")),          // set when target="revision"
+    sourceSheetId: v.id("groupSheets"),
+    unitId: v.string(),                               // attribution for re-picks
+    questionIds: v.array(v.id("questionBank")),
+    target: v.string(),                               // "main" | "revision"
+    createdAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    createdByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_student", ["studentId"]),
 
   // ─── Phase 2 (sheet-synced scoring): per-session points, dual-tracked ─────
   // One row per finalized sheet. Both the legacy triangular points (pointsOld =
