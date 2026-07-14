@@ -280,14 +280,15 @@ because Z.
   "un-see" questions — un-seeing fights every derived count and risks
   re-pick loops; a consumable queue keeps the bookmark honest. Carry
   demand feeds the skeleton so the calendar shifts immediately.
-- **Scheme Calendar over prebuilt-year sheets** (2026-07-15): founder asked
-  "can we prebuild every sheet?"; chose a per-group day-grid CALENDAR of
-  the live projection (crystallized week + skeleton beyond, Revision slots,
-  exam days) instead — projections self-correct, frozen sheets go stale.
-  Skeleton made cancellation-aware at the same time (sessionLogs
-  cancelled_by_tutor skips the date, plan reflows → cancel a class in the
-  Day view and the calendar shows the consequence). Delegation stays
-  available from the calendar's day sheet.
+- **Scheme Calendar + full-term prebuild** (2026-07-15, evolved same day):
+  first ruling was calendar-projection-only ("frozen sheets go stale");
+  founder pushed back with the key insight that COUNTS are stable — so
+  full-term crystallize is now allowed (Sheets tab "Run all term sheets",
+  crystallize cap raised 30→180d) and staleness is handled by "Re-plan"
+  (deleteFuturePlanned + re-crystallize: future PLANNED rows are always
+  re-pickable; taught/delegated rows never touched). Calendar stays the
+  live view; skeleton is cancellation-aware (sessionLogs cancelled_by_tutor
+  skips the date, plan reflows). Delegation available from both surfaces.
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

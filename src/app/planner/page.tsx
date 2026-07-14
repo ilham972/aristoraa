@@ -18,6 +18,7 @@ import {
   BookOpenCheck,
   CalendarDays,
   CalendarRange,
+  FileText,
   LayoutGrid,
   Route,
 } from 'lucide-react';
@@ -27,12 +28,14 @@ import { ExamCalendarTab } from '@/components/algorithm/exam-calendar-tab';
 import { TermBoard } from '@/components/planner/term-board';
 import { GradeForecast } from '@/components/planner/grade-forecast';
 import { TermCalendar } from '@/components/planner/term-calendar';
+import { GroupSheets } from '@/components/planner/group-sheets';
 
-type TabId = 'term' | 'calendar' | 'forecast' | 'tracks' | 'exams';
+type TabId = 'term' | 'calendar' | 'sheets' | 'forecast' | 'tracks' | 'exams';
 
 const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Route }[] = [
   { id: 'term', label: 'Term', fullLabel: 'Term Planner', icon: CalendarRange },
   { id: 'calendar', label: 'Calendar', fullLabel: 'Scheme Calendar', icon: LayoutGrid },
+  { id: 'sheets', label: 'Sheets', fullLabel: 'Term Sheets', icon: FileText },
   { id: 'forecast', label: 'Forecast', fullLabel: 'Coverage Forecast', icon: BookOpenCheck },
   { id: 'tracks', label: 'Tracks', fullLabel: 'Learning Tracks', icon: Route },
   { id: 'exams', label: 'Exams', fullLabel: 'Exam Calendar', icon: CalendarDays },
@@ -46,7 +49,7 @@ function PlannerPageInner() {
 
   const rawTab = searchParams.get('tab') ?? 'term';
   const tab: TabId = (
-    ['term', 'calendar', 'forecast', 'tracks', 'exams'] as TabId[]
+    ['term', 'calendar', 'sheets', 'forecast', 'tracks', 'exams'] as TabId[]
   ).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'term';
@@ -83,14 +86,14 @@ function PlannerPageInner() {
         </p>
       )}
 
-      {/* Tab switcher */}
-      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-3">
+      {/* Tab switcher — 6 tabs, scrolls on narrow phones */}
+      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-3 overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setParams({ tab: t.id })}
             className={cn(
-              'flex-1 py-2 px-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap',
+              'flex-1 shrink-0 py-2 px-2.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap',
               t.id === tab
                 ? 'bg-card text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -101,8 +104,8 @@ function PlannerPageInner() {
         ))}
       </div>
 
-      {/* Calendar + Forecast share the Term tab's grade selection */}
-      {(tab === 'forecast' || tab === 'calendar') && (
+      {/* Calendar + Sheets + Forecast share the Term tab's grade selection */}
+      {(tab === 'forecast' || tab === 'calendar' || tab === 'sheets') && (
         <div className="flex gap-1 p-1 bg-muted rounded-xl overflow-x-auto mb-3">
           {GRADES.map((g) => (
             <button
@@ -123,6 +126,7 @@ function PlannerPageInner() {
 
       {tab === 'term' && <TermBoard grade={grade} setGrade={(g) => setParams({ g })} />}
       {tab === 'calendar' && <TermCalendar grade={grade} />}
+      {tab === 'sheets' && <GroupSheets grade={grade} />}
       {tab === 'forecast' && <GradeForecast grade={grade} />}
       {tab === 'tracks' && <TracksTab />}
       {tab === 'exams' && <ExamCalendarTab />}

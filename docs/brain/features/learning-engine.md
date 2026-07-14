@@ -39,17 +39,18 @@ cumulative-exam holdouts.
    memory updates + points. Single entry point: finalizeSheetScoring.
 
 ## Control panels
-- `/planner` (nav, 2026-07-15) — THE global planning page, 5 tabs: Term
+- `/planner` (nav, 2026-07-15) — THE global planning page, 6 tabs: Term
   (grade → exam countdown + per-group CAPACITY PLAN: demand-vs-sessions
-  fits/short block with the exact fix — extra sessions or delegable backlog
-  — from groupLessonPlan.examPlan; runway cards; crystallize one/all),
-  Calendar (per-group scheme-of-work day-grid to exam day: unit per session,
-  crystallized state, Revision slots, cancelled days, tap-day sheet with
-  delegate/un-plan — `groupPlan.groupTermCalendar`), Forecast (grade-wide
-  student coverage rollup), Tracks + Exams (moved FROM /algorithm). Exams
-  tab = grade×term grid per year (+ global Quick entry). Backend
-  `plannerBoard.ts` (light `plannerGroups`; `gradeForecastRollup` = ONE pool
-  walk per track). Board nav slot freed → leaderboard link in /students.
+  fits/short with the exact fix, from groupLessonPlan.examPlan; runway
+  cards; crystallize one/all), Calendar (per-group scheme day-grid to exam:
+  unit/state per session, Revision slots, cancelled days, tuning levers —
+  `groupPlan.groupTermCalendar`), Sheets (FULL-TERM prebuild: "Run all term
+  sheets" = crystallize to 180d cap, "Re-plan" = deleteFuturePlanned +
+  rebuild after Lesson-Builder reorders, chronological list + question-crop
+  preview drawer with ‹› sheet nav — groupSheetHistory/groupSheetPreview),
+  Forecast (grade rollup), Tracks + Exams (moved FROM /algorithm; Exams =
+  grade×term grid/year + Quick entry). Backend `plannerBoard.ts`. Board nav
+  slot freed → leaderboard link in /students.
 - `/algorithm` — inspection only: Coverage, Blueprint, Path (stale
   ?tab=tracks|exams redirect to /planner).
 - `/algorithm/exam-calendar` — standalone page; **exam mode is MANUAL**:

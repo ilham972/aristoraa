@@ -636,9 +636,13 @@ export const crystallizeUpcoming = mutation({
     const teacherId = await resolveTeacherId(ctx);
     const now = Date.now();
     const todayYmd = ymdFromMs(now);
+    // Cap = the full skeleton horizon (founder decision 2026-07-15: the
+    // whole term is prebuilt from the Sheets tab; planned rows stay
+    // re-pickable until materialized, so difficulty re-orders never strand
+    // them — "Re-plan future" refreshes the lot).
     const horizon = Math.min(
       Math.max(1, Math.round(args.daysAhead ?? GROUP_CRYSTALLIZE_AHEAD_DAYS)),
-      30,
+      GROUP_SKELETON_HORIZON_DAYS,
     );
     const lastYmd = ymdFromMs(now + horizon * MS_PER_DAY);
 
@@ -1477,6 +1481,143 @@ export const groupTermCalendar = query({
         .sort((a, b) => a.date.localeCompare(b.date)),
       days,
     };
+  },
+});
+
+// Every group sheet ever written, oldest first — the Planner Sheets tab's
+// term view (past rows dimmed, planned rows previewable/re-pickable).
+export const groupSheetHistory = query({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const rows = await ctx.db
+      .query("groupSheets")
+      .withIndex("by_group_date", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    return rows
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((r) => ({
+        id: r._id,
+        date: r.date,
+        unitId: r.unitId,
+        newCount: r.newQuestionIds.length,
+        spiralCount: r.spiralQuestionIds.length,
+        status: r.status,
+      }));
+  },
+});
+
+// One sheet's questions with their crops, print order (new then spiral) —
+// the Sheets tab's preview drawer. Same page-URL resolution as lessonSets.
+export const groupSheetPreview = query({
+  args: { groupSheetId: v.id("groupSheets") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) return null;
+
+    const pageUrlCache = new Map<
+      string,
+      { full: string | null; small: string | null }
+    >();
+    async function pageUrls(
+      pageId: Id<"textbookPages"> | Id<"pastPaperPages">,
+    ): Promise<{ full: string | null; small: string | null }> {
+      const key = pageId as unknown as string;
+      const cached = pageUrlCache.get(key);
+      if (cached) return cached;
+      const p = await ctx.db.get(pageId);
+      const out = {
+        full: p ? await ctx.storage.getUrl(p.storageId) : null,
+        small:
+          p && p.smallStorageId
+            ? await ctx.storage.getUrl(p.smallStorageId)
+            : null,
+      };
+      pageUrlCache.set(key, out);
+      return out;
+    }
+
+    async function describe(
+      qid: Id<"questionBank">,
+      section: "new" | "spiral",
+    ) {
+      const q = await ctx.db.get(qid);
+      if (!q) return null;
+      const pageId = q.textbookPageId ?? q.pastPaperPageId;
+      const urls = pageId ? await pageUrls(pageId) : { full: null, small: null };
+      return {
+        questionId: qid,
+        section,
+        source: q.source,
+        difficulty: q.difficulty ?? null,
+        cropBox: q.cropBox ?? null,
+        pageImageUrl: urls.full,
+        pageImageUrlSmall: urls.small,
+        overrideImageUrl: q.overrideRender
+          ? await ctx.storage.getUrl(q.overrideRender.storageId)
+          : null,
+      };
+    }
+
+    const questions = (
+      await Promise.all([
+        ...row.newQuestionIds.map((qid) => describe(qid, "new" as const)),
+        ...row.spiralQuestionIds.map((qid) => describe(qid, "spiral" as const)),
+      ])
+    ).filter((q): q is NonNullable<typeof q> => q !== null);
+
+    return {
+      id: row._id,
+      date: row.date,
+      unitId: row.unitId,
+      status: row.status,
+      questions,
+    };
+  },
+});
+
+// Delete every future still-planned row (materialized/delegated untouched)
+// so "Re-plan the term" can rebuild from the current book order — the
+// founder's iteration loop: reorder difficulty in the Lesson Builder, then
+// re-plan; counts stay identical, order refreshes. Carries absorbed by the
+// deleted rows are given back, same as deletePlanned.
+export const deleteFuturePlanned = mutation({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const todayYmd = ymdFromMs(Date.now());
+    const rows = (
+      await ctx.db
+        .query("groupSheets")
+        .withIndex("by_group_date", (q) =>
+          q.eq("groupId", args.groupId).gte("date", todayYmd),
+        )
+        .collect()
+    ).filter((r) => r.status === "planned");
+    if (rows.length === 0) return { deleted: 0 };
+
+    const freedIds = new Set<string>();
+    for (const r of rows) {
+      for (const q of [...r.newQuestionIds, ...r.spiralQuestionIds]) {
+        freedIds.add(q as unknown as string);
+      }
+      await ctx.db.delete(r._id);
+    }
+    const carries = await ctx.db
+      .query("groupCarryOvers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    for (const c of carries) {
+      if (c.target !== "main" || c.consumedAt === undefined) continue;
+      if (c.questionIds.every((q) => freedIds.has(q as unknown as string))) {
+        await ctx.db.patch(c._id, { consumedAt: undefined });
+      }
+    }
+    return { deleted: rows.length };
   },
 });
 
