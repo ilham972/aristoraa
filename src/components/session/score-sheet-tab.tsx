@@ -84,10 +84,11 @@ export function ScoreSheetTab({
   });
   const allStudents = useQuery(api.students.list);
   const attendance = useQuery(api.attendance.getBySlotAndDate, { slotId, date });
-  // Departments redesign: the crystallized group Main sheet for this session,
-  // if the group plan has one. When present, "Generate all" materializes it
-  // as the identical Main block for every roster member.
-  const groupPlanSheet = useQuery(
+  // Departments redesign: group-plan context for this slot (non-null for any
+  // group-owned slot; .sheet set when a crystallized group sheet exists —
+  // then "Generate all" materializes it as the identical Main block for the
+  // whole roster).
+  const groupPlanInfo = useQuery(
     api.learningEngine.groupPlan.plannedGroupSheetForSlotDate,
     { slotId, dateStr: date },
   );
@@ -244,8 +245,8 @@ export function ScoreSheetTab({
     //   Main session with a crystallized group sheet → one identical Main
     //   block for the whole roster.
     const isRevisionSession = revisionQueues !== null && revisionQueues !== undefined;
-    const fromPlan =
-      !isRevisionSession && groupPlanSheet && groupPlanSheet.status === 'planned';
+    const planSheet = groupPlanInfo?.sheet ?? null;
+    const fromPlan = !isRevisionSession && planSheet && planSheet.status === 'planned';
     setBulkBusy({ kind: 'generate', total: targets.length, done: 0 });
     let saved = 0;
     const errs: string[] = [];
@@ -267,7 +268,7 @@ export function ScoreSheetTab({
           gradeByModule: scope.gradeByModule,
           slotId,
           ...(fromPlan
-            ? { mainQuestionIdsOverride: groupPlanSheet.questionIds }
+            ? { mainQuestionIdsOverride: planSheet.questionIds }
             : queue && queue.questionIds.length > 0
               ? { mainQuestionIdsOverride: queue.questionIds }
               : {}),
@@ -280,7 +281,7 @@ export function ScoreSheetTab({
     }
     if (fromPlan && saved > 0) {
       try {
-        await markGroupSheetMaterialized({ groupSheetId: groupPlanSheet.id });
+        await markGroupSheetMaterialized({ groupSheetId: planSheet.id });
       } catch {
         // Non-fatal: sheets exist; the plan row just keeps status "planned".
       }
@@ -301,7 +302,7 @@ export function ScoreSheetTab({
     studentScope,
     date,
     slotId,
-    groupPlanSheet,
+    groupPlanInfo,
     revisionQueues,
     markGroupSheetMaterialized,
   ]);
@@ -404,31 +405,34 @@ export function ScoreSheetTab({
         </div>
       )}
 
-      {/* Group plan banner (departments redesign) */}
-      {!revisionQueues && groupPlanSheet && (
+      {/* Group plan banner (departments redesign) — shown for EVERY
+          group-owned main session so the plan page is always reachable. */}
+      {!revisionQueues && groupPlanInfo && (
         <div
           className={cn(
             'shrink-0 mb-2 rounded-lg border px-2.5 py-1.5 flex items-center justify-between gap-2 text-[10px]',
-            groupPlanSheet.status === 'planned'
+            groupPlanInfo.sheet?.status === 'planned'
               ? 'border-primary/50 bg-primary/10 text-foreground'
               : 'border-border bg-card text-muted-foreground',
           )}
         >
           <span className="min-w-0 truncate">
-            {groupPlanSheet.status === 'planned' ? (
+            {groupPlanInfo.sheet?.status === 'planned' ? (
               <>
-                <b>Group plan ready:</b> {groupPlanSheet.newCount} new +{' '}
-                {groupPlanSheet.spiralCount} spiral — Generate all uses it.
+                <b>Group plan ready:</b> {groupPlanInfo.sheet.newCount} new +{' '}
+                {groupPlanInfo.sheet.spiralCount} spiral — Generate all uses it.
               </>
-            ) : (
+            ) : groupPlanInfo.sheet ? (
               <>Group plan sheet already generated for this session.</>
+            ) : (
+              <>No prebuilt sheet for today — open the plan to crystallize.</>
             )}
           </span>
           <Link
-            href={`/groups/${groupPlanSheet.groupId}/plan`}
+            href={`/groups/${groupPlanInfo.groupId}/plan`}
             className="shrink-0 font-semibold text-primary"
           >
-            View plan
+            Group plan
           </Link>
         </div>
       )}

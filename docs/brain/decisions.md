@@ -243,6 +243,14 @@ because Z.
 - **Unit book exhausted → capped past-paper tail + alert** (2026-07-14):
   finish the textbook first, then ≤6 past-paper Qs per unit flow in
   (GROUP_PASTPAPER_TAIL_MAX) so the march to the next unit never stalls.
+- **Topic Journey reader = overlay above the tag drawer, not a route**
+  (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
+  pages full-screen with a G6→G11 concept strip + Next/Prev — reading one
+  topic (e.g. Statistics) across grades as a continuous story. Chose a
+  portal overlay over a dedicated page so closing lands back in the drawer
+  exactly as left (founder is phone-only; route navigation would lose drawer
+  state). Chose the journey strip over a simple per-concept popup because
+  the founder's stated goal was continuous cross-grade reading.
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.

@@ -49,6 +49,15 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
 - `/settings/crop/[unitId]` + `/settings/past-paper-crop/[paperId]` — the
   question-cropping workbenches that feed the question bank (the engine's
   raw material). Crop validation: `learningEngine/cropIntegrity.ts`.
+- "Tags" tab (`tags-tab.tsx` + `tag-detail-drawer.tsx`): exam topic tags →
+  linked curriculum units → concepts grouped by grade. Tapping a concept
+  opens the **Topic Journey reader** (`topic-journey-reader.tsx`,
+  2026-07-14): full-screen overlay ABOVE the drawer (closing lands back in
+  it) — grade-ordered concept strip (G6→G11, unmarked concepts greyed), the
+  concept's marked book pages (thumbnails via
+  `textbookPages.getSmallPagesByGradeRange`; tap a page = pinch-zoom
+  full-res via ZoomedPageView with crops off), Prev/Next + "Next concept"
+  card to read one topic across grades as a continuous story.
 
 ## App shell
 - `src/components/navigation.tsx` — bottom nav (transit-app aesthetic, dark

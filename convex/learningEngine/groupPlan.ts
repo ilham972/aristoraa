@@ -530,9 +530,11 @@ export const crystallizeUpcoming = mutation({
 
 // ── Session-time lookups + lifecycle ──────────────────────────────────────
 
-// The planned group sheet for a session, resolved from the slot. The Sheets
-// tab uses this: when present, "Generate all" materializes THIS sheet as the
-// identical Main block for every roster member.
+// The group-plan context for a session, resolved from the slot. Non-null for
+// EVERY group-owned slot (so the Sheets tab can always link to the plan
+// page); `sheet` is set only when a crystallized group sheet exists for this
+// date — then "Generate all" materializes it as the identical Main block for
+// every roster member.
 export const plannedGroupSheetForSlotDate = query({
   args: { slotId: v.id("scheduleSlots"), dateStr: v.string() },
   handler: async (ctx, args) => {
@@ -547,15 +549,18 @@ export const plannedGroupSheetForSlotDate = query({
       )
       .collect();
     const row = rows.find((r) => r.status !== "delegated") ?? null;
-    if (!row) return null;
     return {
-      id: row._id,
-      status: row.status,
-      unitId: row.unitId,
-      groupId: row.groupId,
-      questionIds: [...row.newQuestionIds, ...row.spiralQuestionIds],
-      newCount: row.newQuestionIds.length,
-      spiralCount: row.spiralQuestionIds.length,
+      groupId: slot.groupId,
+      sheet: row
+        ? {
+            id: row._id,
+            status: row.status,
+            unitId: row.unitId,
+            questionIds: [...row.newQuestionIds, ...row.spiralQuestionIds],
+            newCount: row.newQuestionIds.length,
+            spiralCount: row.spiralQuestionIds.length,
+          }
+        : null,
     };
   },
 });

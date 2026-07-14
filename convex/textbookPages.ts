@@ -145,6 +145,70 @@ export const getPagesInRange = query({
   },
 });
 
+// Pages for a concept's marked book range, looked up by GRADE (a grade can
+// span multiple textbook parts; printed page numbers are continuous across
+// them, so we search every part). Powers the Topic Journey reader
+// (Settings → Tags → concept tap). Returns the downscaled thumbnail for the
+// scrolling list plus the full-res URL + pageId so tapping a page can open
+// the pinch-zoom view without a second query. Missing pages come back as
+// null-URL slots so the reader can show a placeholder instead of silently
+// skipping a page.
+export const getSmallPagesByGradeRange = query({
+  args: {
+    grade: v.number(),
+    startPage: v.number(),
+    endPage: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity === null) return [];
+
+    // Safety clamp — a concept is a handful of pages; never serve more than
+    // 40 even if the marked range is corrupt.
+    const endPage = Math.min(args.endPage, args.startPage + 39);
+    if (endPage < args.startPage) return [];
+
+    const textbooks = await ctx.db
+      .query("textbooks")
+      .withIndex("by_grade", (q) => q.eq("grade", args.grade))
+      .collect();
+
+    const pageMap = new Map<
+      number,
+      { storageId: Id<"_storage">; smallStorageId?: Id<"_storage">; _id: Id<"textbookPages"> }
+    >();
+    for (const tb of textbooks) {
+      const pages = await ctx.db
+        .query("textbookPages")
+        .withIndex("by_textbook", (q) => q.eq("textbookId", tb._id))
+        .collect();
+      for (const p of pages) {
+        if (p.pageNumber >= args.startPage && p.pageNumber <= endPage && !pageMap.has(p.pageNumber)) {
+          pageMap.set(p.pageNumber, p);
+        }
+      }
+    }
+
+    const results: {
+      pageNumber: number;
+      url: string | null;
+      fullUrl: string | null;
+      pageId: Id<"textbookPages"> | null;
+    }[] = [];
+    for (let n = args.startPage; n <= endPage; n++) {
+      const page = pageMap.get(n);
+      if (page) {
+        const url = await ctx.storage.getUrl(page.smallStorageId ?? page.storageId);
+        const fullUrl = page.smallStorageId ? await ctx.storage.getUrl(page.storageId) : url;
+        results.push({ pageNumber: n, url, fullUrl, pageId: page._id });
+      } else {
+        results.push({ pageNumber: n, url: null, fullUrl: null, pageId: null });
+      }
+    }
+    return results;
+  },
+});
+
 export const getPagesByGrade = query({
   args: { grade: v.number(), pageNumber: v.number() },
   handler: async (ctx, args) => {

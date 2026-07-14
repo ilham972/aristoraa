@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation } from 'convex/react';
-import { Trash2, Pencil, Link2, X, Video } from 'lucide-react';
+import { Trash2, Pencil, Link2, X, Video, ChevronRight } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -16,6 +16,7 @@ import type { Id } from '@/lib/convex';
 import { findUnit } from '@/lib/curriculum-data';
 import { MODULE_COLORS } from '@/lib/types';
 import { TagUnitPicker } from './tag-unit-picker';
+import { TopicJourneyReader, type ReaderGroup } from './topic-journey-reader';
 import { toast } from 'sonner';
 
 interface Props {
@@ -208,6 +209,8 @@ export function TagDetailDrawer({ open, onOpenChange, tagId, onDeleted }: Props)
 
   const [editOpen, setEditOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Topic Journey reader — opened by tapping a concept in the list below.
+  const [readerConceptId, setReaderConceptId] = useState<Id<'exercises'> | null>(null);
 
   const links = detail?.links ?? [];
   const tag = detail?.tag;
@@ -217,6 +220,7 @@ export function TagDetailDrawer({ open, onOpenChange, tagId, onDeleted }: Props)
     if (!open) {
       setEditOpen(false);
       setPickerOpen(false);
+      setReaderConceptId(null);
     }
   }, [open]);
 
@@ -359,7 +363,10 @@ export function TagDetailDrawer({ open, onOpenChange, tagId, onDeleted }: Props)
                   </p>
                 </div>
               ) : (
-                <ConceptsByGrade groups={linkedConcepts} />
+                <ConceptsByGrade
+                  groups={linkedConcepts}
+                  onConceptTap={(id) => setReaderConceptId(id)}
+                />
               )}
             </section>
           </div>
@@ -382,6 +389,16 @@ export function TagDetailDrawer({ open, onOpenChange, tagId, onDeleted }: Props)
         selectedUnitIds={selectedUnitIds}
         onSave={handleSavePicker}
       />
+
+      {/* Topic Journey reader — portal above the drawer; closing lands back here */}
+      <TopicJourneyReader
+        open={readerConceptId !== null}
+        onClose={() => setReaderConceptId(null)}
+        tagName={tag?.name ?? ''}
+        tagColor={tag?.color ?? MODULE_COLORS[tag?.moduleId ?? ''] ?? '#888'}
+        groups={(linkedConcepts ?? []) as ReaderGroup[]}
+        initialConceptId={readerConceptId}
+      />
     </>
   );
 }
@@ -393,10 +410,22 @@ type Group = {
   grade: number;
   term: number;
   moduleId: string;
-  concepts: { _id: Id<'exercises'>; name: string; videoUrl?: string }[];
+  concepts: {
+    _id: Id<'exercises'>;
+    name: string;
+    videoUrl?: string;
+    pageNumber?: number;
+    pageNumberEnd?: number;
+  }[];
 };
 
-function ConceptsByGrade({ groups }: { groups: Group[] }) {
+function ConceptsByGrade({
+  groups,
+  onConceptTap,
+}: {
+  groups: Group[];
+  onConceptTap: (id: Id<'exercises'>) => void;
+}) {
   const byGrade = useMemo(() => {
     const m = new Map<number, Group[]>();
     for (const g of groups) {
@@ -430,12 +459,19 @@ function ConceptsByGrade({ groups }: { groups: Group[] }) {
                     No concepts seeded for this unit yet.
                   </p>
                 ) : (
-                  <ul className="space-y-0.5 pl-1">
+                  <ul className="space-y-0.5">
                     {g.concepts.map((c) => (
-                      <li key={c._id} className="flex items-center gap-1.5 text-[11px]">
-                        <span className="w-1 h-1 rounded-full bg-muted-foreground shrink-0" />
-                        <span className="flex-1 truncate">{c.name}</span>
-                        {c.videoUrl && <Video className="w-2.5 h-2.5 text-violet-500 shrink-0" />}
+                      <li key={c._id}>
+                        <button
+                          type="button"
+                          onClick={() => onConceptTap(c._id)}
+                          className="w-full flex items-center gap-1.5 text-[11px] rounded-lg px-1.5 py-1.5 -mx-0.5 hover:bg-muted/60 active:bg-muted transition-colors text-left group/concept"
+                        >
+                          <span className="w-1 h-1 rounded-full bg-muted-foreground shrink-0" />
+                          <span className="flex-1 truncate">{c.name}</span>
+                          {c.videoUrl && <Video className="w-2.5 h-2.5 text-violet-500 shrink-0" />}
+                          <ChevronRight className="w-3 h-3 text-muted-foreground/40 group-hover/concept:text-muted-foreground shrink-0" />
+                        </button>
                       </li>
                     ))}
                   </ul>

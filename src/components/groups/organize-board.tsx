@@ -10,11 +10,12 @@
 // via api.groups.applyRosterMoves.
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useMutation } from 'convex/react';
 import { Popover as PopoverPrimitive } from '@base-ui/react/popover';
 import { useCachedQuery as useQuery } from '@/hooks/use-cached-query';
 import { toast } from 'sonner';
-import { ArrowLeftRight, CalendarRange, Check, ChevronDown, Pencil, RotateCcw, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, CalendarRange, Check, ChevronDown, Pencil, RotateCcw, Route, Trash2, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { api, type Id } from '@/lib/convex';
@@ -580,6 +581,15 @@ function Column({
                   <CalendarRange className="w-3 h-3" />
                 </button>
               )}
+              {/* Departments redesign: the group lesson plan (Main dept). */}
+              <Link
+                href={`/groups/${colId}/plan`}
+                className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
+                title="Lesson plan"
+                aria-label="Open group lesson plan"
+              >
+                <Route className="w-3 h-3" />
+              </Link>
             </div>
           )}
         </div>
