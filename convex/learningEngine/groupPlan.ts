@@ -34,6 +34,7 @@ import {
   GROUP_MAIN_QUESTIONS_DEFAULT,
   GROUP_SKELETON_HORIZON_DAYS,
   GROUP_SPIRAL_SHARE,
+  REVISION_QUEUE_CAP,
 } from "./config";
 import {
   buildGroupSkeleton,
@@ -204,18 +205,21 @@ async function buildUnitLadders(
   return out;
 }
 
-// Upcoming session dates for the group: weekly slots expanded over the
+// Upcoming MAIN session dates for the group: weekly slots expanded over the
 // horizon, deduped by date (fused/back-to-back slots = one session), sorted.
+// Revision-type slots are the Revision department's time — they never carry
+// group sheets, so they're excluded from the skeleton.
 async function upcomingSessionDates(
   ctx: ReadCtx,
   groupId: Id<"groups">,
   fromYmd: string,
   horizonDays: number,
 ): Promise<Array<{ date: string; slotId: Id<"scheduleSlots"> }>> {
-  const slots = await ctx.db
+  const allSlots = await ctx.db
     .query("scheduleSlots")
     .withIndex("by_group", (q) => q.eq("groupId", groupId))
     .collect();
+  const slots = allSlots.filter((s) => (s.sessionType ?? "main") === "main");
   if (slots.length === 0) return [];
   const byDow = new Map<number, Id<"scheduleSlots">>();
   for (const s of slots) {
@@ -563,5 +567,168 @@ export const deletePlanned = mutation({
     if (row.status !== "planned")
       throw new Error(`Only planned sheets can be deleted (status: ${row.status})`);
     await ctx.db.delete(args.groupSheetId);
+  },
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Stage 3 — Revision department: delegation, catch-up queues, session types
+// ══════════════════════════════════════════════════════════════════════════
+
+// Delegate a planned group sheet to the Revision department (founder
+// decision: group-level act, bookmark advances exactly as if taught — the
+// row already counts toward the derived bookmark whatever its status). The
+// questions reach each member through their revision queue instead of a
+// taught Main session. One-way: un-delegating would corrupt sheets already
+// generated from the queue.
+export const delegateToRevision = mutation({
+  args: { groupSheetId: v.id("groupSheets") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) throw new Error("Group sheet not found");
+    if (row.status !== "planned")
+      throw new Error(
+        `Only planned sheets can be delegated (status: ${row.status})`,
+      );
+    await ctx.db.patch(args.groupSheetId, {
+      status: "delegated",
+      delegatedAt: Date.now(),
+    });
+  },
+});
+
+// A student's revision queue: every question the GROUP has claimed
+// (materialized or delegated rows up to today) that this student has never
+// had on a personal sheet. One rule covers both cases the founder named —
+// absence catch-up (materialized on a day they missed) and delegated
+// material (never taught at all). Oldest session first, new before spiral.
+async function revisionQueueForStudent(
+  ctx: ReadCtx,
+  student: Doc<"students">,
+  todayYmd: string,
+  cap: number,
+): Promise<Id<"questionBank">[]> {
+  // Personal seen set (all sections, all time).
+  const sheets = await ctx.db
+    .query("generatedSheets")
+    .withIndex("by_student_date", (q) => q.eq("studentId", student._id))
+    .collect();
+  const seen = new Set<string>();
+  for (const sh of sheets) {
+    for (const qid of sh.warmupQuestionIds) seen.add(qid as unknown as string);
+    for (const qid of sh.mainQuestionIds) seen.add(qid as unknown as string);
+    for (const qid of sh.revisionQuestionIds ?? [])
+      seen.add(qid as unknown as string);
+    for (const qid of sh.examPrepQuestionIds)
+      seen.add(qid as unknown as string);
+  }
+
+  const memberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_student", (q) => q.eq("studentId", student._id))
+    .collect();
+  const rows: Doc<"groupSheets">[] = [];
+  for (const m of memberships) {
+    const gs = await ctx.db
+      .query("groupSheets")
+      .withIndex("by_group_date", (q) => q.eq("groupId", m.groupId))
+      .collect();
+    for (const r of gs) {
+      if (r.date > todayYmd) continue; // future material isn't due yet
+      if (r.status !== "materialized" && r.status !== "delegated") continue;
+      rows.push(r);
+    }
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+
+  const out: Id<"questionBank">[] = [];
+  for (const r of rows) {
+    for (const qid of [...r.newQuestionIds, ...r.spiralQuestionIds]) {
+      if (out.length >= cap) return out;
+      const k = qid as unknown as string;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(qid);
+    }
+  }
+  return out;
+}
+
+// Revision queues for a whole revision-session roster. Returns null unless
+// the slot IS a revision session — the Sheets tab uses that as the gate, so
+// main sessions keep their group-plan path untouched. Consolidation-mode
+// students get an EMPTY queue on purpose: their planner runs fully personal
+// (Gaussian + repeats); the queue waits until they recover.
+export const revisionQueuesForSlotDate = query({
+  args: { slotId: v.id("scheduleSlots"), dateStr: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const slot = await ctx.db.get(args.slotId);
+    if (!slot || (slot.sessionType ?? "main") !== "revision") return null;
+    if (!slot.groupId) return { queues: {} };
+    const students = await groupMemberStudents(ctx, slot.groupId);
+    const queues: Record<
+      string,
+      { questionIds: Id<"questionBank">[]; consolidation: boolean }
+    > = {};
+    for (const s of students) {
+      const consolidation = (s.learningMode ?? "normal") === "consolidation";
+      queues[s._id as unknown as string] = {
+        consolidation,
+        questionIds: consolidation
+          ? []
+          : await revisionQueueForStudent(
+              ctx,
+              s,
+              args.dateStr,
+              REVISION_QUEUE_CAP,
+            ),
+      };
+    }
+    return { queues };
+  },
+});
+
+// The group's weekly slots with their department type — the lesson-plan
+// page's "Weekly sessions" section reads and toggles these.
+export const groupWeeklySlots = query({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const slots = await ctx.db
+      .query("scheduleSlots")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    return slots
+      .map((s) => ({
+        slotId: s._id,
+        dayOfWeek: s.dayOfWeek,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        sessionType: (s.sessionType ?? "main") as "main" | "revision",
+      }))
+      .sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+  },
+});
+
+// Flip a slot between the Main and Revision departments. Lives here (not
+// scheduleSlots.ts) because it's a departments concern: the skeleton and
+// the revision queues both key off it.
+export const setSlotSessionType = mutation({
+  args: {
+    slotId: v.id("scheduleSlots"),
+    sessionType: v.union(v.literal("main"), v.literal("revision")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const slot = await ctx.db.get(args.slotId);
+    if (!slot) throw new Error("Slot not found");
+    await ctx.db.patch(args.slotId, {
+      sessionType: args.sessionType === "main" ? undefined : args.sessionType,
+    });
   },
 });

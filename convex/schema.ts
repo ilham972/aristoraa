@@ -129,6 +129,14 @@ export default defineSchema({
     // from slotStudents. Optional during migration; required for new slots
     // created via /groups after cutover.
     groupId: v.optional(v.id("groups")),
+    // ─── Departments redesign (2026-07-14): session type ──────────────────
+    // "main" (default, unset) — group teaching session: the crystallized
+    //   group sheet is taught here; counts in the lesson-plan skeleton.
+    // "revision" — the Revision department: each student works their own
+    //   sheet (delegated group material + absence catch-up + mistakes; the
+    //   consolidation flavour for flagged students). Excluded from the Main
+    //   skeleton's session dates.
+    sessionType: v.optional(v.string()),
   })
     .index("by_room", ["roomId"])
     .index("by_day", ["dayOfWeek"])

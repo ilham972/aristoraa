@@ -91,6 +91,13 @@ export function ScoreSheetTab({
     api.learningEngine.groupPlan.plannedGroupSheetForSlotDate,
     { slotId, dateStr: date },
   );
+  // Non-null ONLY when this slot is a Revision-department session: per-student
+  // queues of group-claimed-but-unseen questions (delegated + absence
+  // catch-up). Drives Generate all instead of the group plan.
+  const revisionQueues = useQuery(
+    api.learningEngine.groupPlan.revisionQueuesForSlotDate,
+    { slotId, dateStr: date },
+  );
 
   const saveSheet = useMutation(api.learningEngine.planner.saveSheetForStudent);
   const markGroupSheetMaterialized = useMutation(
@@ -230,9 +237,15 @@ export function ScoreSheetTab({
   const bulkGenerate = useCallback(async () => {
     const targets = eligible;
     if (targets.length === 0) return;
-    // Group plan (departments redesign): a crystallized group sheet claims
-    // the Main block of EVERY roster member — one identical taught sheet.
-    const fromPlan = groupPlanSheet && groupPlanSheet.status === 'planned';
+    // Departments redesign, two special session shapes:
+    //   Revision session → each student's Main block = their personal queue
+    //   (delegated group material + absence catch-up); consolidation-mode
+    //   students get the fully personal planner instead (empty queue).
+    //   Main session with a crystallized group sheet → one identical Main
+    //   block for the whole roster.
+    const isRevisionSession = revisionQueues !== null && revisionQueues !== undefined;
+    const fromPlan =
+      !isRevisionSession && groupPlanSheet && groupPlanSheet.status === 'planned';
     setBulkBusy({ kind: 'generate', total: targets.length, done: 0 });
     let saved = 0;
     const errs: string[] = [];
@@ -243,6 +256,9 @@ export function ScoreSheetTab({
         setBulkBusy((b) => (b ? { ...b, done: b.done + 1 } : b));
         continue;
       }
+      const queue = isRevisionSession
+        ? revisionQueues!.queues[r.studentId as unknown as string]
+        : undefined;
       try {
         const res = await saveSheet({
           studentId: r.studentId,
@@ -252,7 +268,9 @@ export function ScoreSheetTab({
           slotId,
           ...(fromPlan
             ? { mainQuestionIdsOverride: groupPlanSheet.questionIds }
-            : {}),
+            : queue && queue.questionIds.length > 0
+              ? { mainQuestionIdsOverride: queue.questionIds }
+              : {}),
         });
         if (res.status === 'ok') saved += 1;
       } catch (e) {
@@ -272,7 +290,9 @@ export function ScoreSheetTab({
       toast.success(
         fromPlan
           ? `Generated ${saved} sheet${saved === 1 ? '' : 's'} from the group plan`
-          : `Generated ${saved} sheet${saved === 1 ? '' : 's'}`,
+          : isRevisionSession
+            ? `Generated ${saved} revision sheet${saved === 1 ? '' : 's'} (personal queues)`
+            : `Generated ${saved} sheet${saved === 1 ? '' : 's'}`,
       );
     else toast.error(`${saved} saved, ${errs.length} failed. First: ${errs[0]}`);
   }, [
@@ -282,6 +302,7 @@ export function ScoreSheetTab({
     date,
     slotId,
     groupPlanSheet,
+    revisionQueues,
     markGroupSheetMaterialized,
   ]);
 
@@ -374,8 +395,17 @@ export function ScoreSheetTab({
         })}
       </div>
 
+      {/* Revision session banner (departments redesign) */}
+      {revisionQueues && (
+        <div className="shrink-0 mb-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-foreground">
+          <b>Revision session:</b> Generate all builds each student&rsquo;s
+          personal sheet — delegated group material + missed questions
+          (consolidation students get their repeat-heavy sheet instead).
+        </div>
+      )}
+
       {/* Group plan banner (departments redesign) */}
-      {groupPlanSheet && (
+      {!revisionQueues && groupPlanSheet && (
         <div
           className={cn(
             'shrink-0 mb-2 rounded-lg border px-2.5 py-1.5 flex items-center justify-between gap-2 text-[10px]',

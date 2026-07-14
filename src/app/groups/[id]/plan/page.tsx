@@ -13,6 +13,7 @@ import {
   CalendarRange,
   ChevronLeft,
   Layers,
+  SendToBack,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -80,6 +81,15 @@ export default function GroupPlanPage({
     api.learningEngine.groupPlan.crystallizeUpcoming,
   );
   const deletePlanned = useMutation(api.learningEngine.groupPlan.deletePlanned);
+  const delegateToRevision = useMutation(
+    api.learningEngine.groupPlan.delegateToRevision,
+  );
+  const weeklySlots = useQuery(api.learningEngine.groupPlan.groupWeeklySlots, {
+    groupId,
+  });
+  const setSlotSessionType = useMutation(
+    api.learningEngine.groupPlan.setSlotSessionType,
+  );
   const [busy, setBusy] = useState(false);
 
   const unitName = useMemo(() => {
@@ -177,6 +187,63 @@ export default function GroupPlanPage({
             Crystallize next {plan.crystallizeAheadDays} days
           </button>
 
+          {/* Weekly sessions — department type per slot */}
+          {weeklySlots && weeklySlots.length > 0 && (
+            <div className="mb-4">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                Weekly sessions — tap to switch department
+              </div>
+              <div className="space-y-1.5">
+                {weeklySlots.map((s) => {
+                  const isRevision = s.sessionType === 'revision';
+                  const dayName = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][
+                    s.dayOfWeek - 1
+                  ];
+                  return (
+                    <button
+                      key={s.slotId as unknown as string}
+                      onClick={async () => {
+                        try {
+                          await setSlotSessionType({
+                            slotId: s.slotId,
+                            sessionType: isRevision ? 'main' : 'revision',
+                          });
+                          toast.success(
+                            isRevision
+                              ? `${dayName} ${s.startTime} → Main (group teaching)`
+                              : `${dayName} ${s.startTime} → Revision (individual sheets)`,
+                          );
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : 'Failed');
+                        }
+                      }}
+                      className={cn(
+                        'w-full rounded-xl border px-3 py-2 flex items-center justify-between gap-2 text-left',
+                        isRevision
+                          ? 'border-amber-500/50 bg-amber-500/10'
+                          : 'border-border bg-card',
+                      )}
+                    >
+                      <span className="text-xs font-semibold text-foreground">
+                        {dayName} {s.startTime}–{s.endTime}
+                      </span>
+                      <span
+                        className={cn(
+                          'px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
+                          isRevision
+                            ? 'bg-amber-500/15 text-amber-500 border-amber-500/40'
+                            : 'bg-primary/15 text-primary border-primary/40',
+                        )}
+                      >
+                        {isRevision ? 'REVISION' : 'MAIN'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Unit runway */}
           <div className="mb-4">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-1">
@@ -264,24 +331,47 @@ export default function GroupPlanPage({
                       </span>
                     )}
                     {s.crystallized?.status === 'planned' && (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await deletePlanned({
-                              groupSheetId: s.crystallized!.id,
-                            });
-                            toast.success('Sheet un-planned — crystallize again to re-pick.');
-                          } catch (e) {
-                            toast.error(
-                              e instanceof Error ? e.message : 'Failed',
-                            );
-                          }
-                        }}
-                        className="p-1 rounded-md text-muted-foreground hover:text-red-500"
-                        aria-label="Delete planned sheet"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await delegateToRevision({
+                                groupSheetId: s.crystallized!.id,
+                              });
+                              toast.success(
+                                'Delegated — the group does this sheet in Revision sessions; the bookmark still advances.',
+                              );
+                            } catch (e) {
+                              toast.error(
+                                e instanceof Error ? e.message : 'Failed',
+                              );
+                            }
+                          }}
+                          className="p-1 rounded-md text-muted-foreground hover:text-amber-500"
+                          aria-label="Delegate to Revision department"
+                          title="Group can do this without teaching — send to Revision"
+                        >
+                          <SendToBack className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await deletePlanned({
+                                groupSheetId: s.crystallized!.id,
+                              });
+                              toast.success('Sheet un-planned — crystallize again to re-pick.');
+                            } catch (e) {
+                              toast.error(
+                                e instanceof Error ? e.message : 'Failed',
+                              );
+                            }
+                          }}
+                          className="p-1 rounded-md text-muted-foreground hover:text-red-500"
+                          aria-label="Delete planned sheet"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>

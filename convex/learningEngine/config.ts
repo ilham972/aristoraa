@@ -151,6 +151,10 @@ export const GROUP_CRYSTALLIZE_AHEAD_DAYS = 7;
 // How far the lesson-plan skeleton expands the group's weekly slots into
 // concrete session dates. Caps the projection loop, not the pedagogy.
 export const GROUP_SKELETON_HORIZON_DAYS = 180;
+// Revision-session sheets: at most this many queued questions (delegated
+// group material + absence catch-up, oldest first) claim the Main block of
+// one revision sheet; personal sections (mistakes, SR) fill around them.
+export const REVISION_QUEUE_CAP = 10;
 
 // ─── Phase D.3: slot allocator / sheet sizing / phase-of-term reweighting ──
 
