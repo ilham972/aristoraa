@@ -426,8 +426,80 @@ export const groupLessonPlan = query({
     );
     const slotByDate = new Map(state.sessions.map((s) => [s.date, s.slotId]));
 
+    // ── Capacity plan vs the nearest exam (Term tab, 2026-07-15) ─────────
+    // The founder plans by REQUIRED capacity, not observed pace: demand =
+    // every unseen question the track-order walk must serve before the
+    // nearest exam (unfinished earlier units included — the walk cannot
+    // skip them, only delegation can), capacity = remaining sessions ×
+    // new-questions throughput. When short, the gap is returned in the
+    // units the founder can act on: extra sessions, or backlog questions
+    // to delegate to Revision.
+    const upcomingExamDates = Object.values(state.examDateByTerm).sort();
+    const nearestExam = upcomingExamDates[0] ?? null;
+    let examPlan: {
+      examDate: string;
+      daysToExam: number;
+      sessionsLeft: number;
+      newPerSession: number;
+      capacity: number;
+      demandTotal: number;
+      demandExamTerm: number;
+      demandBacklog: number;
+      shortBy: number;
+      extraSessionsNeeded: number;
+      spare: number;
+      fits: boolean;
+    } | null = null;
+    if (nearestExam) {
+      const mainSize = GROUP_MAIN_QUESTIONS_DEFAULT;
+      const spiralCount =
+        currentUnitIdx > 0
+          ? Math.min(mainSize - 1, Math.round(mainSize * GROUP_SPIRAL_SHARE))
+          : 0;
+      const newPerSession = Math.max(1, mainSize - spiralCount);
+      const sessionsLeft = state.sessions.filter(
+        (s) => s.date <= nearestExam,
+      ).length;
+      // Everything the walk must serve before this exam: units up to the
+      // LAST unit whose exam is on or before it (track order).
+      let lastDueIdx = -1;
+      skeleton.units.forEach((u, i) => {
+        if (u.examDate !== null && u.examDate <= nearestExam) lastDueIdx = i;
+      });
+      let demandTotal = 0;
+      let demandExamTerm = 0;
+      skeleton.units.forEach((u, i) => {
+        if (i > lastDueIdx) return;
+        demandTotal += u.unseenCount;
+        if (u.examDate !== null && u.examDate <= nearestExam) {
+          demandExamTerm += u.unseenCount;
+        }
+      });
+      const capacity = sessionsLeft * newPerSession;
+      const shortBy = Math.max(0, demandTotal - capacity);
+      examPlan = {
+        examDate: nearestExam,
+        daysToExam: Math.round(
+          (Date.parse(`${nearestExam}T00:00:00.000Z`) -
+            Date.parse(`${todayYmd}T00:00:00.000Z`)) /
+            MS_PER_DAY,
+        ),
+        sessionsLeft,
+        newPerSession,
+        capacity,
+        demandTotal,
+        demandExamTerm,
+        demandBacklog: demandTotal - demandExamTerm,
+        shortBy,
+        extraSessionsNeeded: Math.ceil(shortBy / newPerSession),
+        spare: Math.max(0, capacity - demandTotal),
+        fits: shortBy === 0,
+      };
+    }
+
     return {
       status: "ok" as const,
+      examPlan,
       trackId: state.track._id,
       trackName: state.track.name,
       memberCount: state.students.length,

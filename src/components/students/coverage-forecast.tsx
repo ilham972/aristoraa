@@ -90,16 +90,30 @@ export function CoverageForecast({ student }: { student: StudentLite }) {
               <b>{summary.questionsPerSheet!.toFixed(0)}</b> q/sheet ≈{' '}
               <b>{summary.questionsPerDay!.toFixed(1)}</b> questions/day
             </div>
-            <div className="text-[10px] text-foreground mt-0.5">
-              <b>{summary.datedRemaining}</b> questions due before upcoming exams
-              {summary.daysToFinishDated !== null && (
-                <>
-                  {' '}
-                  — done in ~{summary.daysToFinishDated}d (
-                  {fmtInDays(summary.daysToFinishDated)})
-                </>
-              )}
-            </div>
+            {(() => {
+              // Required vs actual pace — the plan-first framing: what the
+              // exam demands per day, next to what is actually happening.
+              const examDays = data.units
+                .filter((u) => u.daysToExam !== null && u.remaining > 0)
+                .map((u) => u.daysToExam!);
+              const nearest = examDays.length > 0 ? Math.min(...examDays) : null;
+              const required =
+                nearest !== null && nearest > 0
+                  ? summary.datedRemaining / nearest
+                  : null;
+              return (
+                <div className="text-[10px] text-foreground mt-0.5">
+                  <b>{summary.datedRemaining}</b> questions due before upcoming exams
+                  {nearest !== null && <> · nearest exam in {nearest}d ({fmtInDays(nearest)})</>}
+                  {required !== null && (
+                    <>
+                      {' '}→ needs <b>{required.toFixed(1)} Qs/day</b> (doing{' '}
+                      {summary.questionsPerDay!.toFixed(1)} now)
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <div className="text-[10px] text-muted-foreground mt-0.5">
               {summary.totalRemaining} left on the whole track
               {summary.daysToFinishAll !== null && <> (~{summary.daysToFinishAll}d)</>}

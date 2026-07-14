@@ -262,6 +262,15 @@ because Z.
   exam already happened; leftovers are revision material. v1 counted the
   whole track's backlog ("needs 2051 days, we have 61"). Headline number =
   datedRemaining (due before real exams), whole-track total is secondary.
+- **Plan by REQUIRED capacity, not observed pace** (2026-07-15, founder):
+  the Term tab leads with demand-vs-capacity ("250 Qs, 18 sessions →
+  short 106, add ~14 sessions or delegate backlog"), because counts are
+  STABLE under Lesson-Builder difficulty re-ordering (founder's insight:
+  order changes, count never does) — so the whole term is plannable today
+  while only the crystallized week pins question ids. Observed pace stays
+  in the Forecast but reframed as "need X Qs/day, doing Y" (the passive
+  "needs 438 days" framing is rejected). Pace changes/absences are handled
+  IN the system: skeleton reflow + revision queues + extra time slots.
 - **Scheme Calendar over prebuilt-year sheets** (2026-07-15): founder asked
   "can we prebuild every sheet?"; chose a per-group day-grid CALENDAR of
   the live projection (crystallized week + skeleton beyond, Revision slots,

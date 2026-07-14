@@ -75,9 +75,11 @@ function PlannerPageInner() {
       </div>
       {tab === 'term' && (
         <p className="text-[11px] text-muted-foreground mb-3">
-          The whole term per grade: what each group teaches next, whether it
-          beats the exam, and the locked-in sheets. Delegation to every group
-          happens automatically — steer with tracks, exam dates and crystallize.
+          The whole term planned today, by counts: each group&apos;s questions due
+          vs its sessions before the exam. When it doesn&apos;t fit you see the
+          exact gap — add time slots or delegate backlog to Revision. Question
+          order keeps improving with your difficulty edits; only the locked
+          week pins real questions.
         </p>
       )}
 

@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation } from 'convex/react';
-import { AlertTriangle, ChevronRight, Sparkles, Users } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, Sparkles, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
@@ -46,11 +46,6 @@ export function GroupPlanCard({ row }: { row: PlannerGroupRow }) {
   const crystallize = useMutation(api.learningEngine.groupPlan.crystallizeUpcoming);
   const [busy, setBusy] = useState(false);
   const unitName = useUnitName();
-
-  const wontFinish =
-    plan?.status === 'ok'
-      ? plan.units.filter((u) => u.verdict === 'wont-finish').length
-      : 0;
 
   return (
     <div className="rounded-xl border border-border bg-card p-3">
@@ -107,10 +102,45 @@ export function GroupPlanCard({ row }: { row: PlannerGroupRow }) {
 
       {plan?.status === 'ok' && (
         <>
-          {wontFinish > 0 && (
-            <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-red-500">
-              <AlertTriangle className="w-3 h-3" />
-              {wontFinish} unit{wontFinish === 1 ? '' : 's'} won&apos;t finish before the exam
+          {/* The plan math: required capacity vs available capacity. Counts
+              are stable under difficulty re-ordering, so this IS the whole
+              term planned today — only the near week pins question ids. */}
+          {plan.examPlan === null && (
+            <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+              No upcoming exam date — set it on the Exams tab so this plan has
+              a deadline.
+            </div>
+          )}
+          {plan.examPlan?.fits === true && (
+            <div className="mt-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+              <span className="inline-flex items-center gap-1 font-semibold">
+                <CheckCircle2 className="w-3 h-3" />
+                Fits: {plan.examPlan.demandTotal} Qs in {plan.examPlan.sessionsLeft}{' '}
+                sessions before the exam
+              </span>{' '}
+              ({plan.examPlan.newPerSession} new/session
+              {plan.examPlan.spare > 0 && <>, room for {plan.examPlan.spare} more</>}
+              , exam in {plan.examPlan.daysToExam}d)
+            </div>
+          )}
+          {plan.examPlan?.fits === false && (
+            <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-600 dark:text-red-400">
+              <span className="inline-flex items-center gap-1 font-semibold">
+                <AlertTriangle className="w-3 h-3" />
+                Doesn&apos;t fit: {plan.examPlan.demandTotal} Qs, but only{' '}
+                {plan.examPlan.capacity} fit in {plan.examPlan.sessionsLeft} sessions
+              </span>
+              <div className="mt-0.5 text-[10.5px]">
+                Short {plan.examPlan.shortBy} Qs → add ~{plan.examPlan.extraSessionsNeeded}{' '}
+                session{plan.examPlan.extraSessionsNeeded === 1 ? '' : 's'} to the timetable
+                {plan.examPlan.demandBacklog > 0 && (
+                  <>
+                    , or delegate past-unit backlog ({plan.examPlan.demandBacklog} Qs) to
+                    Revision
+                  </>
+                )}
+                .
+              </div>
             </div>
           )}
           <div className="mt-2">

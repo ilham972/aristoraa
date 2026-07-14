@@ -37,6 +37,7 @@ type StudentRow = {
   summary: {
     sheetsPerWeek: number | null;
     questionsPerSheet: number | null;
+    questionsPerDay: number | null;
     totalRemaining: number;
     daysToFinishAll: number | null;
     datedRemaining: number;
@@ -210,18 +211,34 @@ export function GradeForecast({ grade }: { grade: number }) {
                     <>
                       <div className="text-[10px] text-muted-foreground mb-1.5">
                         {s.trackName}
-                        {s.summary?.hasPace && s.summary.sheetsPerWeek !== null && (
-                          <>
-                            {' '}· {s.summary.sheetsPerWeek.toFixed(1)} sheets/wk ·{' '}
-                            <b className="text-foreground">
-                              {s.summary.datedRemaining} Qs due before exams
-                            </b>
-                            {s.summary.daysToFinishDated !== null && (
-                              <> · needs ~{s.summary.daysToFinishDated}d</>
-                            )}
-                            {' '}· whole track {s.summary.totalRemaining} left
-                          </>
-                        )}
+                        {s.summary && (() => {
+                          // Required vs actual: what pace the exam DEMANDS,
+                          // next to what the student is actually doing.
+                          const examDays = s.units
+                            .filter((u) => u.daysToExam !== null && u.remaining > 0)
+                            .map((u) => u.daysToExam!);
+                          const nearest = examDays.length > 0 ? Math.min(...examDays) : null;
+                          const required =
+                            nearest !== null && nearest > 0
+                              ? s.summary!.datedRemaining / nearest
+                              : null;
+                          const actual = s.summary!.questionsPerDay ?? 0;
+                          return (
+                            <>
+                              {' '}·{' '}
+                              <b className="text-foreground">
+                                {s.summary!.datedRemaining} Qs due
+                              </b>
+                              {nearest !== null && <> · exam in {nearest}d</>}
+                              {required !== null && (
+                                <>
+                                  {' '}→ need <b className="text-foreground">{required.toFixed(1)} Qs/day</b>,
+                                  doing {actual.toFixed(1)}/day now
+                                </>
+                              )}
+                            </>
+                          );
+                        })()}
                         {s.summary && !s.summary.hasPace && (
                           <> · no sheets in the last 2 weeks — generate sheets to get a pace</>
                         )}

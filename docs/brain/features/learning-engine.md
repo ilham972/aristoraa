@@ -40,7 +40,9 @@ cumulative-exam holdouts.
 
 ## Control panels
 - `/planner` (nav, 2026-07-15) — THE global planning page, 5 tabs: Term
-  (grade → exam countdown + per-group runway cards + crystallize one/all),
+  (grade → exam countdown + per-group CAPACITY PLAN: demand-vs-sessions
+  fits/short block with the exact fix — extra sessions or delegable backlog
+  — from groupLessonPlan.examPlan; runway cards; crystallize one/all),
   Calendar (per-group scheme-of-work day-grid to exam day: unit per session,
   crystallized state, Revision slots, cancelled days, tap-day sheet with
   delegate/un-plan — `groupPlan.groupTermCalendar`), Forecast (grade-wide
