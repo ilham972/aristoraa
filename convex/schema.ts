@@ -882,6 +882,38 @@ export default defineSchema({
     at: v.number(),
   }).index("by_sheet", ["sheetId"]),
 
+  // ─── Departments redesign (2026-07-14): crystallized group Main sheets ────
+  // The Main department teaches from ONE identical sheet per (group, session).
+  // A row here is that sheet, crystallized ~a week ahead from the group's
+  // bookmark (next unseen-for-the-group ladder questions of the current track
+  // unit) + spiral review slots (unseen questions from PAST units, weakest
+  // group-average memory first). The group bookmark is DERIVED — the union of
+  // question ids across this table and the members' generatedSheets — never
+  // stored. At session time the row is materialized into ordinary per-student
+  // generatedSheets rows (identical Main block via mainQuestionIdsOverride),
+  // so PDF/scoring/memory flows are untouched downstream.
+  //   status: "planned"      — crystallized, editable/deletable, not yet used
+  //           "materialized" — per-student sheets were generated from it
+  //           "delegated"    — pushed to the Revision department (Stage 3):
+  //                            no Main session teaches it; it lands on the
+  //                            members' next Revision sheets instead. Counts
+  //                            toward the bookmark exactly like taught rows.
+  groupSheets: defineTable({
+    groupId: v.id("groups"),
+    slotId: v.optional(v.id("scheduleSlots")),
+    date: v.string(),                                 // YYYY-MM-DD session date
+    unitId: v.string(),                               // primary (first) unit
+    newQuestionIds: v.array(v.id("questionBank")),    // current-unit ladder picks
+    spiralQuestionIds: v.array(v.id("questionBank")), // past-unit review picks
+    status: v.string(),
+    createdAt: v.number(),
+    createdByTeacherId: v.optional(v.id("teachers")),
+    materializedAt: v.optional(v.number()),
+    delegatedAt: v.optional(v.number()),
+  })
+    .index("by_group_date", ["groupId", "date"])
+    .index("by_slot_date", ["slotId", "date"]),
+
   // ─── Phase 2 (sheet-synced scoring): per-session points, dual-tracked ─────
   // One row per finalized sheet. Both the legacy triangular points (pointsOld =
   // 5·C·(C+1)/2) and the new difficulty×section weighted points (pointsNew) are

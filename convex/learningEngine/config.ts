@@ -133,6 +133,25 @@ export const CONSOLIDATION_EXIT_FAIL_RATE = 0.2;
 // evidence to judge either direction.
 export const CONSOLIDATION_MIN_ATTEMPTS = 12;
 
+// ─── Group Main department (departments redesign, 2026-07-14) ─────────────
+// The Main block of a group session is ONE identical crystallized sheet
+// (groupSheets table + convex/learningEngine/groupPlan.ts). Composition per
+// sheet: mostly NEW ladder questions from the group's current track unit +
+// a SPIRAL of review questions from past units at the tail — the group-level
+// stand-in for spaced repetition (fixed rhythm, reactive only through which
+// past concepts look weakest on the group's average memory).
+export const GROUP_MAIN_QUESTIONS_DEFAULT = 8;
+// Share of the sheet reserved for spiral review once at least one past unit
+// has been started. 0.25 of 8 → 2 review questions, 6 new.
+export const GROUP_SPIRAL_SHARE = 0.25;
+// Rolling crystallization window: "Crystallize" materializes question-level
+// sheets for sessions within this many days (the skeleton beyond it stays
+// projection-only and self-corrects).
+export const GROUP_CRYSTALLIZE_AHEAD_DAYS = 7;
+// How far the lesson-plan skeleton expands the group's weekly slots into
+// concrete session dates. Caps the projection loop, not the pedagogy.
+export const GROUP_SKELETON_HORIZON_DAYS = 180;
+
 // ─── Phase D.3: slot allocator / sheet sizing / phase-of-term reweighting ──
 
 // Default off-days when a student has no `offDays` field set. The centre runs

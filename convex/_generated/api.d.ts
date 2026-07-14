@@ -32,6 +32,7 @@ import type * as learningEngine_coverageMode from "../learningEngine/coverageMod
 import type * as learningEngine_cropIntegrity from "../learningEngine/cropIntegrity.js";
 import type * as learningEngine_derivedConcepts from "../learningEngine/derivedConcepts.js";
 import type * as learningEngine_difficultyTab from "../learningEngine/difficultyTab.js";
+import type * as learningEngine_groupPlan from "../learningEngine/groupPlan.js";
 import type * as learningEngine_importance from "../learningEngine/importance.js";
 import type * as learningEngine_leagues from "../learningEngine/leagues.js";
 import type * as learningEngine_lessonSets from "../learningEngine/lessonSets.js";
@@ -52,6 +53,7 @@ import type * as learningEngine_tracks from "../learningEngine/tracks.js";
 import type * as lib_consolidationCore from "../lib/consolidationCore.js";
 import type * as lib_coverageForecastCore from "../lib/coverageForecastCore.js";
 import type * as lib_draftReconcile from "../lib/draftReconcile.js";
+import type * as lib_groupPlanCore from "../lib/groupPlanCore.js";
 import type * as lib_naming from "../lib/naming.js";
 import type * as lib_offDays from "../lib/offDays.js";
 import type * as lib_paperClasses from "../lib/paperClasses.js";
@@ -142,6 +144,7 @@ declare const fullApi: ApiFromModules<{
   "learningEngine/cropIntegrity": typeof learningEngine_cropIntegrity;
   "learningEngine/derivedConcepts": typeof learningEngine_derivedConcepts;
   "learningEngine/difficultyTab": typeof learningEngine_difficultyTab;
+  "learningEngine/groupPlan": typeof learningEngine_groupPlan;
   "learningEngine/importance": typeof learningEngine_importance;
   "learningEngine/leagues": typeof learningEngine_leagues;
   "learningEngine/lessonSets": typeof learningEngine_lessonSets;
@@ -162,6 +165,7 @@ declare const fullApi: ApiFromModules<{
   "lib/consolidationCore": typeof lib_consolidationCore;
   "lib/coverageForecastCore": typeof lib_coverageForecastCore;
   "lib/draftReconcile": typeof lib_draftReconcile;
+  "lib/groupPlanCore": typeof lib_groupPlanCore;
   "lib/naming": typeof lib_naming;
   "lib/offDays": typeof lib_offDays;
   "lib/paperClasses": typeof lib_paperClasses;

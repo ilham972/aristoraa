@@ -23,6 +23,7 @@
 // absent set in the Attendance tab).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useAction, useMutation } from 'convex/react';
 // Cached drop-in for useQuery: last result renders instantly from device
 // storage while the live subscription refreshes (perf phase 3).
@@ -83,8 +84,18 @@ export function ScoreSheetTab({
   });
   const allStudents = useQuery(api.students.list);
   const attendance = useQuery(api.attendance.getBySlotAndDate, { slotId, date });
+  // Departments redesign: the crystallized group Main sheet for this session,
+  // if the group plan has one. When present, "Generate all" materializes it
+  // as the identical Main block for every roster member.
+  const groupPlanSheet = useQuery(
+    api.learningEngine.groupPlan.plannedGroupSheetForSlotDate,
+    { slotId, dateStr: date },
+  );
 
   const saveSheet = useMutation(api.learningEngine.planner.saveSheetForStudent);
+  const markGroupSheetMaterialized = useMutation(
+    api.learningEngine.groupPlan.markMaterialized,
+  );
   const renderPDF = useAction(api.learningEngine.pdf.renderSheetPDF);
   const zipAction = useAction(api.learningEngine.sheets.zipSheetPDFs);
   const markPrinted = useMutation(api.learningEngine.planner.markPrinted);
@@ -219,6 +230,9 @@ export function ScoreSheetTab({
   const bulkGenerate = useCallback(async () => {
     const targets = eligible;
     if (targets.length === 0) return;
+    // Group plan (departments redesign): a crystallized group sheet claims
+    // the Main block of EVERY roster member — one identical taught sheet.
+    const fromPlan = groupPlanSheet && groupPlanSheet.status === 'planned';
     setBulkBusy({ kind: 'generate', total: targets.length, done: 0 });
     let saved = 0;
     const errs: string[] = [];
@@ -236,6 +250,9 @@ export function ScoreSheetTab({
           unitIds: scope.unitIds,
           gradeByModule: scope.gradeByModule,
           slotId,
+          ...(fromPlan
+            ? { mainQuestionIdsOverride: groupPlanSheet.questionIds }
+            : {}),
         });
         if (res.status === 'ok') saved += 1;
       } catch (e) {
@@ -243,10 +260,30 @@ export function ScoreSheetTab({
       }
       setBulkBusy((b) => (b ? { ...b, done: b.done + 1 } : b));
     }
+    if (fromPlan && saved > 0) {
+      try {
+        await markGroupSheetMaterialized({ groupSheetId: groupPlanSheet.id });
+      } catch {
+        // Non-fatal: sheets exist; the plan row just keeps status "planned".
+      }
+    }
     setBulkBusy(null);
-    if (errs.length === 0) toast.success(`Generated ${saved} sheet${saved === 1 ? '' : 's'}`);
+    if (errs.length === 0)
+      toast.success(
+        fromPlan
+          ? `Generated ${saved} sheet${saved === 1 ? '' : 's'} from the group plan`
+          : `Generated ${saved} sheet${saved === 1 ? '' : 's'}`,
+      );
     else toast.error(`${saved} saved, ${errs.length} failed. First: ${errs[0]}`);
-  }, [eligible, saveSheet, studentScope, date, slotId]);
+  }, [
+    eligible,
+    saveSheet,
+    studentScope,
+    date,
+    slotId,
+    groupPlanSheet,
+    markGroupSheetMaterialized,
+  ]);
 
   const bulkRender = useCallback(async () => {
     const targets = eligible.filter((r) => r.sheet && !r.sheet.pdfStorageId);
@@ -336,6 +373,35 @@ export function ScoreSheetTab({
           );
         })}
       </div>
+
+      {/* Group plan banner (departments redesign) */}
+      {groupPlanSheet && (
+        <div
+          className={cn(
+            'shrink-0 mb-2 rounded-lg border px-2.5 py-1.5 flex items-center justify-between gap-2 text-[10px]',
+            groupPlanSheet.status === 'planned'
+              ? 'border-primary/50 bg-primary/10 text-foreground'
+              : 'border-border bg-card text-muted-foreground',
+          )}
+        >
+          <span className="min-w-0 truncate">
+            {groupPlanSheet.status === 'planned' ? (
+              <>
+                <b>Group plan ready:</b> {groupPlanSheet.newCount} new +{' '}
+                {groupPlanSheet.spiralCount} spiral — Generate all uses it.
+              </>
+            ) : (
+              <>Group plan sheet already generated for this session.</>
+            )}
+          </span>
+          <Link
+            href={`/groups/${groupPlanSheet.groupId}/plan`}
+            className="shrink-0 font-semibold text-primary"
+          >
+            View plan
+          </Link>
+        </div>
+      )}
 
       {/* Roster controls */}
       <div className="shrink-0 flex items-center gap-1.5 pb-2 overflow-x-auto">
