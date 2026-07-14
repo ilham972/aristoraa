@@ -1,20 +1,26 @@
 'use client';
 
-// Exam Calendar tab — CRUD over the examCalendar table, one row per
-// (grade, term, year). Drives the SR exam-date backstop, retention-debt
+// Exam Calendar tab — grid redesign (2026-07-15). Columns = terms (1/2/3),
+// rows = grades (6..11), one year at a time (year stepper on top). Every cell
+// is either an exam date (tap to edit/delete) or a subtle + (tap to add for
+// that exact grade+term+year — no way to create a conflicting key). A global
+// "Quick entry" button sets one date per term across ALL grades at once.
+//
+// CRUD still goes through the untouched examCalendar backend (upsert /
+// updateById / remove). Drives the SR exam-date backstop, retention-debt
 // "marks at risk", the Phase G predictor, AND every planner runway verdict.
-// Extracted verbatim from /algorithm (2026-07-15) so the global /planner
-// page owns it; the standalone /algorithm/exam-calendar route (exam-mode
-// switch) is untouched.
 
 import { useMemo, useState, useCallback } from 'react';
 import { useQuery, useMutation } from 'convex/react';
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Trash2, Plus, Zap } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { api, type Id } from '@/lib/convex';
 import { toast } from 'sonner';
 
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const TODAY_YMD = (): string => {
   const d = new Date();
@@ -26,6 +32,24 @@ function daysFromNow(ymd: string): number | null {
   const t1 = Date.parse(`${ymd}T00:00:00.000Z`);
   if (Number.isNaN(t0) || Number.isNaN(t1)) return null;
   return Math.round((t1 - t0) / 86_400_000);
+}
+
+// "2026-03-12" → "12 Mar"
+function fmtShort(ymd: string): string {
+  const m = YMD_RE.exec(ymd);
+  if (!m) return ymd;
+  const [, , mm, dd] = ymd.split('-');
+  return `${Number(dd)} ${MONTHS[Number(mm) - 1] ?? mm}`;
+}
+
+// Compact countdown text + tint for a cell.
+function relTag(ymd: string): { label: string; className: string } {
+  const d = daysFromNow(ymd);
+  if (d === null) return { label: '—', className: 'text-muted-foreground' };
+  if (d < 0) return { label: `${-d}d ago`, className: 'text-muted-foreground' };
+  if (d === 0) return { label: 'today', className: 'text-amber-500' };
+  if (d <= 21) return { label: `in ${d}d`, className: 'text-amber-500' };
+  return { label: `in ${d}d`, className: 'text-muted-foreground' };
 }
 
 type ExamEntry = {
@@ -48,16 +72,9 @@ interface DraftForm {
   notes: string;
 }
 
-function blankDraft(): DraftForm {
-  return {
-    id: null,
-    grade: 7,
-    term: 1,
-    year: new Date().getFullYear(),
-    examDate: TODAY_YMD(),
-    totalMarks: '',
-    notes: '',
-  };
+interface QuickForm {
+  year: number;
+  dates: [string, string, string]; // term 1, 2, 3
 }
 
 export function ExamCalendarTab() {
@@ -66,24 +83,37 @@ export function ExamCalendarTab() {
   const updateById = useMutation(api.learningEngine.calendar.updateById);
   const remove = useMutation(api.learningEngine.calendar.remove);
 
-  const [openGrade, setOpenGrade] = useState<number | null>(7);
+  const [year, setYear] = useState<number>(new Date().getFullYear());
   const [draft, setDraft] = useState<DraftForm | null>(null);
+  const [quick, setQuick] = useState<QuickForm | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const byGrade = useMemo(() => {
-    const map = new Map<number, ExamEntry[]>();
-    for (const g of GRADES) map.set(g, []);
+  // (grade,term) → entry for the selected year. One cell each.
+  const cellMap = useMemo(() => {
+    const m = new Map<string, ExamEntry>();
     for (const r of rows ?? []) {
-      if (!map.has(r.grade)) map.set(r.grade, []);
-      map.get(r.grade)!.push(r as ExamEntry);
+      if (r.year !== year) continue;
+      m.set(`${r.grade}-${r.term}`, r as ExamEntry);
     }
-    for (const list of map.values()) list.sort((a, b) => a.examDate.localeCompare(b.examDate));
-    return map;
-  }, [rows]);
+    return m;
+  }, [rows, year]);
 
-  const openCreate = useCallback((grade?: number) => {
-    setDraft({ ...blankDraft(), grade: grade ?? 7 });
-  }, []);
+  const scheduledCount = cellMap.size;
+
+  const openAdd = useCallback(
+    (grade: number, term: number) => {
+      setDraft({
+        id: null,
+        grade,
+        term,
+        year,
+        examDate: `${year}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
+        totalMarks: '',
+        notes: '',
+      });
+    },
+    [year],
+  );
 
   const openEdit = useCallback((row: ExamEntry) => {
     setDraft({
@@ -99,7 +129,7 @@ export function ExamCalendarTab() {
 
   const onSave = useCallback(async () => {
     if (!draft) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.examDate)) {
+    if (!YMD_RE.test(draft.examDate)) {
       toast.error('Exam date must be YYYY-MM-DD');
       return;
     }
@@ -108,6 +138,7 @@ export function ExamCalendarTab() {
       toast.error('Total marks must be a positive number');
       return;
     }
+    const notes = draft.notes.trim() ? draft.notes.trim() : undefined;
     setSaving(true);
     try {
       if (draft.id) {
@@ -118,7 +149,7 @@ export function ExamCalendarTab() {
           year: draft.year,
           examDate: draft.examDate,
           totalMarks,
-          notes: draft.notes.trim() ? draft.notes.trim() : undefined,
+          notes,
         });
         toast.success('Updated');
       } else {
@@ -128,7 +159,7 @@ export function ExamCalendarTab() {
           year: draft.year,
           examDate: draft.examDate,
           totalMarks,
-          notes: draft.notes.trim() ? draft.notes.trim() : undefined,
+          notes,
         });
         toast.success('Added');
       }
@@ -140,83 +171,141 @@ export function ExamCalendarTab() {
     }
   }, [draft, upsert, updateById]);
 
-  const onDelete = useCallback(async (row: ExamEntry) => {
-    const ok = window.confirm(`Delete G${row.grade} Term ${row.term} ${row.year} (${row.examDate})?`);
+  const onDelete = useCallback(async () => {
+    if (!draft?.id) return;
+    const ok = window.confirm(
+      `Delete G${draft.grade} Term ${draft.term} ${draft.year} (${draft.examDate})?`,
+    );
     if (!ok) return;
+    setSaving(true);
     try {
-      await remove({ id: row._id });
+      await remove({ id: draft.id });
       toast.success('Deleted');
+      setDraft(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setSaving(false);
     }
-  }, [remove]);
+  }, [draft, remove]);
+
+  const onQuickSave = useCallback(async () => {
+    if (!quick) return;
+    const jobs: Array<{ term: number; date: string }> = [];
+    for (const t of TERMS) {
+      const date = quick.dates[t - 1].trim();
+      if (!date) continue;
+      if (!YMD_RE.test(date)) {
+        toast.error(`Term ${t} date must be YYYY-MM-DD`);
+        return;
+      }
+      jobs.push({ term: t, date });
+    }
+    if (jobs.length === 0) {
+      toast.error('Enter at least one term date');
+      return;
+    }
+    setSaving(true);
+    try {
+      for (const { term, date } of jobs) {
+        for (const g of GRADES) {
+          // Preserve any existing marks/notes for this cell; only the date is
+          // being set school-wide.
+          const existing = cellMap.get(`${g}-${term}`);
+          await upsert({
+            grade: g,
+            term,
+            year: quick.year,
+            examDate: date,
+            totalMarks: existing?.totalMarks,
+            notes: existing?.notes,
+          });
+        }
+      }
+      toast.success(`Applied to all grades (${jobs.length} term${jobs.length > 1 ? 's' : ''})`);
+      setQuick(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Quick entry failed');
+    } finally {
+      setSaving(false);
+    }
+  }, [quick, upsert, cellMap]);
 
   return (
     <>
-      <p className="text-[11px] text-muted-foreground mb-4">
-        Term-exam dates per (grade, term, year). Every planner runway verdict
-        (&ldquo;on track&rdquo; / &ldquo;won&rsquo;t finish&rdquo;) counts down to these dates.
+      <p className="text-[11px] text-muted-foreground mb-3">
+        Term-exam dates per grade. Every planner runway verdict (&ldquo;on
+        track&rdquo; / &ldquo;won&rsquo;t finish&rdquo;) counts down to these dates.
+        Tap a date to edit, or a <span className="text-primary">+</span> to add.
       </p>
 
-      <button
-        onClick={() => openCreate(openGrade ?? 7)}
-        className="w-full mb-4 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
-      >
-        <Plus className="w-3.5 h-3.5" />
-        Add exam date
-      </button>
-
-      {rows === undefined && (
-        <div className="space-y-2 animate-pulse">
-          {[1, 2, 3].map((i) => <div key={i} className="h-12 bg-muted rounded-xl" />)}
+      {/* Year stepper + quick entry */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setYear((y) => Math.max(2020, y - 1))}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+            aria-label="Previous year"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-sm font-bold text-foreground tabular-nums w-12 text-center">
+            {year}
+          </span>
+          <button
+            onClick={() => setYear((y) => Math.min(2100, y + 1))}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+            aria-label="Next year"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <span className="ml-1.5 text-[11px] text-muted-foreground">
+            {scheduledCount} scheduled
+          </span>
         </div>
-      )}
+        <button
+          onClick={() => setQuick({ year, dates: ['', '', ''] })}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+        >
+          <Zap className="w-3.5 h-3.5" />
+          Quick entry
+        </button>
+      </div>
 
-      {rows && (
-        <div className="space-y-2">
-          {GRADES.map((g) => {
-            const list = byGrade.get(g) ?? [];
-            const isOpen = openGrade === g;
-            return (
-              <section key={g} className="rounded-xl border border-border bg-card overflow-hidden">
-                <button
-                  onClick={() => setOpenGrade(isOpen ? null : g)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-muted/40"
-                >
-                  <div className="flex items-center gap-2">
-                    {isOpen
-                      ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                      : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-                    <span className="text-sm font-semibold text-foreground">Grade {g}</span>
-                    <span className="text-[11px] text-muted-foreground">{list.length} scheduled</span>
-                  </div>
-                  <span
-                    className="text-[11px] text-primary font-semibold cursor-pointer hover:underline"
-                    onClick={(e) => { e.stopPropagation(); openCreate(g); }}
-                  >
-                    + Add
-                  </span>
-                </button>
-                {isOpen && (
-                  <div className="border-t border-border divide-y divide-border">
-                    {list.length === 0 && (
-                      <div className="px-3 py-4 text-center text-[11px] text-muted-foreground">
-                        No exams scheduled.
-                      </div>
-                    )}
-                    {list.map((row) => (
-                      <ExamRowItem
-                        key={row._id as unknown as string}
-                        row={row}
-                        onEdit={() => openEdit(row)}
-                        onDelete={() => onDelete(row)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
+      {rows === undefined ? (
+        <div className="h-64 rounded-xl bg-muted animate-pulse" />
+      ) : (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          {/* Header row */}
+          <div className="grid grid-cols-[2.75rem_1fr_1fr_1fr] bg-muted/40">
+            <div />
+            {TERMS.map((t) => (
+              <div
+                key={t}
+                className="py-2 text-center text-[11px] font-semibold text-muted-foreground border-l border-border"
+              >
+                Term {t}
+              </div>
+            ))}
+          </div>
+          {/* Grade rows */}
+          {GRADES.map((g) => (
+            <div key={g} className="grid grid-cols-[2.75rem_1fr_1fr_1fr] border-t border-border">
+              <div className="flex items-center justify-center text-xs font-bold text-foreground bg-muted/40">
+                G{g}
+              </div>
+              {TERMS.map((t) => {
+                const entry = cellMap.get(`${g}-${t}`);
+                return (
+                  <GridCell
+                    key={t}
+                    entry={entry}
+                    onClick={() => (entry ? openEdit(entry) : openAdd(g, t))}
+                  />
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
 
@@ -225,7 +314,18 @@ export function ExamCalendarTab() {
           draft={draft}
           setDraft={setDraft}
           onSave={onSave}
+          onDelete={draft.id ? onDelete : undefined}
           onClose={() => setDraft(null)}
+          saving={saving}
+        />
+      )}
+
+      {quick && (
+        <QuickEntryDialog
+          quick={quick}
+          setQuick={setQuick}
+          onSave={onQuickSave}
+          onClose={() => setQuick(null)}
           saving={saving}
         />
       )}
@@ -233,56 +333,32 @@ export function ExamCalendarTab() {
   );
 }
 
-function ExamRowItem({
-  row,
-  onEdit,
-  onDelete,
-}: {
-  row: ExamEntry;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const dDays = daysFromNow(row.examDate);
-  let relLabel: string;
-  let relClass: string;
-  if (dDays === null) {
-    relLabel = '—'; relClass = 'text-muted-foreground';
-  } else if (dDays < 0) {
-    relLabel = `${-dDays}d ago`; relClass = 'text-muted-foreground';
-  } else if (dDays === 0) {
-    relLabel = 'today'; relClass = 'text-amber-500';
-  } else if (dDays <= 21) {
-    relLabel = `in ${dDays}d`; relClass = 'text-amber-500';
-  } else {
-    relLabel = `in ${dDays}d`; relClass = 'text-foreground';
+function GridCell({ entry, onClick }: { entry?: ExamEntry; onClick: () => void }) {
+  if (!entry) {
+    return (
+      <button
+        onClick={onClick}
+        className="min-h-[3.75rem] flex items-center justify-center border-l border-border text-muted-foreground/30 hover:text-primary hover:bg-muted/40 transition-colors"
+        aria-label="Add exam date"
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+    );
   }
+  const rel = relTag(entry.examDate);
   return (
-    <div className="px-3 py-2.5 flex items-center gap-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-semibold text-foreground">Term {row.term} · {row.year}</div>
-        <div className="text-[11px] text-muted-foreground">
-          {row.examDate} · <span className={relClass}>{relLabel}</span>
-          {row.totalMarks != null && <span> · {row.totalMarks} marks</span>}
-        </div>
-        {row.notes && (
-          <div className="text-[10px] text-muted-foreground truncate mt-0.5">{row.notes}</div>
-        )}
-      </div>
-      <button
-        onClick={onEdit}
-        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
-        aria-label="Edit"
-      >
-        <Pencil className="w-3.5 h-3.5" />
-      </button>
-      <button
-        onClick={onDelete}
-        className="p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500"
-        aria-label="Delete"
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
-    </div>
+    <button
+      onClick={onClick}
+      className="min-h-[3.75rem] flex flex-col items-center justify-center gap-0.5 px-1 border-l border-border hover:bg-muted/40 transition-colors"
+    >
+      <span className="text-xs font-semibold text-foreground tabular-nums">
+        {fmtShort(entry.examDate)}
+      </span>
+      <span className={cn('text-[10px] font-medium tabular-nums', rel.className)}>{rel.label}</span>
+      {entry.totalMarks != null && (
+        <span className="text-[9px] text-muted-foreground">{entry.totalMarks} marks</span>
+      )}
+    </button>
   );
 }
 
@@ -290,12 +366,14 @@ function DraftDialog({
   draft,
   setDraft,
   onSave,
+  onDelete,
   onClose,
   saving,
 }: {
   draft: DraftForm;
   setDraft: (d: DraftForm) => void;
   onSave: () => void;
+  onDelete?: () => void;
   onClose: () => void;
   saving: boolean;
 }) {
@@ -309,7 +387,14 @@ function DraftDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-foreground">{draft.id ? 'Edit exam' : 'New exam'}</h2>
+          <div>
+            <h2 className="text-sm font-bold text-foreground">
+              {draft.id ? 'Edit exam' : 'New exam'}
+            </h2>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Grade {draft.grade} · Term {draft.term} · {draft.year}
+            </p>
+          </div>
           <button
             onClick={onClose}
             className="text-[11px] px-2 py-1 rounded-md hover:bg-muted text-muted-foreground"
@@ -320,62 +405,15 @@ function DraftDialog({
 
         <div className="space-y-3">
           <div>
-            <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Grade</label>
-            <div className="flex gap-1 p-1 bg-muted rounded-lg mt-1 overflow-x-auto">
-              {GRADES.map((g) => (
-                <button
-                  key={g}
-                  onClick={() => setDraft({ ...draft, grade: g })}
-                  className={`flex-1 py-1.5 px-2 rounded-md text-[11px] font-semibold transition-all whitespace-nowrap ${
-                    g === draft.grade
-                      ? 'bg-card text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  G{g}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Term</label>
-            <div className="flex gap-1 p-1 bg-muted rounded-lg mt-1">
-              {TERMS.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setDraft({ ...draft, term: t })}
-                  className={`flex-1 py-1.5 px-2 rounded-md text-[11px] font-semibold transition-all ${
-                    t === draft.term
-                      ? 'bg-card text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  Term {t}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Year</label>
-              <input
-                type="number"
-                value={draft.year}
-                onChange={(e) => setDraft({ ...draft, year: Number(e.target.value) })}
-                className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Exam date</label>
-              <input
-                type="date"
-                value={draft.examDate}
-                onChange={(e) => setDraft({ ...draft, examDate: e.target.value })}
-                className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border"
-              />
-            </div>
+            <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Exam date
+            </label>
+            <input
+              type="date"
+              value={draft.examDate}
+              onChange={(e) => setDraft({ ...draft, examDate: e.target.value })}
+              className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border"
+            />
           </div>
 
           <div>
@@ -403,13 +441,98 @@ function DraftDialog({
               className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border"
             />
           </div>
+        </div>
 
-          {draft.id && (
-            <p className="text-[10px] text-muted-foreground">
-              You can change grade / term / year too — saving will move this row to the new key
-              (errors if another exam already exists there).
-            </p>
+        <div className="flex items-center gap-2 mt-4">
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              disabled={saving}
+              className="p-2 rounded-lg border border-border text-muted-foreground hover:text-red-500 hover:border-red-500/40 hover:bg-red-500/10 disabled:opacity-50"
+              aria-label="Delete"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           )}
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 px-3 py-2 rounded-lg border border-border text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className="flex-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : draft.id ? 'Update' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickEntryDialog({
+  quick,
+  setQuick,
+  onSave,
+  onClose,
+  saving,
+}: {
+  quick: QuickForm;
+  setQuick: (q: QuickForm) => void;
+  onSave: () => void;
+  onClose: () => void;
+  saving: boolean;
+}) {
+  const setDate = (term: 1 | 2 | 3, value: string) => {
+    const dates = [...quick.dates] as [string, string, string];
+    dates[term - 1] = value;
+    setQuick({ ...quick, dates });
+  };
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-2 pb-[calc(4rem+env(safe-area-inset-bottom,0px)+0.5rem)] sm:pb-2"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl bg-card border border-border p-4 shadow-xl max-h-[75vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-1.5">
+            <Zap className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-bold text-foreground">Quick entry · {quick.year}</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-[11px] px-2 py-1 rounded-md hover:bg-muted text-muted-foreground"
+          >
+            Close
+          </button>
+        </div>
+        <p className="text-[11px] text-muted-foreground mb-3">
+          Set one date per term and it applies to <strong className="text-foreground">all six
+          grades</strong> for {quick.year}. Leave a term blank to skip it. This overwrites any
+          existing dates for the terms you fill in.
+        </p>
+
+        <div className="space-y-3">
+          {TERMS.map((t) => (
+            <div key={t}>
+              <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Term {t} exam date
+              </label>
+              <input
+                type="date"
+                value={quick.dates[t - 1]}
+                onChange={(e) => setDate(t, e.target.value)}
+                className="w-full mt-1 px-2 py-1.5 rounded-md bg-muted text-sm text-foreground border border-border"
+              />
+            </div>
+          ))}
         </div>
 
         <div className="flex gap-2 mt-4">
@@ -425,7 +548,7 @@ function DraftDialog({
             disabled={saving}
             className="flex-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
           >
-            {saving ? 'Saving…' : draft.id ? 'Update' : 'Add'}
+            {saving ? 'Applying…' : 'Apply to all grades'}
           </button>
         </div>
       </div>

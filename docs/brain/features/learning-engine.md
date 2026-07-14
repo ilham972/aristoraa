@@ -42,7 +42,9 @@ cumulative-exam holdouts.
 - `/planner` (nav, 2026-07-15) — THE global planning page, 4 tabs: Term
   (grade → exam countdown + per-group runway cards + crystallize one/all),
   Forecast (grade-wide student coverage rollup), Tracks + Exams (moved FROM
-  /algorithm — planning inputs live with planning). Backend
+  /algorithm — planning inputs live with planning). Exams tab = grade×term
+  grid per year (year stepper; tap cell + to add / date to edit-delete; global
+  Quick entry sets one date/term across all grades). Backend
   `plannerBoard.ts` (light `plannerGroups` listing; `gradeForecastRollup` =
   ONE pool walk per track). Board nav slot freed → leaderboard link now in
   /students header.
