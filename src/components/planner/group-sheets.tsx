@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import {
   BookOpen,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Flag,
@@ -31,7 +32,7 @@ import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
-import { GroupCoverage } from './group-coverage';
+import { GroupCoverage, shortLabel } from './group-coverage';
 import { fmtWeekdayDate } from './verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
@@ -48,20 +49,6 @@ const STATUS_CHIP: Record<string, { label: string; className: string }> = {
     className: 'bg-amber-500/15 text-amber-500 border-amber-500/40',
   },
 };
-
-// Transit-line palette: each unit that appears in the term gets the next
-// color, in order of first appearance. Static class strings so Tailwind
-// keeps them.
-const UNIT_LINES = [
-  { rail: 'bg-teal-400', dot: 'bg-teal-400', text: 'text-teal-400' },
-  { rail: 'bg-sky-400', dot: 'bg-sky-400', text: 'text-sky-400' },
-  { rail: 'bg-violet-400', dot: 'bg-violet-400', text: 'text-violet-400' },
-  { rail: 'bg-amber-400', dot: 'bg-amber-400', text: 'text-amber-400' },
-  { rail: 'bg-rose-400', dot: 'bg-rose-400', text: 'text-rose-400' },
-  { rail: 'bg-lime-400', dot: 'bg-lime-400', text: 'text-lime-400' },
-  { rail: 'bg-orange-400', dot: 'bg-orange-400', text: 'text-orange-400' },
-  { rail: 'bg-fuchsia-400', dot: 'bg-fuchsia-400', text: 'text-fuchsia-400' },
-];
 
 function todayYmd(): string {
   const d = new Date();
@@ -128,6 +115,15 @@ export function GroupSheets({ grade }: { grade: number }) {
     api.learningEngine.groupPlan.groupLessonPlan,
     groupId ? { groupId } : 'skip',
   );
+  // Coverage — shared term selection with the summary below (same query+args
+  // dedupe). Also powers the per-week book-order question grids: each question
+  // carries the sheetDate it was picked onto, so we can bucket by week.
+  const [covTerm, setCovTerm] = useState<number | null>(null);
+  const coverage = useCachedQuery(
+    api.learningEngine.groupPlan.groupTermCoverage,
+    groupId ? { groupId, ...(covTerm !== null ? { term: covTerm } : {}) } : 'skip',
+  );
+
   const crystallize = useMutation(api.learningEngine.groupPlan.crystallizeUpcoming);
   const deleteFuturePlanned = useMutation(
     api.learningEngine.groupPlan.deleteFuturePlanned,
@@ -135,6 +131,8 @@ export function GroupSheets({ grade }: { grade: number }) {
   const unitName = useUnitName();
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
+  const [openWeek, setOpenWeek] = useState<string | null>(null);
+  const [coverageOpen, setCoverageOpen] = useState(false);
 
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
@@ -151,27 +149,89 @@ export function GroupSheets({ grade }: { grade: number }) {
     };
   }, [lessonPlan]);
 
-  // Unit → line color, in order of first appearance (per-sheet unit tint).
-  const lineByUnit = useMemo(() => {
-    const m = new Map<string, (typeof UNIT_LINES)[number]>();
-    for (const s of list) {
-      if (!m.has(s.unitId)) m.set(s.unitId, UNIT_LINES[m.size % UNIT_LINES.length]);
-    }
-    return m;
-  }, [list]);
-
   // Weeks: sheets grouped by their Monday. A sheet interleaves several units,
-  // so the honest timeline header is the WEEK, not one unit name.
+  // so the honest timeline header is the WEEK, not one unit name. Each week
+  // also carries its new/review split for the tiny mix bar.
   const weeks = useMemo(() => {
-    const out: Array<{ weekStart: string; sheets: SheetRow[] }> = [];
+    const out: Array<{
+      weekStart: string;
+      sheets: SheetRow[];
+      newTotal: number;
+      reviewTotal: number;
+    }> = [];
     for (const s of list) {
       const ws = weekStartYmd(s.date);
       const last = out[out.length - 1];
-      if (!last || last.weekStart !== ws) out.push({ weekStart: ws, sheets: [s] });
-      else last.sheets.push(s);
+      if (!last || last.weekStart !== ws)
+        out.push({
+          weekStart: ws,
+          sheets: [s],
+          newTotal: s.newCount,
+          reviewTotal: s.spiralCount,
+        });
+      else {
+        last.sheets.push(s);
+        last.newTotal += s.newCount;
+        last.reviewTotal += s.spiralCount;
+      }
     }
     return out;
   }, [list]);
+
+  // Per-week book-order grids: for each unit taught that week, its questions in
+  // book order, each marked by what THIS week does with it — new pick, review
+  // pick, picked another week, or not yet. Built from coverage (every question
+  // carries the sheetDate it landed on). Units with no pick this week are
+  // dropped from the week.
+  const weekGrids = useMemo(() => {
+    const m = new Map<
+      string,
+      Array<{
+        unitId: string;
+        boxes: Array<{
+          questionId: string;
+          label: string | null;
+          mark: 'new' | 'review' | 'other' | 'unseen';
+        }>;
+      }>
+    >();
+    if (!coverage || !('status' in coverage) || coverage.status !== 'ok')
+      return m;
+    for (const w of weeks) {
+      const units: Array<{
+        unitId: string;
+        boxes: Array<{
+          questionId: string;
+          label: string | null;
+          mark: 'new' | 'review' | 'other' | 'unseen';
+        }>;
+      }> = [];
+      for (const u of coverage.units) {
+        let picks = 0;
+        const boxes = u.questions.map((q) => {
+          const inWeek =
+            q.sheetDate !== null && weekStartYmd(q.sheetDate) === w.weekStart;
+          let mark: 'new' | 'review' | 'other' | 'unseen';
+          if (inWeek) {
+            picks += 1;
+            mark = q.section === 'spiral' ? 'review' : 'new';
+          } else if (q.state === 'done' || q.state === 'planned') {
+            mark = 'other';
+          } else {
+            mark = 'unseen';
+          }
+          return {
+            questionId: q.questionId as unknown as string,
+            label: q.label,
+            mark,
+          };
+        });
+        if (picks > 0) units.push({ unitId: u.unitId, boxes });
+      }
+      m.set(w.weekStart, units);
+    }
+    return m;
+  }, [coverage, weeks]);
 
   // Book-coverage gap, from the live skeleton: units whose ladder is empty.
   const bookGap = useMemo(() => {
@@ -243,6 +303,20 @@ export function GroupSheets({ grade }: { grade: number }) {
 
   let todayLineShown = false;
   let examLineShown = false;
+
+  const coverageReady =
+    coverage && 'status' in coverage && coverage.status === 'ok';
+  const coveragePct = coverageReady
+    ? (() => {
+        let d = 0;
+        let t = 0;
+        for (const u of coverage.units) {
+          d += u.doneCount;
+          t += u.totalQuestions;
+        }
+        return t > 0 ? Math.round((d / t) * 100) : 0;
+      })()
+    : null;
 
   return (
     <>
@@ -326,26 +400,58 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {/* ── Lens 1: COVERAGE (what & how much) ─────────────────────────── */}
-      {groupId && <GroupCoverage groupId={groupId} />}
-
-      {/* ── Lens 2: TIMELINE (when — grouped by week) ──────────────────── */}
+      {/* ── Coverage — collapsed to a whole-term summary ──────────────── */}
       {groupId && (
-        <div className="mt-6">
+        <div className="mb-4">
+          <button
+            onClick={() => setCoverageOpen((o) => !o)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-border bg-card"
+          >
+            <span className="text-[11px] font-bold text-foreground uppercase tracking-wide">
+              Coverage
+            </span>
+            {coveragePct !== null && (
+              <span className="text-[10px] text-muted-foreground">
+                {coveragePct}% of the term covered
+              </span>
+            )}
+            <span className="h-px flex-1 bg-border" />
+            <ChevronDown
+              className={cn(
+                'w-4 h-4 text-muted-foreground transition-transform',
+                coverageOpen && 'rotate-180',
+              )}
+            />
+          </button>
+          {coverageOpen && (
+            <div className="mt-2">
+              <GroupCoverage
+                groupId={groupId}
+                term={covTerm}
+                setTerm={setCovTerm}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Timeline — one card per WEEK (the planning workspace) ──────── */}
+      {groupId && (
+        <div>
           <div className="flex items-center gap-2 mb-2.5">
             <span className="text-[11px] font-bold text-foreground uppercase tracking-wide">
               Timeline
             </span>
             <span className="text-[10px] text-muted-foreground">
-              every sheet, by week · each mixes new + review
+              by week · tap a week to see its picks
             </span>
             <span className="h-px flex-1 bg-border" />
           </div>
 
           {sheets === undefined && (
-            <div className="grid grid-cols-3 gap-1.5 animate-pulse">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="h-16 bg-muted rounded-xl" />
+            <div className="space-y-2 animate-pulse">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-14 bg-muted rounded-xl" />
               ))}
             </div>
           )}
@@ -357,7 +463,7 @@ export function GroupSheets({ grade }: { grade: number }) {
             </div>
           )}
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {weeks.map((w) => {
               const showToday =
                 !todayLineShown && w.sheets.some((s) => s.date >= today);
@@ -366,6 +472,12 @@ export function GroupSheets({ grade }: { grade: number }) {
                 exam !== null && !examLineShown && w.weekStart > exam.date;
               if (showExam) examLineShown = true;
               const wd = fmtDayMonth(w.weekStart);
+              const isOpen = openWeek === w.weekStart;
+              const total = w.newTotal + w.reviewTotal;
+              const newPct = total > 0 ? (w.newTotal / total) * 100 : 0;
+              const grids = weekGrids.get(w.weekStart) ?? [];
+              const weekPast = w.sheets.every((s) => s.date < today);
+              const weekAfterExam = exam !== null && w.weekStart > exam.date;
               return (
                 <div key={w.weekStart}>
                   {showExam && (
@@ -387,76 +499,167 @@ export function GroupSheets({ grade }: { grade: number }) {
                       <div className="h-px flex-1 bg-primary/40" />
                     </div>
                   )}
-                  {/* Week header */}
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-[11px] font-bold text-foreground shrink-0">
-                      Week of {wd.day}
-                    </span>
-                    <span className="h-px flex-1 bg-border" />
-                    <span className="text-[9.5px] text-muted-foreground shrink-0">
-                      {w.sheets.length} sheet{w.sheets.length > 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {w.sheets.map((s) => {
-                      const isPast = s.date < today;
-                      const afterExam = exam !== null && s.date > exam.date;
-                      const d = fmtDayMonth(s.date);
-                      const line = lineByUnit.get(s.unitId) ?? UNIT_LINES[0];
-                      const chip = STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
-                      return (
-                        <button
-                          key={s.id as unknown as string}
-                          onClick={() => setPreviewId(s.id)}
+                  <div
+                    className={cn(
+                      'rounded-xl border bg-card overflow-hidden',
+                      weekAfterExam ? 'border-rose-500/40' : 'border-border',
+                      weekPast && 'opacity-60',
+                    )}
+                  >
+                    {/* Week card header — one card, no repeated month */}
+                    <button
+                      onClick={() =>
+                        setOpenWeek((cur) =>
+                          cur === w.weekStart ? null : w.weekStart,
+                        )
+                      }
+                      className="w-full text-left px-3 py-2.5"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-bold text-foreground shrink-0">
+                          Week of {wd.day}
+                        </span>
+                        {weekAfterExam && (
+                          <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
+                            after exam
+                          </span>
+                        )}
+                        <span className="h-px flex-1 bg-border" />
+                        <span className="text-[9.5px] text-muted-foreground tabular-nums shrink-0">
+                          {total}q · {w.sheets.length}sh
+                        </span>
+                        <ChevronDown
                           className={cn(
-                            'rounded-xl border bg-card text-left overflow-hidden hover:bg-muted/40 active:scale-[0.98] transition-transform',
-                            afterExam ? 'border-rose-500/50' : 'border-border',
-                            isPast && 'opacity-55',
+                            'w-4 h-4 text-muted-foreground shrink-0 transition-transform',
+                            isOpen && 'rotate-180',
                           )}
-                        >
-                          <div className={cn('h-1', line.rail)} />
-                          <div className="px-2 pt-1.5 pb-2">
-                            <div className="flex items-center justify-between gap-1">
-                              <div>
-                                <div className="text-[9.5px] text-muted-foreground leading-none">
-                                  {d.weekday}
-                                </div>
-                                <div className="text-xs font-bold text-foreground mt-0.5">
-                                  {d.day}
-                                </div>
-                              </div>
-                              {afterExam && (
-                                <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
-                                  after exam
-                                </span>
-                              )}
-                            </div>
-                            {/* The sheet's real mix: unit + new/review counts */}
-                            <div className="text-[9px] text-foreground/80 truncate mt-1">
-                              {unitName(s.unitId)}
-                            </div>
-                            <div className="flex items-center justify-between mt-1 gap-1">
-                              <span className="text-[9.5px] text-muted-foreground tabular-nums">
-                                {s.newCount}n
-                                {s.spiralCount > 0 && (
-                                  <span className="text-amber-500">
-                                    +{s.spiralCount}r
-                                  </span>
-                                )}
-                              </span>
-                              <span
-                                className={cn(
-                                  'px-1 py-px rounded border text-[8px] font-semibold leading-tight shrink-0',
-                                  chip.className,
-                                )}
+                        />
+                      </div>
+                      {/* tiny new/review mix bar */}
+                      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden flex mt-2">
+                        <div
+                          className="h-full bg-teal-400"
+                          style={{ width: `${newPct}%` }}
+                        />
+                        <div
+                          className="h-full bg-amber-400"
+                          style={{ width: `${100 - newPct}%` }}
+                        />
+                      </div>
+                      <div className="flex gap-3 mt-1 text-[8.5px]">
+                        <span className="text-teal-500 font-semibold">
+                          {w.newTotal} new
+                        </span>
+                        {w.reviewTotal > 0 && (
+                          <span className="text-amber-500 font-semibold">
+                            {w.reviewTotal} review
+                          </span>
+                        )}
+                      </div>
+                    </button>
+
+                    {isOpen && (
+                      <div className="px-3 pb-3 border-t border-border/60 pt-2.5 space-y-3">
+                        {/* This week's sessions — tap to preview the sheet */}
+                        <div className="flex flex-wrap gap-1.5">
+                          {w.sheets.map((s) => {
+                            const d = fmtDayMonth(s.date);
+                            const chip =
+                              STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
+                            return (
+                              <button
+                                key={s.id as unknown as string}
+                                onClick={() => setPreviewId(s.id)}
+                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-card text-[10px]"
                               >
-                                {chip.label}
+                                <span className="font-bold text-foreground">
+                                  {d.weekday} {d.day}
+                                </span>
+                                <span className="text-muted-foreground tabular-nums">
+                                  {s.newCount}n
+                                  {s.spiralCount > 0 && (
+                                    <span className="text-amber-500">
+                                      +{s.spiralCount}r
+                                    </span>
+                                  )}
+                                </span>
+                                <span
+                                  className={cn(
+                                    'px-1 py-px rounded border text-[7.5px] font-semibold leading-tight',
+                                    chip.className,
+                                  )}
+                                >
+                                  {chip.label}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Book-order grids: which questions this week covers */}
+                        {coverage === undefined && (
+                          <div className="h-8 bg-muted rounded animate-pulse" />
+                        )}
+                        {coverage !== undefined && grids.length === 0 && (
+                          <div className="text-[10px] text-muted-foreground italic">
+                            Question grid appears once this week&rsquo;s units
+                            have book entered (and you&rsquo;re viewing their
+                            term in Coverage).
+                          </div>
+                        )}
+                        {grids.map((g) => (
+                          <div key={g.unitId}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[10.5px] font-bold text-foreground truncate">
+                                {unitName(g.unitId)}
                               </span>
+                              <span className="h-px flex-1 bg-border/60" />
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {g.boxes.map((b, bi) => (
+                                <span
+                                  key={b.questionId}
+                                  title={b.label ?? undefined}
+                                  className={cn(
+                                    'w-6 h-6 rounded-md border text-[8px] font-semibold leading-none flex items-center justify-center tabular-nums',
+                                    b.mark === 'new' &&
+                                      'bg-teal-500/25 border-teal-500/50 text-teal-600 dark:text-teal-400',
+                                    b.mark === 'review' &&
+                                      'bg-amber-500/25 border-amber-500/50 text-amber-600 dark:text-amber-400',
+                                    b.mark === 'other' &&
+                                      'bg-muted/50 border-border/50 text-muted-foreground/50',
+                                    b.mark === 'unseen' &&
+                                      'bg-transparent border-dashed border-border text-muted-foreground/40',
+                                  )}
+                                >
+                                  {shortLabel(b.label, bi)}
+                                </span>
+                              ))}
                             </div>
                           </div>
-                        </button>
-                      );
-                    })}
+                        ))}
+                        {grids.length > 0 && (
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[8.5px] text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded bg-teal-500/30 border border-teal-500/50" />
+                              new this week
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded bg-amber-500/30 border border-amber-500/50" />
+                              review this week
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded bg-muted border border-border/50" />
+                              other week
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded border border-dashed border-border" />
+                              not yet
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

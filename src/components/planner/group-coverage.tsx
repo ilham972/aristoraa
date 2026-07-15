@@ -48,7 +48,7 @@ type UnitRow = {
 
 // Compact question-number for the tiny box: keep the last dotted segment
 // ("1A.3.b" → "3.b"), drop a leading "Q".
-function shortLabel(label: string | null, idx: number): string {
+export function shortLabel(label: string | null, idx: number): string {
   if (!label) return String(idx + 1);
   const cleaned = label.replace(/^Q/i, '');
   const parts = cleaned.split(/[.\-]/).filter(Boolean);
@@ -56,8 +56,18 @@ function shortLabel(label: string | null, idx: number): string {
   return parts.slice(-2).join('.');
 }
 
-export function GroupCoverage({ groupId }: { groupId: Id<'groups'> }) {
-  const [term, setTerm] = useState<number | null>(null);
+export function GroupCoverage({
+  groupId,
+  term,
+  setTerm,
+}: {
+  groupId: Id<'groups'>;
+  term: number | null;
+  setTerm: (t: number | null) => void;
+}) {
+  // Same query+args as the parent's copy → deduped by the Convex client, so
+  // the week grids in GroupSheets and this summary share one subscription and
+  // one term selection.
   const coverage = useCachedQuery(api.learningEngine.groupPlan.groupTermCoverage, {
     groupId,
     ...(term !== null ? { term } : {}),
