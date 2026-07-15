@@ -55,9 +55,16 @@ cumulative-exam holdouts.
   per-student per-unit marks `groupStudentUnitProgress`/`setStudentUnitDone`
   (catch-up + progress; group Main stays ONE sheet), tap unit → `UnitArrangeDialog`
   drag=difficulty, one-tap "earlier terms taught" reuses setGroupStartingPoint;
-  Coverage + Timeline UNIFIED on one page (no toggle), timeline grouped BY WEEK
-  w/ per-sheet mix + red EXAM line from examPlan.examDate — NB crystallize's
-  180d horizon ignores the exam, so overshoot is shown not prevented),
+  Coverage + Timeline UNIFIED on one page (no toggle). CONTROL ROOM (2026-07-16):
+  Coverage collapses to a summary; timeline = ONE card per WEEK w/ new/review
+  mix bar + cumulative term-progress bar (red past EXAM line from
+  examPlan.examDate — NB crystallize's 180d horizon ignores the exam, overshoot
+  is shown not prevented). Expand a week → book-order pick grid (from coverage
+  sheetDate) + 7+7 day grid (Main/Revision via `groupSlotDays`). Sheet drawer
+  has RE-PLAN actions on planned rows: resize (resizePlanned), arrange
+  (UnitArrangeDialog), skip (cancelDay+deletePlanned), move to another session
+  day incl. revision (`moveGroupSheet`). TODO: full group-scoped Lesson Builder
+  (tick/untick) not yet built),
   Forecast (grade rollup), Tracks + Exams (moved FROM /algorithm; Exams =
   grade×term grid/year + Quick entry). Backend `plannerBoard.ts`. Board nav
   slot freed → leaderboard link in /students.
