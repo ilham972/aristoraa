@@ -73,6 +73,14 @@ function weekStartYmd(ymd: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function addDaysYmd(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const DOW_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
 type SheetRow = {
   id: Id<'groupSheets'>;
   date: string;
@@ -123,6 +131,11 @@ export function GroupSheets({ grade }: { grade: number }) {
     api.learningEngine.groupPlan.groupTermCoverage,
     groupId ? { groupId, ...(covTerm !== null ? { term: covTerm } : {}) } : 'skip',
   );
+  // The group's weekly Main + Revision slot days — the 7+7 day grid.
+  const slotDays = useCachedQuery(
+    api.learningEngine.groupPlan.groupSlotDays,
+    groupId ? { groupId } : 'skip',
+  );
 
   const crystallize = useMutation(api.learningEngine.groupPlan.crystallizeUpcoming);
   const deleteFuturePlanned = useMutation(
@@ -137,6 +150,16 @@ export function GroupSheets({ grade }: { grade: number }) {
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
   const previewIdx = previewId ? list.findIndex((s) => s.id === previewId) : -1;
+  const sheetByDate = useMemo(() => {
+    const m = new Map<string, SheetRow>();
+    for (const s of list) m.set(s.date, s);
+    return m;
+  }, [list]);
+  const mainDays = useMemo(() => new Set(slotDays?.mainDays ?? []), [slotDays]);
+  const revisionDays = useMemo(
+    () => new Set(slotDays?.revisionDays ?? []),
+    [slotDays],
+  );
 
   // The exam deadline (nearest upcoming exam) — drawn as a line on the
   // timeline so a plan that overshoots it is impossible to miss.
@@ -229,6 +252,36 @@ export function GroupSheets({ grade }: { grade: number }) {
         if (picks > 0) units.push({ unitId: u.unitId, boxes });
       }
       m.set(w.weekStart, units);
+    }
+    return m;
+  }, [coverage, weeks]);
+
+  // Cumulative term progress by the END of each week: % of the term's
+  // questions covered on or before that week (+ anything already covered
+  // before the timeline). Lets the founder see whether the fill reaches 100%
+  // BEFORE the red exam line — the deadline check, made visual.
+  const weekProgress = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!coverage || !('status' in coverage) || coverage.status !== 'ok')
+      return m;
+    let total = 0;
+    let baseCovered = 0; // covered before the timeline (pre-taught / member)
+    const byWeek = new Map<string, number>();
+    for (const u of coverage.units) {
+      total += u.totalQuestions;
+      for (const q of u.questions) {
+        if (q.sheetDate) {
+          const ws = weekStartYmd(q.sheetDate);
+          byWeek.set(ws, (byWeek.get(ws) ?? 0) + 1);
+        } else if (q.state === 'done') {
+          baseCovered += 1;
+        }
+      }
+    }
+    let running = baseCovered;
+    for (const w of weeks) {
+      running += byWeek.get(w.weekStart) ?? 0;
+      m.set(w.weekStart, total > 0 ? Math.round((running / total) * 100) : 0);
     }
     return m;
   }, [coverage, weeks]);
@@ -556,10 +609,104 @@ export function GroupSheets({ grade }: { grade: number }) {
                           </span>
                         )}
                       </div>
+                      {/* Cumulative term progress by the end of this week */}
+                      {weekProgress.has(w.weekStart) && (
+                        <div className="mt-1.5">
+                          <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                            <div
+                              className={cn(
+                                'h-full',
+                                weekAfterExam &&
+                                  (weekProgress.get(w.weekStart) ?? 0) < 100
+                                  ? 'bg-rose-500'
+                                  : 'bg-emerald-500',
+                              )}
+                              style={{
+                                width: `${weekProgress.get(w.weekStart) ?? 0}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="text-[8px] text-muted-foreground mt-0.5">
+                            {weekProgress.get(w.weekStart)}% of term done by here
+                          </div>
+                        </div>
+                      )}
                     </button>
 
                     {isOpen && (
                       <div className="px-3 pb-3 border-t border-border/60 pt-2.5 space-y-3">
+                        {/* 7+7 day grid: Main + Revision, Mon→Sun. Filled Main
+                            box = a sheet that day (tap to open); Revision box =
+                            a revision session that day. */}
+                        <div className="flex items-start gap-3">
+                          <div className="text-[9px] text-muted-foreground leading-[1.6rem] pt-4">
+                            {DOW_LETTERS.map((L, i) => (
+                              <div key={i} className="h-6">
+                                {L}
+                              </div>
+                            ))}
+                          </div>
+                          {(['Main', 'Rev'] as const).map((col) => (
+                            <div key={col} className="text-center">
+                              <div className="text-[8.5px] font-semibold text-muted-foreground mb-1">
+                                {col}
+                              </div>
+                              <div className="space-y-1">
+                                {DOW_LETTERS.map((_, i) => {
+                                  const dow = i + 1;
+                                  const date = addDaysYmd(w.weekStart, i);
+                                  if (col === 'Main') {
+                                    const isMainDay = mainDays.has(dow);
+                                    const sh = sheetByDate.get(date);
+                                    if (!isMainDay && !sh)
+                                      return (
+                                        <div key={i} className="w-7 h-6" />
+                                      );
+                                    return (
+                                      <button
+                                        key={i}
+                                        onClick={() =>
+                                          sh && setPreviewId(sh.id)
+                                        }
+                                        disabled={!sh}
+                                        className={cn(
+                                          'w-7 h-6 rounded-md border text-[8.5px] font-bold flex items-center justify-center tabular-nums',
+                                          sh
+                                            ? 'bg-primary/15 border-primary/50 text-primary'
+                                            : 'border-dashed border-border text-muted-foreground/40',
+                                        )}
+                                      >
+                                        {sh ? sh.newCount + sh.spiralCount : ''}
+                                      </button>
+                                    );
+                                  }
+                                  const isRevDay = revisionDays.has(dow);
+                                  return (
+                                    <div
+                                      key={i}
+                                      className={cn(
+                                        'w-7 h-6 rounded-md border flex items-center justify-center',
+                                        isRevDay
+                                          ? 'bg-amber-500/15 border-amber-500/50 text-amber-500'
+                                          : 'border-dashed border-border/60',
+                                      )}
+                                    >
+                                      {isRevDay && (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                          <div className="flex-1 text-[8.5px] text-muted-foreground pt-4 leading-snug">
+                            Tap a Main box to open that day&rsquo;s sheet.
+                            Revision days are marked; moving sheets onto them
+                            comes next.
+                          </div>
+                        </div>
+
                         {/* This week's sessions — tap to preview the sheet */}
                         <div className="flex flex-wrap gap-1.5">
                           {w.sheets.map((s) => {

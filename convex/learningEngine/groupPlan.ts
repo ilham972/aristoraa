@@ -1799,6 +1799,32 @@ export const setStudentUnitDone = mutation({
   },
 });
 
+// The group's weekly slot layout by day-of-week (1=Mon..7=Sun), split into
+// Main and Revision departments — powers the 7+7 day grid in each week card
+// (Term Coverage Cockpit control room, 2026-07-16).
+export const groupSlotDays = query({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const slots = await ctx.db
+      .query("scheduleSlots")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const mainDays = new Set<number>();
+    const revisionDays = new Set<number>();
+    for (const s of slots) {
+      if ((s.sessionType ?? "main") === "revision")
+        revisionDays.add(s.dayOfWeek);
+      else mainDays.add(s.dayOfWeek);
+    }
+    return {
+      mainDays: Array.from(mainDays).sort((a, b) => a - b),
+      revisionDays: Array.from(revisionDays).sort((a, b) => a - b),
+    };
+  },
+});
+
 export const groupSheetHistory = query({
   args: { groupId: v.id("groups") },
   handler: async (ctx, args) => {
