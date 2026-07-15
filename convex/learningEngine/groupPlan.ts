@@ -1910,11 +1910,53 @@ export const groupSheetPreview = query({
 
     return {
       id: row._id,
+      groupId: row.groupId,
       date: row.date,
       unitId: row.unitId,
       status: row.status,
       questions,
     };
+  },
+});
+
+// Move a PLANNED sheet to another of the group's session days (Main or
+// Revision) — the control-room "shift this sheet" lever. Keeps the same
+// questions; just re-homes the row onto that day's slot. Refuses if the target
+// isn't a session day or already holds a live sheet.
+export const moveGroupSheet = mutation({
+  args: { groupSheetId: v.id("groupSheets"), toDate: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) throw new Error("Group sheet not found");
+    if (row.status !== "planned")
+      throw new Error("Only planned sheets can be moved");
+    const dow = dowFromYmd(args.toDate);
+    const slots = (
+      await ctx.db
+        .query("scheduleSlots")
+        .withIndex("by_group", (q) => q.eq("groupId", row.groupId))
+        .collect()
+    ).filter((s) => s.dayOfWeek === dow);
+    if (slots.length === 0)
+      throw new Error("That day has no session for this group");
+    // Earliest slot represents the (possibly fused) session.
+    const slot = slots.reduce((a, b) => (a.startTime <= b.startTime ? a : b));
+    const clash = (
+      await ctx.db
+        .query("groupSheets")
+        .withIndex("by_group_date", (q) =>
+          q.eq("groupId", row.groupId).eq("date", args.toDate),
+        )
+        .collect()
+    ).some((r) => r._id !== row._id && r.status !== "delegated");
+    if (clash) throw new Error("That day already has a sheet");
+    await ctx.db.patch(args.groupSheetId, {
+      date: args.toDate,
+      slotId: slot._id,
+    });
+    return { ok: true as const };
   },
 });
 

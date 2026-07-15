@@ -17,11 +17,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import {
+  ArrowUpDown,
+  Ban,
   BookOpen,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Flag,
+  Minus,
+  MoveRight,
+  Plus,
   RefreshCw,
   Sparkles,
   X,
@@ -33,6 +38,7 @@ import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
 import { GroupCoverage, shortLabel } from './group-coverage';
+import { UnitArrangeDialog } from './unit-arrange-dialog';
 import { fmtWeekdayDate } from './verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
@@ -146,6 +152,7 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
   const [openWeek, setOpenWeek] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false);
+  const [arrangeUnitId, setArrangeUnitId] = useState<string | null>(null);
 
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
@@ -815,15 +822,53 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {previewIdx >= 0 && (
-        <SheetPreviewDrawer
-          sheetId={list[previewIdx].id}
-          unitName={unitName}
-          hasPrev={previewIdx > 0}
-          hasNext={previewIdx < list.length - 1}
-          onPrev={() => setPreviewId(list[previewIdx - 1].id)}
-          onNext={() => setPreviewId(list[previewIdx + 1].id)}
-          onClose={() => setPreviewId(null)}
+      {previewIdx >= 0 &&
+        groupId &&
+        (() => {
+          const cur = list[previewIdx];
+          const wk = weekStartYmd(cur.date);
+          const occupied = new Set(
+            list.filter((s) => s.status !== 'delegated').map((s) => s.date),
+          );
+          const moveTargets: Array<{ date: string; label: string; rev: boolean }> =
+            [];
+          for (const dow of new Set([
+            ...(slotDays?.mainDays ?? []),
+            ...(slotDays?.revisionDays ?? []),
+          ])) {
+            const date = addDaysYmd(wk, dow - 1);
+            if (date === cur.date || occupied.has(date)) continue;
+            const rev = revisionDays.has(dow) && !mainDays.has(dow);
+            moveTargets.push({
+              date,
+              label: fmtDayMonth(date).weekday,
+              rev,
+            });
+          }
+          return (
+            <SheetPreviewDrawer
+              sheetId={cur.id}
+              groupId={groupId}
+              unitName={unitName}
+              moveTargets={moveTargets}
+              hasPrev={previewIdx > 0}
+              hasNext={previewIdx < list.length - 1}
+              onPrev={() => setPreviewId(list[previewIdx - 1].id)}
+              onNext={() => setPreviewId(list[previewIdx + 1].id)}
+              onClose={() => setPreviewId(null)}
+              onArrange={(unitId) => {
+                setPreviewId(null);
+                setArrangeUnitId(unitId);
+              }}
+            />
+          );
+        })()}
+
+      {arrangeUnitId && (
+        <UnitArrangeDialog
+          unitId={arrangeUnitId}
+          unitName={unitName(arrangeUnitId)}
+          onClose={() => setArrangeUnitId(null)}
         />
       )}
     </>
@@ -832,25 +877,59 @@ export function GroupSheets({ grade }: { grade: number }) {
 
 function SheetPreviewDrawer({
   sheetId,
+  groupId,
   unitName,
+  moveTargets,
   hasPrev,
   hasNext,
   onPrev,
   onNext,
   onClose,
+  onArrange,
 }: {
   sheetId: Id<'groupSheets'>;
+  groupId: Id<'groups'>;
   unitName: (unitId: string) => string;
+  moveTargets: Array<{ date: string; label: string; rev: boolean }>;
   hasPrev: boolean;
   hasNext: boolean;
   onPrev: () => void;
   onNext: () => void;
   onClose: () => void;
+  onArrange: (unitId: string) => void;
 }) {
   const sheet = useQuery(api.learningEngine.groupPlan.groupSheetPreview, {
     groupSheetId: sheetId,
   });
   const chip = sheet ? (STATUS_CHIP[sheet.status] ?? STATUS_CHIP.planned) : null;
+
+  const resizePlanned = useMutation(api.learningEngine.groupPlan.resizePlanned);
+  const moveGroupSheet = useMutation(api.learningEngine.groupPlan.moveGroupSheet);
+  const deletePlanned = useMutation(api.learningEngine.groupPlan.deletePlanned);
+  const cancelDay = useMutation(api.sessionRecords.cancelDay);
+  const [busy, setBusy] = useState(false);
+  const [size, setSize] = useState<number | null>(null);
+  // Reset the resize draft when the drawer navigates to a different sheet.
+  const [sizeFor, setSizeFor] = useState(sheetId);
+  if (sheetId !== sizeFor) {
+    setSizeFor(sheetId);
+    setSize(null);
+  }
+  const curSize = sheet ? sheet.questions.length : 0;
+  const effSize = size ?? curSize;
+  const isPlanned = sheet?.status === 'planned';
+
+  const run = async (fn: () => Promise<unknown>, closeAfter = true) => {
+    setBusy(true);
+    try {
+      await fn();
+      if (closeAfter) onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div
@@ -966,6 +1045,117 @@ function SheetPreviewDrawer({
               </div>
             ))}
         </div>
+
+        {/* Re-plan action bar (planned sheets only) */}
+        {sheet && isPlanned && (
+          <div className="border-t border-border p-2.5 space-y-2 shrink-0">
+            {/* Resize */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-foreground">
+                Sheet size
+              </span>
+              <div className="inline-flex items-center gap-1.5">
+                <button
+                  onClick={() => setSize(Math.max(1, effSize - 1))}
+                  disabled={busy || effSize <= 1}
+                  className="w-7 h-7 inline-flex items-center justify-center rounded-md bg-muted text-foreground disabled:opacity-40"
+                  aria-label="Fewer"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+                <span className="min-w-[1.5rem] text-center text-sm font-bold tabular-nums">
+                  {effSize}
+                </span>
+                <button
+                  onClick={() => setSize(Math.min(20, effSize + 1))}
+                  disabled={busy || effSize >= 20}
+                  className="w-7 h-7 inline-flex items-center justify-center rounded-md bg-muted text-foreground disabled:opacity-40"
+                  aria-label="More"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() =>
+                    run(() =>
+                      resizePlanned({ groupSheetId: sheetId, count: effSize }),
+                    )
+                  }
+                  disabled={busy || effSize === curSize}
+                  className="ml-1 px-2.5 py-1.5 rounded-md bg-primary text-primary-foreground text-[11px] font-semibold disabled:opacity-40"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            {/* Arrange + Skip */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => onArrange(sheet.unitId)}
+                disabled={busy}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-border text-foreground text-[11px] font-semibold disabled:opacity-50"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                Arrange order
+              </button>
+              <button
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      'Skip this day? The session is marked cancelled and this planned sheet is removed. Re-plan to reflow the term.',
+                    )
+                  )
+                    return;
+                  run(async () => {
+                    await cancelDay({
+                      date: sheet.date,
+                      reason: 'other',
+                      groupIds: [groupId],
+                    });
+                    await deletePlanned({ groupSheetId: sheetId });
+                  });
+                }}
+                disabled={busy}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-500/40 text-rose-500 text-[11px] font-semibold disabled:opacity-50"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                Skip day
+              </button>
+            </div>
+
+            {/* Move to another day this week */}
+            {moveTargets.length > 0 && (
+              <div>
+                <div className="text-[9.5px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1">
+                  <MoveRight className="w-3 h-3" />
+                  Move to
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {moveTargets.map((t) => (
+                    <button
+                      key={t.date}
+                      onClick={() =>
+                        run(() =>
+                          moveGroupSheet({ groupSheetId: sheetId, toDate: t.date }),
+                        )
+                      }
+                      disabled={busy}
+                      className={cn(
+                        'px-2 py-1 rounded-lg border text-[10.5px] font-semibold disabled:opacity-50',
+                        t.rev
+                          ? 'border-amber-500/50 text-amber-500'
+                          : 'border-border text-foreground',
+                      )}
+                    >
+                      {t.label}
+                      {t.rev && ' · rev'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
