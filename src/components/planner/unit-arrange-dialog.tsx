@@ -13,7 +13,7 @@
 //
 // Backend: listUnitQuestions (catalog) + reorderConceptQuestions (per concept).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation } from 'convex/react';
 import {
   DndContext,
@@ -70,13 +70,16 @@ export function UnitArrangeDialog({
   );
 
   // Per-concept working order (question-id arrays). Initialised from the
-  // catalog and mutated by drags until the teacher saves.
+  // catalog and mutated by drags until the teacher saves. Reset at RENDER time
+  // (not in an effect) whenever a fresh catalog arrives — the React-endorsed
+  // "reset state when input changes" pattern, no cascading render.
   const [order, setOrder] = useState<Record<string, string[]>>({});
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  const [seenCatalog, setSeenCatalog] = useState<typeof catalog>(undefined);
 
-  useEffect(() => {
-    if (!catalog) return;
+  if (catalog && catalog !== seenCatalog) {
+    setSeenCatalog(catalog);
     const init: Record<string, string[]> = {};
     for (const c of catalog.concepts) {
       init[c.conceptId as unknown as string] = c.questions.map(
@@ -85,7 +88,7 @@ export function UnitArrangeDialog({
     }
     setOrder(init);
     setDirty(new Set());
-  }, [catalog]);
+  }
 
   const qById = useMemo(() => {
     const m = new Map<string, CatalogQ>();
