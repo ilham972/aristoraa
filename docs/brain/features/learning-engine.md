@@ -54,7 +54,10 @@ cumulative-exam holdouts.
   term accordions of tiny question boxes taught/planned/unseen + tap-provenance,
   per-student per-unit marks `groupStudentUnitProgress`/`setStudentUnitDone`
   (catch-up + progress; group Main stays ONE sheet), tap unit → `UnitArrangeDialog`
-  drag=difficulty, one-tap "earlier terms taught" reuses setGroupStartingPoint),
+  drag=difficulty, one-tap "earlier terms taught" reuses setGroupStartingPoint;
+  Coverage + Timeline UNIFIED on one page (no toggle), timeline grouped BY WEEK
+  w/ per-sheet mix + red EXAM line from examPlan.examDate — NB crystallize's
+  180d horizon ignores the exam, so overshoot is shown not prevented),
   Forecast (grade rollup), Tracks + Exams (moved FROM /algorithm; Exams =
   grade×term grid/year + Quick entry). Backend `plannerBoard.ts`. Board nav
   slot freed → leaderboard link in /students.
