@@ -20,6 +20,7 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  Flag,
   RefreshCw,
   Sparkles,
   X,
@@ -75,6 +76,16 @@ function fmtDayMonth(ymd: string): { weekday: string; day: string } {
   };
 }
 
+// Monday (app convention 1=Mon..7=Sun) of the week a date falls in — the key
+// the timeline groups sheets by. A sheet mixes several units, so "which week"
+// is the honest header, not "which unit".
+function weekStartYmd(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  const dow = d.getDay() === 0 ? 7 : d.getDay(); // 1=Mon..7=Sun
+  d.setDate(d.getDate() - (dow - 1));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 type SheetRow = {
   id: Id<'groupSheets'>;
   date: string;
@@ -124,13 +135,23 @@ export function GroupSheets({ grade }: { grade: number }) {
   const unitName = useUnitName();
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
-  const [view, setView] = useState<'coverage' | 'timeline'>('coverage');
 
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
   const previewIdx = previewId ? list.findIndex((s) => s.id === previewId) : -1;
 
-  // Unit → line color, in order of first appearance in the term.
+  // The exam deadline (nearest upcoming exam) — drawn as a line on the
+  // timeline so a plan that overshoots it is impossible to miss.
+  const exam = useMemo(() => {
+    if (!lessonPlan || lessonPlan.status !== 'ok' || !lessonPlan.examPlan)
+      return null;
+    return {
+      date: lessonPlan.examPlan.examDate,
+      daysToExam: lessonPlan.examPlan.daysToExam,
+    };
+  }, [lessonPlan]);
+
+  // Unit → line color, in order of first appearance (per-sheet unit tint).
   const lineByUnit = useMemo(() => {
     const m = new Map<string, (typeof UNIT_LINES)[number]>();
     for (const s of list) {
@@ -139,21 +160,18 @@ export function GroupSheets({ grade }: { grade: number }) {
     return m;
   }, [list]);
 
-  // Blocks: consecutive sheets of the same unit, additionally split at the
-  // past→upcoming boundary so the TODAY divider can sit between blocks.
-  const blocks = useMemo(() => {
-    const out: Array<{ unitId: string; sheets: SheetRow[]; upcoming: boolean }> = [];
+  // Weeks: sheets grouped by their Monday. A sheet interleaves several units,
+  // so the honest timeline header is the WEEK, not one unit name.
+  const weeks = useMemo(() => {
+    const out: Array<{ weekStart: string; sheets: SheetRow[] }> = [];
     for (const s of list) {
-      const upcoming = s.date >= today;
+      const ws = weekStartYmd(s.date);
       const last = out[out.length - 1];
-      if (!last || last.unitId !== s.unitId || last.upcoming !== upcoming) {
-        out.push({ unitId: s.unitId, sheets: [s], upcoming });
-      } else {
-        last.sheets.push(s);
-      }
+      if (!last || last.weekStart !== ws) out.push({ weekStart: ws, sheets: [s] });
+      else last.sheets.push(s);
     }
     return out;
-  }, [list, today]);
+  }, [list]);
 
   // Book-coverage gap, from the live skeleton: units whose ladder is empty.
   const bookGap = useMemo(() => {
@@ -223,7 +241,8 @@ export function GroupSheets({ grade }: { grade: number }) {
     );
   }
 
-  let dividerShown = false;
+  let todayLineShown = false;
+  let examLineShown = false;
 
   return (
     <>
@@ -244,6 +263,32 @@ export function GroupSheets({ grade }: { grade: number }) {
           </button>
         ))}
       </div>
+
+      {/* Exam deadline — the line everything is planned toward */}
+      {groupId && (
+        <div className="flex items-center gap-1.5 mb-3 text-[11px]">
+          <Flag className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+          {exam ? (
+            <span className="text-foreground">
+              Exam <b>{fmtWeekdayDate(exam.date)}</b>
+              <span
+                className={cn(
+                  'ml-1.5 px-1.5 py-px rounded-full font-semibold',
+                  exam.daysToExam <= 21
+                    ? 'bg-rose-500/15 text-rose-500'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {exam.daysToExam}d left
+              </span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">
+              No exam date set — add one in the Exams tab to plan toward it.
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Term-build actions */}
       <div className="flex gap-2 mb-3">
@@ -266,26 +311,6 @@ export function GroupSheets({ grade }: { grade: number }) {
         </button>
       </div>
 
-      {/* Coverage / Timeline view toggle */}
-      {groupId && (
-        <div className="flex gap-1 p-0.5 mb-3 rounded-lg bg-muted/60 w-fit">
-          {(['coverage', 'timeline'] as const).map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={cn(
-                'px-3 py-1 rounded-md text-[11px] font-semibold capitalize',
-                view === v
-                  ? 'bg-card text-foreground shadow-sm'
-                  : 'text-muted-foreground',
-              )}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Book-coverage gap: the honest "why the term stops early" banner */}
       {bookGap && (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 mb-3 flex gap-2.5">
@@ -301,107 +326,146 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {view === 'coverage' && groupId && <GroupCoverage groupId={groupId} />}
+      {/* ── Lens 1: COVERAGE (what & how much) ─────────────────────────── */}
+      {groupId && <GroupCoverage groupId={groupId} />}
 
-      {view === 'timeline' && sheets === undefined && groupId && (
-        <div className="grid grid-cols-3 gap-1.5 animate-pulse">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-16 bg-muted rounded-xl" />
-          ))}
-        </div>
-      )}
+      {/* ── Lens 2: TIMELINE (when — grouped by week) ──────────────────── */}
+      {groupId && (
+        <div className="mt-6">
+          <div className="flex items-center gap-2 mb-2.5">
+            <span className="text-[11px] font-bold text-foreground uppercase tracking-wide">
+              Timeline
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              every sheet, by week · each mixes new + review
+            </span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
 
-      {view === 'timeline' && sheets !== undefined && list.length === 0 && (
-        <div className="rounded-xl border border-border bg-card p-4 text-center text-sm text-muted-foreground">
-          No sheets yet — press &ldquo;Run all term sheets&rdquo; to build the
-          whole term.
-        </div>
-      )}
-
-      {/* The term as unit line-segments */}
-      {view === 'timeline' && (
-      <div className="space-y-2">
-        {blocks.map((b, bi) => {
-          const line = lineByUnit.get(b.unitId) ?? UNIT_LINES[0];
-          const continued = bi > 0 && blocks[bi - 1].unitId === b.unitId;
-          const showDivider = b.upcoming && !dividerShown && bi > 0;
-          if (showDivider) dividerShown = true;
-          if (b.upcoming) dividerShown = true;
-          return (
-            <div key={`${b.unitId}-${b.sheets[0].date}`}>
-              {showDivider && (
-                <div className="flex items-center gap-2 my-2.5">
-                  <div className="h-px flex-1 bg-primary/40" />
-                  <span className="text-[9px] font-bold text-primary uppercase tracking-widest">
-                    today
-                  </span>
-                  <div className="h-px flex-1 bg-primary/40" />
-                </div>
-              )}
-              {/* Unit segment header — one per unit stretch (skip when the
-                  TODAY split cut the same unit in two) */}
-              {!continued && (
-                <div className="flex items-center gap-2 mb-1.5 mt-1">
-                  <span className={cn('w-2 h-2 rounded-full shrink-0', line.dot)} />
-                  <span className="text-[11px] font-bold text-foreground truncate">
-                    {unitName(b.unitId)}
-                  </span>
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="text-[9.5px] text-muted-foreground shrink-0">
-                    {list.filter((s) => s.unitId === b.unitId).length} sheets
-                  </span>
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-1.5">
-                {b.sheets.map((s) => {
-                  const isPast = s.date < today;
-                  const d = fmtDayMonth(s.date);
-                  const chip = STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
-                  return (
-                    <button
-                      key={s.id as unknown as string}
-                      onClick={() => setPreviewId(s.id)}
-                      className={cn(
-                        'rounded-xl border border-border bg-card text-left overflow-hidden hover:bg-muted/40 active:scale-[0.98] transition-transform',
-                        isPast && 'opacity-55',
-                      )}
-                    >
-                      <div className={cn('h-1', line.rail)} />
-                      <div className="px-2 pt-1.5 pb-2">
-                        <div className="text-[9.5px] text-muted-foreground leading-none">
-                          {d.weekday}
-                        </div>
-                        <div className="text-xs font-bold text-foreground mt-0.5">
-                          {d.day}
-                        </div>
-                        <div className="flex items-center justify-between mt-1.5 gap-1">
-                          <span className="text-[9.5px] text-muted-foreground tabular-nums">
-                            {s.newCount + s.spiralCount} q
-                            {s.spiralCount > 0 && (
-                              <span className="text-amber-500"> ·{s.spiralCount}sp</span>
-                            )}
-                          </span>
-                          <span
-                            className={cn(
-                              'px-1 py-px rounded border text-[8px] font-semibold leading-tight shrink-0',
-                              chip.className,
-                            )}
-                          >
-                            {chip.label}
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+          {sheets === undefined && (
+            <div className="grid grid-cols-3 gap-1.5 animate-pulse">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="h-16 bg-muted rounded-xl" />
+              ))}
             </div>
-          );
-        })}
-      </div>
+          )}
+
+          {sheets !== undefined && list.length === 0 && (
+            <div className="rounded-xl border border-border bg-card p-4 text-center text-sm text-muted-foreground">
+              No sheets yet — press &ldquo;Run all term sheets&rdquo; to build
+              the whole term.
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {weeks.map((w) => {
+              const showToday =
+                !todayLineShown && w.sheets.some((s) => s.date >= today);
+              if (showToday) todayLineShown = true;
+              const showExam =
+                exam !== null && !examLineShown && w.weekStart > exam.date;
+              if (showExam) examLineShown = true;
+              const wd = fmtDayMonth(w.weekStart);
+              return (
+                <div key={w.weekStart}>
+                  {showExam && (
+                    <div className="flex items-center gap-2 my-3">
+                      <div className="h-px flex-1 bg-rose-500/50" />
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-500 uppercase tracking-widest">
+                        <Flag className="w-3 h-3" />
+                        exam · {exam && fmtWeekdayDate(exam.date)}
+                      </span>
+                      <div className="h-px flex-1 bg-rose-500/50" />
+                    </div>
+                  )}
+                  {showToday && (
+                    <div className="flex items-center gap-2 my-2.5">
+                      <div className="h-px flex-1 bg-primary/40" />
+                      <span className="text-[9px] font-bold text-primary uppercase tracking-widest">
+                        today
+                      </span>
+                      <div className="h-px flex-1 bg-primary/40" />
+                    </div>
+                  )}
+                  {/* Week header */}
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-[11px] font-bold text-foreground shrink-0">
+                      Week of {wd.day}
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="text-[9.5px] text-muted-foreground shrink-0">
+                      {w.sheets.length} sheet{w.sheets.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {w.sheets.map((s) => {
+                      const isPast = s.date < today;
+                      const afterExam = exam !== null && s.date > exam.date;
+                      const d = fmtDayMonth(s.date);
+                      const line = lineByUnit.get(s.unitId) ?? UNIT_LINES[0];
+                      const chip = STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
+                      return (
+                        <button
+                          key={s.id as unknown as string}
+                          onClick={() => setPreviewId(s.id)}
+                          className={cn(
+                            'rounded-xl border bg-card text-left overflow-hidden hover:bg-muted/40 active:scale-[0.98] transition-transform',
+                            afterExam ? 'border-rose-500/50' : 'border-border',
+                            isPast && 'opacity-55',
+                          )}
+                        >
+                          <div className={cn('h-1', line.rail)} />
+                          <div className="px-2 pt-1.5 pb-2">
+                            <div className="flex items-center justify-between gap-1">
+                              <div>
+                                <div className="text-[9.5px] text-muted-foreground leading-none">
+                                  {d.weekday}
+                                </div>
+                                <div className="text-xs font-bold text-foreground mt-0.5">
+                                  {d.day}
+                                </div>
+                              </div>
+                              {afterExam && (
+                                <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
+                                  after exam
+                                </span>
+                              )}
+                            </div>
+                            {/* The sheet's real mix: unit + new/review counts */}
+                            <div className="text-[9px] text-foreground/80 truncate mt-1">
+                              {unitName(s.unitId)}
+                            </div>
+                            <div className="flex items-center justify-between mt-1 gap-1">
+                              <span className="text-[9.5px] text-muted-foreground tabular-nums">
+                                {s.newCount}n
+                                {s.spiralCount > 0 && (
+                                  <span className="text-amber-500">
+                                    +{s.spiralCount}r
+                                  </span>
+                                )}
+                              </span>
+                              <span
+                                className={cn(
+                                  'px-1 py-px rounded border text-[8px] font-semibold leading-tight shrink-0',
+                                  chip.className,
+                                )}
+                              >
+                                {chip.label}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
-      {view === 'timeline' && previewIdx >= 0 && (
+      {previewIdx >= 0 && (
         <SheetPreviewDrawer
           sheetId={list[previewIdx].id}
           unitName={unitName}
