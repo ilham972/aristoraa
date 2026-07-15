@@ -88,22 +88,24 @@ get the fully-personal planner instead. UI: /groups/[id]/plan (redesigned
 Skeleton is CANCELLATION-AWARE (2026-07-15): dates whose representative
 slot has a sessionLogs `cancelled_by_tutor` row are skipped — the plan
 reflows past them and crystallize never writes onto a cancelled day.
-Tuning levers (2026-07-15, all on the /planner Calendar): per-group
-`groups.mainQuestionsPerSession` (setGroupMainQuestions, clamp 3–15);
-`resizePlanned` re-picks ONE planned sheet with a new count; leftover log
-`groupCarryOvers` (carryOverLeftover: last-N tail of a materialized sheet →
-target "main" = next crystallize serves them FIRST then stamps consumedAt,
-target "revision" = one row per member, prepended to their queue, consumed
-by the Sheets tab via consumeCarryRows after generating). skeletonInputs
-adds unconsumed main-carry to unit demand, so skeleton/calendar/examPlan
-all count re-teaching; deletePlanned un-consumes absorbed carries. The
-bookmark is NEVER un-seen — carries are an explicit queue on top.
-Units with ZERO bank questions get verdict "no-questions" (2026-07-15), never
-"done" — a book-entry gap must look like one everywhere (runway, Term,
-Calendar `unitsWithoutQuestions`, Sheets banner). Deleting an exercise now
-cascades to its crops (exercises.cleanupCropsForExercise: delete unreferenced
-/ unlink printed) — dangling linkedExerciseId made crops invisible to every
-ladder (52 stale dupes cleaned off prod via migrations:cleanupOrphanCrops).
+Tuning levers (2026-07-15, /planner Calendar): `mainQuestionsPerSession`
+(setGroupMainQuestions, 3–15); `resizePlanned` (one sheet, new count);
+leftover log `groupCarryOvers` (carryOverLeftover: sheet tail → "main" =
+next crystallize serves FIRST then consumedAt, or "revision" = per-member
+queue rows consumed via consumeCarryRows). skeletonInputs adds unconsumed
+carry to unit demand; deletePlanned un-consumes; bookmark never un-seen.
+Book-gap honesty (2026-07-15): ZERO-question units → verdict "no-questions"
+never "done" (shown on runway/Term/Calendar `unitsWithoutQuestions`/Sheets
+banner); crystallize returns exhausted/unplannedSessions. Deleting an
+exercise cascades to its crops (cleanupCropsForExercise: delete unreferenced
+/ unlink printed) — dangling linkedExerciseId hid crops from every ladder
+(52 dupes cleaned via migrations:cleanupOrphanCrops). STARTING POINT
+(2026-07-15): `groupPreTaughtUnits` marks units done BEFORE the app;
+loadGroupPlanState folds their questions into `seen` (skeleton/crystallize/
+spiral/capacity skip them; verdict "done" beats no-questions).
+`setGroupStartingPoint(groupId, throughUnitId|null)` = track-prefix
+reconcile, reversible. Pure bookmark, no sheet/point/memory effects. UI:
+`StartingPointButton` (group plan header + Term cards).
 
 ## Coverage forecast advisor (2026-07-14)
 `coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`

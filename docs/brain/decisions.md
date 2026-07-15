@@ -298,6 +298,17 @@ because Z.
   exhausted/unplannedSessions, Sheets tab banner names the next unit to
   enter. Also: deleting an exercise cascades to its crops (dangling
   linkedExerciseId = invisible questions; 52 stale dupes cleaned off prod).
+- **Group starting point = seen-set injection, not a stored bookmark field**
+  (2026-07-15). Cold-started groups (Terms 1–2 done before the app) restarted
+  the walk at unit 1. Chose a `groupPreTaughtUnits` marker table folded into
+  the DERIVED seen-set over a stored "currentUnit" pointer, because the whole
+  plan already keys off seen (skeleton, crystallize, spiral, capacity) — one
+  injection point makes every surface consistent for free, and stays
+  reversible. Boundary model (mark through unit N) over per-unit toggles: the
+  track is a teaching sequence, so "we start at N" means everything before N
+  is done; non-contiguous pre-teaching isn't worth the complexity. Explicitly
+  NOT a teaching record — no points/memory/revision, per-student surfaces
+  untouched (individual coverage forecast still shows the real gaps).
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

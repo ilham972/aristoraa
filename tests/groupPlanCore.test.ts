@@ -107,4 +107,23 @@ describe('buildGroupSkeleton', () => {
     expect(r.units[1].verdict).toBe('no-questions');
     expect(r.units[0].verdict).toBe('on-track');
   });
+
+  it('pre-taught units report done (even with no book) and the walk skips them', () => {
+    const r = buildGroupSkeleton({
+      sessionDates: dates(2),
+      units: [
+        // Marked "taught before the app": no book entered, but not a gap.
+        { unitId: 'U1', term: 3, unseenCount: 0, totalCount: 0, preTaught: true },
+        { unitId: 'U2', term: 3, unseenCount: 6, totalCount: 6 },
+      ],
+      mainQuestionsPerSession: 8,
+      spiralShare: 0.25,
+      examDateByTerm: { 3: '2026-12-01' },
+      anyPastUnitStarted: true,
+    });
+    expect(r.units[0].verdict).toBe('done');
+    expect(r.units[0].preTaught).toBe(true);
+    // The plan begins at U2 — the pre-taught unit never claims a session.
+    expect(r.sessions[0].parts[0].unitId).toBe('U2');
+  });
 });

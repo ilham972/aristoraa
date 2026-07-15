@@ -18,6 +18,10 @@ export type SkeletonUnitInput = {
   // for this unit was never entered — without it, an empty unit is
   // indistinguishable from a finished one and the planner lies "done".
   totalCount: number;
+  // Founder marked this unit "taught before the app" (groupPreTaughtUnits).
+  // Verdict is "done" even when the unit's book was never entered — a
+  // pre-app unit isn't a book-entry gap.
+  preTaught?: boolean;
 };
 
 export type SkeletonSessionPart = { unitId: string; newCount: number };
@@ -42,6 +46,7 @@ export type SkeletonUnitProjection = {
     | "no-exam"
     | "after-horizon"
     | "no-questions";
+  preTaught: boolean;
 };
 
 export function buildGroupSkeleton(args: {
@@ -96,9 +101,12 @@ export function buildGroupSkeleton(args: {
     const fin = finishDate.get(u.unitId) ?? null;
     const exam = u.term !== null ? (args.examDateByTerm[u.term] ?? null) : null;
     let verdict: SkeletonUnitProjection["verdict"];
+    // Pre-app units are done even when their book was never entered — a unit
+    // the group already covered isn't a book-entry gap to chase.
+    if (u.preTaught) verdict = "done";
     // No questions ever entered ≠ finished: the walk skips the unit exactly
     // like a done one, but the founder must see the book-entry gap.
-    if (u.totalCount <= 0) verdict = "no-questions";
+    else if (u.totalCount <= 0) verdict = "no-questions";
     else if (u.unseenCount <= 0) verdict = "done";
     else if (fin === null) verdict = exam === null ? "no-exam" : "after-horizon";
     else if (exam === null) verdict = "no-exam";
@@ -108,6 +116,7 @@ export function buildGroupSkeleton(args: {
       term: u.term,
       unseenCount: u.unseenCount,
       totalCount: u.totalCount,
+      preTaught: u.preTaught === true,
       projectedFinishDate: fin,
       examDate: exam,
       verdict,

@@ -30,6 +30,7 @@ import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { ALL_CURRICULUM_UNITS } from '@/lib/track-progress-args';
 import { UnitRunway } from '@/components/planner/unit-runway';
+import { StartingPointButton } from '@/components/planner/starting-point-dialog';
 import { VERDICT_CHIP, fmtWeekdayDate } from '@/components/planner/verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
@@ -169,30 +170,40 @@ export default function GroupPlanPage({
                 <b className="text-foreground">{unitName(plan.currentUnitId)}</b>
               </div>
             )}
-            <button
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const res = await crystallize({ groupId });
-                  if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
-                  else if (res.written === 0)
-                    toast.info('Nothing to crystallize — the window is already planned.');
-                  else
-                    toast.success(
-                      `Crystallized ${res.written} session sheet${res.written === 1 ? '' : 's'}`,
-                    );
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : 'Failed');
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              disabled={busy}
-              className="w-full mt-2 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Crystallize next {plan.crystallizeAheadDays} days
-            </button>
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const res = await crystallize({ groupId });
+                    if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
+                    else if (res.written === 0)
+                      toast.info('Nothing to crystallize — the window is already planned.');
+                    else
+                      toast.success(
+                        `Crystallized ${res.written} session sheet${res.written === 1 ? '' : 's'}`,
+                      );
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : 'Failed');
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                disabled={busy}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Crystallize next {plan.crystallizeAheadDays} days
+              </button>
+            </div>
+            <div className="mt-2">
+              <StartingPointButton
+                groupId={groupId}
+                units={plan.units}
+                unitName={unitName}
+                className="w-full justify-center"
+              />
+            </div>
           </div>
 
           {/* Unit runway — the one place units are listed */}

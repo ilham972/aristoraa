@@ -926,6 +926,21 @@ export default defineSchema({
     .index("by_group_date", ["groupId", "date"])
     .index("by_slot_date", ["slotId", "date"]),
 
+  // Group starting point (2026-07-15): units the group covered BEFORE the
+  // app existed — cold-started groups otherwise restart the term walk at
+  // track unit 1. One row per (group, unit). Purely a planning bookmark:
+  // loadGroupPlanState injects every ladder question of a marked unit into
+  // the group seen-set, so skeleton/crystallize/calendar/exam-capacity all
+  // skip it. No sheets, no points, no memory, no revision-queue effects;
+  // per-student surfaces (coverage forecast, personal planner) untouched.
+  // Reversible: deleting the row un-marks instantly.
+  groupPreTaughtUnits: defineTable({
+    groupId: v.id("groups"),
+    unitId: v.string(),
+    createdAt: v.number(),
+    createdByTeacherId: v.optional(v.id("teachers")),
+  }).index("by_group", ["groupId"]),
+
   // Leftover carry-overs (departments, 2026-07-15): questions from a
   // materialized group sheet the session didn't finish, re-routed by the
   // teacher AFTER class. target="main" (group-level, no studentId): the next

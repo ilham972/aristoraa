@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { ALL_CURRICULUM_UNITS } from '@/lib/track-progress-args';
 import { UnitRunway } from './unit-runway';
+import { StartingPointButton } from './starting-point-dialog';
 import { fmtShortDate, fmtWeekdayDate } from './verdict';
 
 export type PlannerGroupRow = {
@@ -150,32 +151,39 @@ export function GroupPlanCard({ row }: { row: PlannerGroupRow }) {
               current={plan.currentUnitId}
             />
           </div>
-          <button
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const res = await crystallize({ groupId: row.groupId });
-                if (res.status !== 'ok') toast.error(`${row.name}: ${res.status}`);
-                else if (res.written === 0)
-                  toast.info(`${row.name}: window already planned.`);
-                else toast.success(`${row.name}: ${res.written} sheet${res.written === 1 ? '' : 's'} crystallized`);
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : 'Failed');
-              } finally {
-                setBusy(false);
-              }
-            }}
-            disabled={busy}
-            className={cn(
-              'mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold disabled:opacity-50',
-              row.crystallizedAhead > 0
-                ? 'border border-border text-foreground hover:bg-muted'
-                : 'bg-primary text-primary-foreground',
-            )}
-          >
-            <Sparkles className="w-3 h-3" />
-            Crystallize next {plan.crystallizeAheadDays} days
-          </button>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const res = await crystallize({ groupId: row.groupId });
+                  if (res.status !== 'ok') toast.error(`${row.name}: ${res.status}`);
+                  else if (res.written === 0)
+                    toast.info(`${row.name}: window already planned.`);
+                  else toast.success(`${row.name}: ${res.written} sheet${res.written === 1 ? '' : 's'} crystallized`);
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'Failed');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy}
+              className={cn(
+                'flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold disabled:opacity-50',
+                row.crystallizedAhead > 0
+                  ? 'border border-border text-foreground hover:bg-muted'
+                  : 'bg-primary text-primary-foreground',
+              )}
+            >
+              <Sparkles className="w-3 h-3" />
+              Crystallize {plan.crystallizeAheadDays}d
+            </button>
+            <StartingPointButton
+              groupId={row.groupId}
+              units={plan.units}
+              unitName={unitName}
+            />
+          </div>
         </>
       )}
     </div>

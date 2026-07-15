@@ -335,6 +335,11 @@ type GroupPlanState = {
   sessions: Array<{ date: string; slotId: Id<"scheduleSlots"> }>;
   examDateByTerm: Record<number, string>;
   crystallized: Doc<"groupSheets">[];
+  // Units the founder marked "taught before the app" (groupPreTaughtUnits):
+  // every ladder question of these is folded into `seen`, so the walk,
+  // crystallize, spiral pool and capacity math all skip them. Kept as a set
+  // too so the verdict can read "done" even for a marked unit with no book.
+  preTaughtUnitIds: Set<string>;
   // Questions per Main session — the group's own override, else the default.
   mainSize: number;
   // Unconsumed "carry to next Main" leftovers (oldest first): the next
@@ -363,6 +368,24 @@ async function loadGroupPlanState(
   if (sessions.length === 0) return { status: "no-sessions" };
   const seen = await groupSeenSet(ctx, groupId, students);
   const ladders = await buildUnitLadders(ctx, track.orderedUnitIds);
+
+  // Pre-app starting point: fold every ladder question of a marked unit into
+  // the seen-set. From here the whole plan treats those units as covered.
+  const preTaughtUnitIds = new Set(
+    (
+      await ctx.db
+        .query("groupPreTaughtUnits")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .collect()
+    ).map((r) => r.unitId),
+  );
+  if (preTaughtUnitIds.size > 0) {
+    for (const l of ladders) {
+      if (preTaughtUnitIds.has(l.unitId)) {
+        for (const rung of l.ladder) seen.add(rung.qid);
+      }
+    }
+  }
 
   const examRows = await ctx.db
     .query("examCalendar")
@@ -409,6 +432,7 @@ async function loadGroupPlanState(
       sessions,
       examDateByTerm,
       crystallized,
+      preTaughtUnitIds,
       mainSize,
       mainCarry,
     },
@@ -436,6 +460,7 @@ function skeletonInputs(state: GroupPlanState): {
       l.ladder.filter((q) => !state.seen.has(q.qid)).length +
       (carryByUnit.get(l.unitId) ?? 0),
     totalCount: l.ladder.length + (carryByUnit.get(l.unitId) ?? 0),
+    preTaught: state.preTaughtUnitIds.has(l.unitId),
   }));
   let currentUnitIdx = units.findIndex((u) => u.unseenCount > 0);
   if (currentUnitIdx < 0) currentUnitIdx = units.length;
@@ -856,6 +881,65 @@ export const setGroupMainQuestions = mutation({
     const count = Math.min(15, Math.max(3, Math.round(args.count)));
     await ctx.db.patch(args.groupId, { mainQuestionsPerSession: count });
     return { count };
+  },
+});
+
+// Group starting point (2026-07-15): mark every track unit up to and
+// including `throughUnitId` as "taught before the app", clearing any marks
+// beyond it — one tap sets where a cold-started group actually begins.
+// `throughUnitId: null` clears every mark (start from the beginning). Pure
+// planning bookmark: loadGroupPlanState folds these units' questions into
+// the seen-set, so the whole group plan skips them; nothing touches sheets,
+// points, memory or per-student surfaces. Fully reversible.
+export const setGroupStartingPoint = mutation({
+  args: {
+    groupId: v.id("groups"),
+    throughUnitId: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+
+    const students = await groupMemberStudents(ctx, args.groupId);
+    const track = await resolveTrackForGroup(ctx, students);
+    if (!track)
+      throw new Error(
+        "This group has no track yet — assign tracks before setting a starting point.",
+      );
+
+    // Desired marked set = track units in order, up to and including the
+    // chosen one. null → nothing marked.
+    let desired: Set<string>;
+    if (args.throughUnitId === null) {
+      desired = new Set();
+    } else {
+      const idx = track.orderedUnitIds.indexOf(args.throughUnitId);
+      if (idx < 0)
+        throw new Error("That unit is not on this group's track.");
+      desired = new Set(track.orderedUnitIds.slice(0, idx + 1));
+    }
+
+    const existing = await ctx.db
+      .query("groupPreTaughtUnits")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const existingByUnit = new Map(existing.map((r) => [r.unitId, r]));
+    const now = Date.now();
+
+    for (const row of existing) {
+      if (!desired.has(row.unitId)) await ctx.db.delete(row._id);
+    }
+    for (const unitId of Array.from(desired)) {
+      if (existingByUnit.has(unitId)) continue;
+      await ctx.db.insert("groupPreTaughtUnits", {
+        groupId: args.groupId,
+        unitId,
+        createdAt: now,
+        createdByTeacherId: teacherId ?? undefined,
+      });
+    }
+    return { marked: desired.size };
   },
 });
 
