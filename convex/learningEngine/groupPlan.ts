@@ -1733,10 +1733,26 @@ export const groupTermCoverage = query({
       }),
     );
 
+    // One-tap "prior terms already covered": the last track unit whose term is
+    // BEFORE the viewed term. Marking through it (setGroupStartingPoint) makes
+    // the GROUP prebuild start at this term instead of restarting at unit 1 —
+    // the fix for a cold-started group whose plan still shows Term 1.
+    const priorUnits = state.track.orderedUnitIds.filter((uid) => {
+      const t = termFromUnitId(uid);
+      return t !== null && t < resolvedTerm;
+    });
+    const priorTermsThroughUnitId =
+      priorUnits.length > 0 ? priorUnits[priorUnits.length - 1] : null;
+    const priorTermsAllPreTaught =
+      priorUnits.length > 0 &&
+      priorUnits.every((uid) => state.preTaughtUnitIds.has(uid));
+
     return {
       status: "ok" as const,
       term: resolvedTerm,
       availableTerms,
+      priorTermsThroughUnitId,
+      priorTermsAllPreTaught,
       students: state.students.map((s) => ({ studentId: s._id, name: s.name })),
       units,
     };

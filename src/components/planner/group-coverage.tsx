@@ -63,6 +63,10 @@ export function GroupCoverage({ groupId }: { groupId: Id<'groups'> }) {
     ...(term !== null ? { term } : {}),
   });
   const setDone = useMutation(api.learningEngine.groupPlan.setStudentUnitDone);
+  const setStartingPoint = useMutation(
+    api.learningEngine.groupPlan.setGroupStartingPoint,
+  );
+  const [markingPrior, setMarkingPrior] = useState(false);
   const unitName = useUnitName();
 
   const [openUnit, setOpenUnit] = useState<string | null>(null);
@@ -83,6 +87,22 @@ export function GroupCoverage({ groupId }: { groupId: Id<'groups'> }) {
       await setDone({ groupId, studentId, unitId, done });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
+    }
+  };
+
+  const markPriorTermsTaught = async (throughUnitId: string | null) => {
+    setMarkingPrior(true);
+    try {
+      await setStartingPoint({ groupId, throughUnitId });
+      toast.success(
+        throughUnitId
+          ? 'Earlier terms marked as taught — the plan now starts here.'
+          : 'Cleared — the plan starts from the beginning again.',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update');
+    } finally {
+      setMarkingPrior(false);
     }
   };
 
@@ -110,6 +130,46 @@ export function GroupCoverage({ groupId }: { groupId: Id<'groups'> }) {
 
   return (
     <div>
+      {/* One-tap "earlier terms already covered": makes the GROUP prebuild
+          start at this term instead of restarting at Term 1. */}
+      {coverage.priorTermsThroughUnitId &&
+        (coverage.priorTermsAllPreTaught ? (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 mb-3 flex items-center gap-2 text-[11px]">
+            <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <span className="flex-1 text-foreground">
+              Earlier terms marked as taught — the group builds from Term{' '}
+              {activeTerm}.
+            </span>
+            <button
+              onClick={() => markPriorTermsTaught(null)}
+              disabled={markingPrior}
+              className="shrink-0 text-muted-foreground underline disabled:opacity-50"
+            >
+              Undo
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 mb-3">
+            <div className="text-[11px] text-foreground leading-snug mb-2">
+              <span className="font-semibold text-amber-600 dark:text-amber-400">
+                This group&rsquo;s plan still starts at Term 1.
+              </span>{' '}
+              If you already taught the earlier terms in class, mark them done so
+              the whole-term build starts at Term {activeTerm}.
+            </div>
+            <button
+              onClick={() =>
+                markPriorTermsTaught(coverage.priorTermsThroughUnitId)
+              }
+              disabled={markingPrior}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-[11px] font-semibold disabled:opacity-50"
+            >
+              <Check className="w-3.5 h-3.5" />
+              Mark earlier terms as taught
+            </button>
+          </div>
+        ))}
+
       {/* Term chips */}
       <div className="flex items-center gap-1.5 mb-3">
         <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-0.5">
