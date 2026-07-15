@@ -941,6 +941,23 @@ export default defineSchema({
     createdByTeacherId: v.optional(v.id("teachers")),
   }).index("by_group", ["groupId"]),
 
+  // Per-student per-unit "did / didn't do" marks (2026-07-16, Term Planning
+  // Cockpit). Existence of a row = that STUDENT has covered that unit (before
+  // or outside the app) — the founder hand-corrects each student's coverage,
+  // late joiners especially. Drives the per-student catch-up list + progress;
+  // the GROUP main sheet stays identical for everyone (a mid-term joiner
+  // catches up missed units through Revision, not through a different Main
+  // sheet). One row per (group, student, unit); deleting un-marks instantly.
+  groupStudentUnitProgress: defineTable({
+    groupId: v.id("groups"),
+    studentId: v.id("students"),
+    unitId: v.string(),
+    createdAt: v.number(),
+    createdByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_group_student_unit", ["groupId", "studentId", "unitId"]),
+
   // Leftover carry-overs (departments, 2026-07-15): questions from a
   // materialized group sheet the session didn't finish, re-routed by the
   // teacher AFTER class. target="main" (group-level, no studentId): the next

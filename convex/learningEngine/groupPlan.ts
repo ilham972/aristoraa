@@ -1595,6 +1595,194 @@ export const groupTermCalendar = query({
 
 // Every group sheet ever written, oldest first — the Planner Sheets tab's
 // term view (past rows dimmed, planned rows previewable/re-pickable).
+// ── Term Coverage Cockpit (2026-07-16) ────────────────────────────────────
+// The founder's "see the whole term" view. For one group + one term: every
+// track unit of that term with its full question ladder (each rung a tiny
+// box), the pick STATE + PROVENANCE of every question (which group-sheet date
+// and status it landed on), and the per-student "done" marks per unit. Read
+// side of the cockpit — reuses loadGroupPlanState so the ladders, seen-set and
+// pre-taught folding match the planner exactly (no second source of truth).
+export const groupTermCoverage = query({
+  args: { groupId: v.id("groups"), term: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const todayYmd = ymdFromMs(Date.now());
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+
+    const availableTerms = Array.from(
+      new Set(
+        state.ladders
+          .map((l) => termFromUnitId(l.unitId))
+          .filter((t): t is number => t !== null),
+      ),
+    ).sort((a, b) => a - b);
+
+    // Default the view to the term we're teaching TOWARD: the nearest upcoming
+    // exam's term. Falls back to the last term the track has. Explicit `term`
+    // (the founder tapped a chip) always wins.
+    const nearestExamTerm = Object.entries(state.examDateByTerm).sort((a, b) =>
+      a[1].localeCompare(b[1]),
+    )[0]?.[0];
+    const resolvedTerm =
+      args.term ??
+      (nearestExamTerm !== undefined
+        ? Number(nearestExamTerm)
+        : (availableTerms[availableTerms.length - 1] ?? 1));
+
+    // Provenance map: qid → the group sheet it sits on. ALL sheets (past +
+    // future), first occurrence wins. new vs spiral tells the founder whether
+    // it was taught as fresh material or folded back in as review.
+    const allSheets = await ctx.db
+      .query("groupSheets")
+      .withIndex("by_group_date", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const sheetByQid = new Map<
+      string,
+      { date: string; status: string; section: "new" | "spiral" }
+    >();
+    for (const row of allSheets) {
+      for (const qid of row.newQuestionIds) {
+        const k = qid as unknown as string;
+        if (!sheetByQid.has(k))
+          sheetByQid.set(k, { date: row.date, status: row.status, section: "new" });
+      }
+      for (const qid of row.spiralQuestionIds) {
+        const k = qid as unknown as string;
+        if (!sheetByQid.has(k))
+          sheetByQid.set(k, {
+            date: row.date,
+            status: row.status,
+            section: "spiral",
+          });
+      }
+    }
+
+    // Per-student per-unit "done" marks, grouped by unit.
+    const doneRows = await ctx.db
+      .query("groupStudentUnitProgress")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const doneByUnit = new Map<string, Set<string>>();
+    for (const r of doneRows) {
+      const set = doneByUnit.get(r.unitId) ?? new Set<string>();
+      set.add(r.studentId as unknown as string);
+      doneByUnit.set(r.unitId, set);
+    }
+
+    const termLadders = state.ladders.filter(
+      (l) => termFromUnitId(l.unitId) === resolvedTerm,
+    );
+
+    const units = await Promise.all(
+      termLadders.map(async (l) => {
+        const preTaught = state.preTaughtUnitIds.has(l.unitId);
+        const qDocs = await Promise.all(
+          l.ladder.map((r) =>
+            ctx.db.get(r.qid as unknown as Id<"questionBank">),
+          ),
+        );
+        const questions = l.ladder.map((r, i) => {
+          const q = qDocs[i];
+          const k = r.qid;
+          const prov = sheetByQid.get(k);
+          let questionState: "done" | "planned" | "unseen";
+          let sheetDate: string | null = null;
+          let sheetStatus: string | null = null;
+          if (prov) {
+            sheetDate = prov.date;
+            sheetStatus = prov.status;
+            // materialized = actually taught; planned/delegated = future claim.
+            questionState = prov.status === "materialized" ? "done" : "planned";
+          } else if (preTaught || state.seen.has(k)) {
+            // Pre-app starting point, or a member did it in per-student mode:
+            // covered, but no group-sheet date to point at.
+            questionState = "done";
+          } else {
+            questionState = "unseen";
+          }
+          return {
+            questionId: r.qid as unknown as Id<"questionBank">,
+            label: q?.questionNumberInPaper ?? q?.linkedQuestionKey ?? null,
+            difficulty: r.difficulty,
+            pastPaper: r.pastPaper,
+            section: prov?.section ?? null,
+            state: questionState,
+            sheetDate,
+            sheetStatus,
+          };
+        });
+        const doneCount = questions.filter((q) => q.state === "done").length;
+        const plannedCount = questions.filter(
+          (q) => q.state === "planned",
+        ).length;
+        return {
+          unitId: l.unitId,
+          term: resolvedTerm,
+          totalQuestions: questions.length,
+          doneCount,
+          plannedCount,
+          unseenCount: questions.length - doneCount - plannedCount,
+          hasBook: questions.length > 0,
+          preTaught,
+          studentsDone: Array.from(doneByUnit.get(l.unitId) ?? []),
+          questions,
+        };
+      }),
+    );
+
+    return {
+      status: "ok" as const,
+      term: resolvedTerm,
+      availableTerms,
+      students: state.students.map((s) => ({ studentId: s._id, name: s.name })),
+      units,
+    };
+  },
+});
+
+// Toggle a student's "did / didn't do" mark for one unit (Term Coverage
+// Cockpit). Existence = done. Pure per-student bookmark: no sheet/point/memory
+// effects — it drives the catch-up list and each student's progress.
+export const setStudentUnitDone = mutation({
+  args: {
+    groupId: v.id("groups"),
+    studentId: v.id("students"),
+    unitId: v.string(),
+    done: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const existing = await ctx.db
+      .query("groupStudentUnitProgress")
+      .withIndex("by_group_student_unit", (q) =>
+        q
+          .eq("groupId", args.groupId)
+          .eq("studentId", args.studentId)
+          .eq("unitId", args.unitId),
+      )
+      .collect();
+    if (args.done) {
+      if (existing.length === 0) {
+        const teacherId = await resolveTeacherId(ctx);
+        await ctx.db.insert("groupStudentUnitProgress", {
+          groupId: args.groupId,
+          studentId: args.studentId,
+          unitId: args.unitId,
+          createdAt: Date.now(),
+          ...(teacherId ? { createdByTeacherId: teacherId } : {}),
+        });
+      }
+    } else {
+      for (const r of existing) await ctx.db.delete(r._id);
+    }
+    return { ok: true as const };
+  },
+});
+
 export const groupSheetHistory = query({
   args: { groupId: v.id("groups") },
   handler: async (ctx, args) => {

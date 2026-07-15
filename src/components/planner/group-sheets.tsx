@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
+import { GroupCoverage } from './group-coverage';
 import { fmtWeekdayDate } from './verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
@@ -123,6 +124,7 @@ export function GroupSheets({ grade }: { grade: number }) {
   const unitName = useUnitName();
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
+  const [view, setView] = useState<'coverage' | 'timeline'>('coverage');
 
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
@@ -264,6 +266,26 @@ export function GroupSheets({ grade }: { grade: number }) {
         </button>
       </div>
 
+      {/* Coverage / Timeline view toggle */}
+      {groupId && (
+        <div className="flex gap-1 p-0.5 mb-3 rounded-lg bg-muted/60 w-fit">
+          {(['coverage', 'timeline'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={cn(
+                'px-3 py-1 rounded-md text-[11px] font-semibold capitalize',
+                view === v
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground',
+              )}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Book-coverage gap: the honest "why the term stops early" banner */}
       {bookGap && (
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 mb-3 flex gap-2.5">
@@ -279,7 +301,9 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {sheets === undefined && groupId && (
+      {view === 'coverage' && groupId && <GroupCoverage groupId={groupId} />}
+
+      {view === 'timeline' && sheets === undefined && groupId && (
         <div className="grid grid-cols-3 gap-1.5 animate-pulse">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <div key={i} className="h-16 bg-muted rounded-xl" />
@@ -287,7 +311,7 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {sheets !== undefined && list.length === 0 && (
+      {view === 'timeline' && sheets !== undefined && list.length === 0 && (
         <div className="rounded-xl border border-border bg-card p-4 text-center text-sm text-muted-foreground">
           No sheets yet — press &ldquo;Run all term sheets&rdquo; to build the
           whole term.
@@ -295,6 +319,7 @@ export function GroupSheets({ grade }: { grade: number }) {
       )}
 
       {/* The term as unit line-segments */}
+      {view === 'timeline' && (
       <div className="space-y-2">
         {blocks.map((b, bi) => {
           const line = lineByUnit.get(b.unitId) ?? UNIT_LINES[0];
@@ -374,8 +399,9 @@ export function GroupSheets({ grade }: { grade: number }) {
           );
         })}
       </div>
+      )}
 
-      {previewIdx >= 0 && (
+      {view === 'timeline' && previewIdx >= 0 && (
         <SheetPreviewDrawer
           sheetId={list[previewIdx].id}
           unitName={unitName}
