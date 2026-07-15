@@ -12,8 +12,8 @@ describe('buildGroupSkeleton', () => {
     const r = buildGroupSkeleton({
       sessionDates: dates(4),
       units: [
-        { unitId: 'U1', term: 3, unseenCount: 10 },
-        { unitId: 'U2', term: 3, unseenCount: 6 },
+        { unitId: 'U1', term: 3, unseenCount: 10, totalCount: 10 },
+        { unitId: 'U2', term: 3, unseenCount: 6, totalCount: 6 },
       ],
       mainQuestionsPerSession: 8,
       spiralShare: 0.25,
@@ -35,7 +35,7 @@ describe('buildGroupSkeleton', () => {
   it('marks units that miss their exam date', () => {
     const r = buildGroupSkeleton({
       sessionDates: dates(3), // capacity 18 < 30 needed
-      units: [{ unitId: 'U1', term: 3, unseenCount: 30 }],
+      units: [{ unitId: 'U1', term: 3, unseenCount: 30, totalCount: 30 }],
       mainQuestionsPerSession: 6,
       spiralShare: 0,
       examDateByTerm: { 3: '2026-08-02' },
@@ -49,7 +49,7 @@ describe('buildGroupSkeleton', () => {
   it('wont-finish when projected finish lands after the exam', () => {
     const r = buildGroupSkeleton({
       sessionDates: dates(5), // finishes on 3rd session
-      units: [{ unitId: 'U1', term: 3, unseenCount: 18 }],
+      units: [{ unitId: 'U1', term: 3, unseenCount: 18, totalCount: 18 }],
       mainQuestionsPerSession: 6,
       spiralShare: 0,
       examDateByTerm: { 3: '2026-08-02' }, // before 3rd session (Aug 5)
@@ -61,7 +61,7 @@ describe('buildGroupSkeleton', () => {
   it('reserves spiral slots once a past unit exists', () => {
     const r = buildGroupSkeleton({
       sessionDates: dates(2),
-      units: [{ unitId: 'U2', term: 3, unseenCount: 20 }],
+      units: [{ unitId: 'U2', term: 3, unseenCount: 20, totalCount: 20 }],
       mainQuestionsPerSession: 8,
       spiralShare: 0.25,
       examDateByTerm: {},
@@ -76,8 +76,8 @@ describe('buildGroupSkeleton', () => {
     const r = buildGroupSkeleton({
       sessionDates: dates(2),
       units: [
-        { unitId: 'U1', term: 3, unseenCount: 0 },
-        { unitId: 'U2', term: 3, unseenCount: 4 },
+        { unitId: 'U1', term: 3, unseenCount: 0, totalCount: 12 },
+        { unitId: 'U2', term: 3, unseenCount: 4, totalCount: 12 },
       ],
       mainQuestionsPerSession: 8,
       spiralShare: 0.25,
@@ -86,5 +86,25 @@ describe('buildGroupSkeleton', () => {
     });
     expect(r.units[0].verdict).toBe('done');
     expect(r.sessions[0].parts[0].unitId).toBe('U2');
+  });
+
+  it('units with no questions in the bank report no-questions, never done', () => {
+    const r = buildGroupSkeleton({
+      sessionDates: dates(3),
+      units: [
+        { unitId: 'U1', term: 3, unseenCount: 4, totalCount: 4 },
+        { unitId: 'U2', term: 3, unseenCount: 0, totalCount: 0 }, // book not entered
+        { unitId: 'U3', term: 3, unseenCount: 6, totalCount: 6 },
+      ],
+      mainQuestionsPerSession: 8,
+      spiralShare: 0,
+      examDateByTerm: { 3: '2026-12-01' },
+      anyPastUnitStarted: false,
+    });
+    // The walk skips the empty unit and continues into U3…
+    expect(r.sessions[0].parts.map((p) => p.unitId)).toEqual(['U1', 'U3']);
+    // …but the projection says the truth: no questions, not done.
+    expect(r.units[1].verdict).toBe('no-questions');
+    expect(r.units[0].verdict).toBe('on-track');
   });
 });

@@ -14,6 +14,10 @@ export type SkeletonUnitInput = {
   unitId: string;
   term: number | null;
   unseenCount: number; // unseen-for-the-GROUP questions remaining
+  // TOTAL questions the unit's ladder holds (seen or not). 0 means the book
+  // for this unit was never entered — without it, an empty unit is
+  // indistinguishable from a finished one and the planner lies "done".
+  totalCount: number;
 };
 
 export type SkeletonSessionPart = { unitId: string; newCount: number };
@@ -28,9 +32,16 @@ export type SkeletonUnitProjection = {
   unitId: string;
   term: number | null;
   unseenCount: number;
+  totalCount: number;
   projectedFinishDate: string | null; // null → doesn't finish within the horizon
   examDate: string | null;
-  verdict: "done" | "on-track" | "wont-finish" | "no-exam" | "after-horizon";
+  verdict:
+    | "done"
+    | "on-track"
+    | "wont-finish"
+    | "no-exam"
+    | "after-horizon"
+    | "no-questions";
 };
 
 export function buildGroupSkeleton(args: {
@@ -85,7 +96,10 @@ export function buildGroupSkeleton(args: {
     const fin = finishDate.get(u.unitId) ?? null;
     const exam = u.term !== null ? (args.examDateByTerm[u.term] ?? null) : null;
     let verdict: SkeletonUnitProjection["verdict"];
-    if (u.unseenCount <= 0) verdict = "done";
+    // No questions ever entered ≠ finished: the walk skips the unit exactly
+    // like a done one, but the founder must see the book-entry gap.
+    if (u.totalCount <= 0) verdict = "no-questions";
+    else if (u.unseenCount <= 0) verdict = "done";
     else if (fin === null) verdict = exam === null ? "no-exam" : "after-horizon";
     else if (exam === null) verdict = "no-exam";
     else verdict = fin <= exam ? "on-track" : "wont-finish";
@@ -93,6 +107,7 @@ export function buildGroupSkeleton(args: {
       unitId: u.unitId,
       term: u.term,
       unseenCount: u.unseenCount,
+      totalCount: u.totalCount,
       projectedFinishDate: fin,
       examDate: exam,
       verdict,

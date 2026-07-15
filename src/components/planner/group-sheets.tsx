@@ -7,13 +7,23 @@
 //   re-pickable until printed).
 //   Re-plan future — after a Lesson-Builder reorder: drop every future
 //   still-planned row and rebuild it from the fresh book order.
-//   The list — the whole term chronologically (past dimmed, today marked);
-//   tap a sheet to preview its real question crops one by one, with ‹ ›
-//   to walk sheet-by-sheet through the term.
+//   The grid — the term as a transit map (2026-07-15 redesign): sheets are
+//   date cards in a 3-across grid, grouped into unit "line segments" with a
+//   colored rail per unit, TODAY as the you-are-here divider. A term stuck
+//   on one unit is visible at a glance — and when the question bank runs
+//   dry (book entry hasn't reached later units) an amber banner says so
+//   instead of the old silent stop.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
-import { ChevronLeft, ChevronRight, RefreshCw, Sparkles, X } from 'lucide-react';
+import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
@@ -37,10 +47,41 @@ const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   },
 };
 
+// Transit-line palette: each unit that appears in the term gets the next
+// color, in order of first appearance. Static class strings so Tailwind
+// keeps them.
+const UNIT_LINES = [
+  { rail: 'bg-teal-400', dot: 'bg-teal-400', text: 'text-teal-400' },
+  { rail: 'bg-sky-400', dot: 'bg-sky-400', text: 'text-sky-400' },
+  { rail: 'bg-violet-400', dot: 'bg-violet-400', text: 'text-violet-400' },
+  { rail: 'bg-amber-400', dot: 'bg-amber-400', text: 'text-amber-400' },
+  { rail: 'bg-rose-400', dot: 'bg-rose-400', text: 'text-rose-400' },
+  { rail: 'bg-lime-400', dot: 'bg-lime-400', text: 'text-lime-400' },
+  { rail: 'bg-orange-400', dot: 'bg-orange-400', text: 'text-orange-400' },
+  { rail: 'bg-fuchsia-400', dot: 'bg-fuchsia-400', text: 'text-fuchsia-400' },
+];
+
 function todayYmd(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+
+function fmtDayMonth(ymd: string): { weekday: string; day: string } {
+  const d = new Date(`${ymd}T00:00:00`);
+  return {
+    weekday: d.toLocaleDateString('en-US', { weekday: 'short' }),
+    day: d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+  };
+}
+
+type SheetRow = {
+  id: Id<'groupSheets'>;
+  date: string;
+  unitId: string;
+  newCount: number;
+  spiralCount: number;
+  status: string;
+};
 
 export function GroupSheets({ grade }: { grade: number }) {
   const groups = useCachedQuery(api.learningEngine.plannerBoard.plannerGroups, {});
@@ -69,6 +110,12 @@ export function GroupSheets({ grade }: { grade: number }) {
     api.learningEngine.groupPlan.groupSheetHistory,
     groupId ? { groupId } : 'skip',
   );
+  // The lesson plan powers the book-coverage banner: which track units have
+  // no questions in the bank yet (the reason a "full term" run stops early).
+  const lessonPlan = useCachedQuery(
+    api.learningEngine.groupPlan.groupLessonPlan,
+    groupId ? { groupId } : 'skip',
+  );
   const crystallize = useMutation(api.learningEngine.groupPlan.crystallizeUpcoming);
   const deleteFuturePlanned = useMutation(
     api.learningEngine.groupPlan.deleteFuturePlanned,
@@ -78,8 +125,50 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
 
   const today = todayYmd();
-  const list = sheets ?? [];
+  const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
   const previewIdx = previewId ? list.findIndex((s) => s.id === previewId) : -1;
+
+  // Unit → line color, in order of first appearance in the term.
+  const lineByUnit = useMemo(() => {
+    const m = new Map<string, (typeof UNIT_LINES)[number]>();
+    for (const s of list) {
+      if (!m.has(s.unitId)) m.set(s.unitId, UNIT_LINES[m.size % UNIT_LINES.length]);
+    }
+    return m;
+  }, [list]);
+
+  // Blocks: consecutive sheets of the same unit, additionally split at the
+  // past→upcoming boundary so the TODAY divider can sit between blocks.
+  const blocks = useMemo(() => {
+    const out: Array<{ unitId: string; sheets: SheetRow[]; upcoming: boolean }> = [];
+    for (const s of list) {
+      const upcoming = s.date >= today;
+      const last = out[out.length - 1];
+      if (!last || last.unitId !== s.unitId || last.upcoming !== upcoming) {
+        out.push({ unitId: s.unitId, sheets: [s], upcoming });
+      } else {
+        last.sheets.push(s);
+      }
+    }
+    return out;
+  }, [list, today]);
+
+  // Book-coverage gap, from the live skeleton: units whose ladder is empty.
+  const bookGap = useMemo(() => {
+    if (!lessonPlan || lessonPlan.status !== 'ok' || !lessonPlan.units) return null;
+    const units = lessonPlan.units as Array<{
+      unitId: string;
+      verdict: string;
+      totalCount?: number;
+    }>;
+    const empty = units.filter((u) => u.verdict === 'no-questions');
+    if (empty.length === 0) return null;
+    return {
+      emptyCount: empty.length,
+      totalUnits: units.length,
+      nextEmpty: empty[0].unitId,
+    };
+  }, [lessonPlan]);
 
   const runAll = async () => {
     if (!groupId) return;
@@ -87,6 +176,11 @@ export function GroupSheets({ grade }: { grade: number }) {
     try {
       const res = await crystallize({ groupId, daysAhead: 180 });
       if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
+      else if (res.exhausted)
+        toast.warning(
+          `Built ${res.written} sheets, then the question bank ran dry — ${res.unplannedSessions} sessions have nothing left to plan. Enter more of the book to continue.`,
+          { duration: 8000 },
+        );
       else if (res.written === 0)
         toast.info('Every session is already planned — the term is fully built.');
       else toast.success(`Built ${res.written} sheets — the whole term is planned.`);
@@ -126,6 +220,8 @@ export function GroupSheets({ grade }: { grade: number }) {
       </div>
     );
   }
+
+  let dividerShown = false;
 
   return (
     <>
@@ -168,10 +264,25 @@ export function GroupSheets({ grade }: { grade: number }) {
         </button>
       </div>
 
+      {/* Book-coverage gap: the honest "why the term stops early" banner */}
+      {bookGap && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 mb-3 flex gap-2.5">
+          <BookOpen className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <div className="text-[11px] leading-snug text-foreground">
+            <span className="font-semibold text-amber-500">
+              {bookGap.emptyCount} of {bookGap.totalUnits} track units have no
+              questions yet.
+            </span>{' '}
+            Sheets stop when the entered book runs out — next unit needing book
+            entry: <span className="font-semibold">{unitName(bookGap.nextEmpty)}</span>.
+          </div>
+        </div>
+      )}
+
       {sheets === undefined && groupId && (
-        <div className="space-y-2 animate-pulse">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-12 bg-muted rounded-xl" />
+        <div className="grid grid-cols-3 gap-1.5 animate-pulse">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="h-16 bg-muted rounded-xl" />
           ))}
         </div>
       )}
@@ -183,46 +294,82 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {/* The term, sheet by sheet */}
-      <div className="space-y-1.5">
-        {list.map((s, i) => {
-          const chip = STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
-          const isPast = s.date < today;
-          const firstUpcoming = !isPast && (i === 0 || list[i - 1].date < today);
+      {/* The term as unit line-segments */}
+      <div className="space-y-2">
+        {blocks.map((b, bi) => {
+          const line = lineByUnit.get(b.unitId) ?? UNIT_LINES[0];
+          const continued = bi > 0 && blocks[bi - 1].unitId === b.unitId;
+          const showDivider = b.upcoming && !dividerShown && bi > 0;
+          if (showDivider) dividerShown = true;
+          if (b.upcoming) dividerShown = true;
           return (
-            <div key={s.id as unknown as string}>
-              {firstUpcoming && i > 0 && (
-                <div className="flex items-center gap-2 my-2">
+            <div key={`${b.unitId}-${b.sheets[0].date}`}>
+              {showDivider && (
+                <div className="flex items-center gap-2 my-2.5">
                   <div className="h-px flex-1 bg-primary/40" />
-                  <span className="text-[9px] font-bold text-primary uppercase">today</span>
+                  <span className="text-[9px] font-bold text-primary uppercase tracking-widest">
+                    today
+                  </span>
                   <div className="h-px flex-1 bg-primary/40" />
                 </div>
               )}
-              <button
-                onClick={() => setPreviewId(s.id)}
-                className={cn(
-                  'w-full rounded-xl border border-border bg-card px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-muted/40',
-                  isPast && 'opacity-55',
-                )}
-              >
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-foreground">
-                    {fmtWeekdayDate(s.date)}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground truncate">
-                    {unitName(s.unitId)} · {s.newCount} new
-                    {s.spiralCount > 0 && <> + {s.spiralCount} spiral</>}
-                  </div>
+              {/* Unit segment header — one per unit stretch (skip when the
+                  TODAY split cut the same unit in two) */}
+              {!continued && (
+                <div className="flex items-center gap-2 mb-1.5 mt-1">
+                  <span className={cn('w-2 h-2 rounded-full shrink-0', line.dot)} />
+                  <span className="text-[11px] font-bold text-foreground truncate">
+                    {unitName(b.unitId)}
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="text-[9.5px] text-muted-foreground shrink-0">
+                    {list.filter((s) => s.unitId === b.unitId).length} sheets
+                  </span>
                 </div>
-                <span
-                  className={cn(
-                    'shrink-0 px-1.5 py-0.5 rounded-md border text-[9px] font-semibold',
-                    chip.className,
-                  )}
-                >
-                  {chip.label}
-                </span>
-              </button>
+              )}
+              <div className="grid grid-cols-3 gap-1.5">
+                {b.sheets.map((s) => {
+                  const isPast = s.date < today;
+                  const d = fmtDayMonth(s.date);
+                  const chip = STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
+                  return (
+                    <button
+                      key={s.id as unknown as string}
+                      onClick={() => setPreviewId(s.id)}
+                      className={cn(
+                        'rounded-xl border border-border bg-card text-left overflow-hidden hover:bg-muted/40 active:scale-[0.98] transition-transform',
+                        isPast && 'opacity-55',
+                      )}
+                    >
+                      <div className={cn('h-1', line.rail)} />
+                      <div className="px-2 pt-1.5 pb-2">
+                        <div className="text-[9.5px] text-muted-foreground leading-none">
+                          {d.weekday}
+                        </div>
+                        <div className="text-xs font-bold text-foreground mt-0.5">
+                          {d.day}
+                        </div>
+                        <div className="flex items-center justify-between mt-1.5 gap-1">
+                          <span className="text-[9.5px] text-muted-foreground tabular-nums">
+                            {s.newCount + s.spiralCount} q
+                            {s.spiralCount > 0 && (
+                              <span className="text-amber-500"> ·{s.spiralCount}sp</span>
+                            )}
+                          </span>
+                          <span
+                            className={cn(
+                              'px-1 py-px rounded border text-[8px] font-semibold leading-tight shrink-0',
+                              chip.className,
+                            )}
+                          >
+                            {chip.label}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           );
         })}

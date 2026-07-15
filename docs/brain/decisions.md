@@ -289,6 +289,15 @@ because Z.
   re-pickable; taught/delegated rows never touched). Calendar stays the
   live view; skeleton is cancellation-aware (sessionLogs cancelled_by_tutor
   skips the date, plan reflows). Delegation available from both surfaces.
+- **A book-entry gap must LOOK like a gap, never "done"** (2026-07-15,
+  founder bug report "term sheets only cover two units"): root cause was
+  data, not the walk — only 2 of 25 G11 track units had any cropped
+  questions, and the planner showed empty units as done + toasted "whole
+  term planned" when the bank ran dry. Ruling: skeleton verdict
+  "no-questions" for totalCount=0 units, crystallize returns
+  exhausted/unplannedSessions, Sheets tab banner names the next unit to
+  enter. Also: deleting an exercise cascades to its crops (dangling
+  linkedExerciseId = invisible questions; 52 stale dupes cleaned off prod).
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

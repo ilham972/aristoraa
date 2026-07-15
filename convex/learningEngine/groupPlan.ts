@@ -435,6 +435,7 @@ function skeletonInputs(state: GroupPlanState): {
     unseenCount:
       l.ladder.filter((q) => !state.seen.has(q.qid)).length +
       (carryByUnit.get(l.unitId) ?? 0),
+    totalCount: l.ladder.length + (carryByUnit.get(l.unitId) ?? 0),
   }));
   let currentUnitIdx = units.findIndex((u) => u.unseenCount > 0);
   if (currentUnitIdx < 0) currentUnitIdx = units.length;
@@ -656,7 +657,13 @@ export const crystallizeUpcoming = mutation({
     const targets = state.sessions.filter(
       (s) => s.date <= lastYmd && !have.has(s.date),
     );
-    if (targets.length === 0) return { status: "ok" as const, written: 0 };
+    if (targets.length === 0)
+      return {
+        status: "ok" as const,
+        written: 0,
+        exhausted: false,
+        unplannedSessions: 0,
+      };
 
     const { spiralPool, newQueue, carryItems } = await buildPickQueues(
       ctx,
@@ -732,7 +739,20 @@ export const crystallizeUpcoming = mutation({
         covered += n;
       }
     }
-    return { status: "ok" as const, written };
+    // The founder must know when the run stopped because the QUESTION BANK
+    // ran dry (book entry hasn't reached the later units) rather than
+    // because the term is fully planned — the old toast lied "whole term
+    // planned" in exactly that case (2026-07-15 bug).
+    const exhausted =
+      written < targets.length &&
+      newCursor >= newQueue.length &&
+      spiralCursor >= spiralPool.length;
+    return {
+      status: "ok" as const,
+      written,
+      exhausted,
+      unplannedSessions: targets.length - written,
+    };
   },
 });
 
@@ -1427,9 +1447,11 @@ export const groupTermCalendar = query({
       skeleton.units.forEach((u, i) => {
         if (u.examDate !== null && u.examDate <= nearestExam) lastDueIdx = i;
       });
+      // no-questions units can't finish (nothing entered) — they'd force a
+      // permanent "never finishes". They're reported separately instead.
       const inScope = skeleton.units
         .filter((_, i) => i <= lastDueIdx)
-        .filter((u) => u.verdict !== "done");
+        .filter((u) => u.verdict !== "done" && u.verdict !== "no-questions");
       if (inScope.length === 0) {
         syllabus = { finishDate: todayYmd, daysBeforeExam: null };
       } else if (inScope.some((u) => u.projectedFinishDate === null)) {
@@ -1472,6 +1494,9 @@ export const groupTermCalendar = query({
         (s, r) => s + r.questionIds.length,
         0,
       ),
+      unitsWithoutQuestions: skeleton.units.filter(
+        (u) => u.verdict === "no-questions",
+      ).length,
       syllabus,
       revisionQueueNow: { students: queueStudents, totalQs: queueTotal },
       todayYmd,

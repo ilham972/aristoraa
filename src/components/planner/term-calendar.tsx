@@ -237,6 +237,14 @@ export function TermCalendar({ grade }: { grade: number }) {
                 raise Qs/session, or delegate to Revision.
               </div>
             )}
+            {(cal.unitsWithoutQuestions ?? 0) > 0 && (
+              <div className="text-[11px] font-semibold text-amber-500">
+                {cal.unitsWithoutQuestions} track unit
+                {cal.unitsWithoutQuestions === 1 ? ' has' : 's have'} no
+                questions in the bank yet — the plan above only covers the
+                entered book.
+              </div>
+            )}
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] text-muted-foreground">
                 Questions per Main session

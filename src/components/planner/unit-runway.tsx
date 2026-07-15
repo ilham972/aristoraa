@@ -58,7 +58,7 @@ export function UnitRunway({
               </span>
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
-              {u.unseenCount} left
+              {u.verdict === 'no-questions' ? 'book not entered' : `${u.unseenCount} left`}
               {u.projectedFinishDate && <> · fin {fmtShortDate(u.projectedFinishDate)}</>}
               {u.examDate && <> · exam {fmtShortDate(u.examDate)}</>}
             </div>

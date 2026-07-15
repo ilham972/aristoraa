@@ -41,6 +41,66 @@ export const backfillRoomTimetables = mutation({
 });
 
 /**
+ * One-time migration (2026-07-15): delete textbook crops whose
+ * linkedExerciseId points at a deleted exercise. These are invisible to every
+ * planner ladder (the dangling link excludes them from questionsTaggedToConcept)
+ * — on prod all 52 were stale duplicates left behind by a delete-and-recreate
+ * of two G11 exercises; the live re-crops exist alongside them. Skips any crop
+ * referenced by a generated/group sheet (kept but unlinked, same rule as the
+ * new exercises.cleanupCropsForExercise guard).
+ *
+ * Dry run: npx convex run migrations:cleanupOrphanCrops
+ * Commit:  npx convex run migrations:cleanupOrphanCrops '{"commit":true}' --prod
+ */
+export const cleanupOrphanCrops = mutation({
+  args: { commit: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    const commit = args.commit === true;
+    const exerciseIds = new Set<string>(
+      (await ctx.db.query("exercises").collect()).map(
+        (e) => e._id as unknown as string,
+      ),
+    );
+    const referenced = new Set<string>();
+    for (const sh of await ctx.db.query("generatedSheets").collect()) {
+      for (const qid of [
+        ...sh.warmupQuestionIds,
+        ...sh.mainQuestionIds,
+        ...(sh.revisionQuestionIds ?? []),
+        ...sh.examPrepQuestionIds,
+      ])
+        referenced.add(qid as unknown as string);
+    }
+    for (const gs of await ctx.db.query("groupSheets").collect()) {
+      for (const qid of [...gs.newQuestionIds, ...gs.spiralQuestionIds])
+        referenced.add(qid as unknown as string);
+    }
+
+    let deleted = 0;
+    let unlinked = 0;
+    for (const q of await ctx.db.query("questionBank").collect()) {
+      if (!q.linkedExerciseId) continue;
+      if (exerciseIds.has(q.linkedExerciseId as unknown as string)) continue;
+      if (referenced.has(q._id as unknown as string)) {
+        unlinked += 1;
+        if (commit) await ctx.db.patch(q._id, { linkedExerciseId: undefined });
+      } else {
+        deleted += 1;
+        if (commit) {
+          const joins = await ctx.db
+            .query("questionConcepts")
+            .withIndex("by_question", (qq) => qq.eq("questionId", q._id))
+            .collect();
+          for (const j of joins) await ctx.db.delete(j._id);
+          await ctx.db.delete(q._id);
+        }
+      }
+    }
+    return { mode: commit ? "committed" : "dry-run", deleted, unlinked };
+  },
+});
+
+/**
  * One-time migration: stamp every group without a loggingStartDate with
  * today's local date. After this runs, all historical Day-view sessions
  * (which existed in the schedule before app adoption) become "pre-tracking"

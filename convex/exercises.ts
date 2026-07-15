@@ -1,5 +1,51 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { GenericMutationCtx } from "convex/server";
+import type { DataModel, Id } from "./_generated/dataModel";
+
+// Deleting an exercise used to strand its questionBank crops: their
+// linkedExerciseId dangled, so every planner ladder silently lost them
+// (found 2026-07-15: 52 invisible G11 crops on prod). Now crops follow their
+// exercise — deleted outright when nothing references them, unlinked (kept
+// for history rendering) when a printed sheet does.
+async function cleanupCropsForExercise(
+  ctx: GenericMutationCtx<DataModel>,
+  exerciseId: Id<"exercises">,
+): Promise<void> {
+  const crops = await ctx.db
+    .query("questionBank")
+    .withIndex("by_linked_exercise", (q) => q.eq("linkedExerciseId", exerciseId))
+    .collect();
+  if (crops.length === 0) return;
+
+  const referenced = new Set<string>();
+  for (const sh of await ctx.db.query("generatedSheets").collect()) {
+    for (const qid of [
+      ...sh.warmupQuestionIds,
+      ...sh.mainQuestionIds,
+      ...(sh.revisionQuestionIds ?? []),
+      ...sh.examPrepQuestionIds,
+    ])
+      referenced.add(qid as unknown as string);
+  }
+  for (const gs of await ctx.db.query("groupSheets").collect()) {
+    for (const qid of [...gs.newQuestionIds, ...gs.spiralQuestionIds])
+      referenced.add(qid as unknown as string);
+  }
+
+  for (const crop of crops) {
+    if (referenced.has(crop._id as unknown as string)) {
+      await ctx.db.patch(crop._id, { linkedExerciseId: undefined });
+    } else {
+      const joins = await ctx.db
+        .query("questionConcepts")
+        .withIndex("by_question", (q) => q.eq("questionId", crop._id))
+        .collect();
+      for (const j of joins) await ctx.db.delete(j._id);
+      await ctx.db.delete(crop._id);
+    }
+  }
+}
 
 export const list = query({
   handler: async (ctx) => {
@@ -238,6 +284,7 @@ export const trimToCount = mutation({
             await ctx.db.delete(entry._id);
           }
         }
+        await cleanupCropsForExercise(ctx, item._id);
         await ctx.db.delete(item._id);
       }
     }
@@ -284,6 +331,7 @@ export const setReview = mutation({
           await ctx.db.delete(entry._id);
         }
       }
+      await cleanupCropsForExercise(ctx, review._id);
       await ctx.db.delete(review._id);
     }
   },
@@ -313,6 +361,7 @@ export const remove = mutation({
         await ctx.db.delete(entry._id);
       }
     }
+    await cleanupCropsForExercise(ctx, args.id);
     await ctx.db.delete(args.id);
   },
 });

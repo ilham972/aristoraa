@@ -46,8 +46,10 @@ cumulative-exam holdouts.
   unit/state per session, Revision slots, cancelled days, tuning levers —
   `groupPlan.groupTermCalendar`), Sheets (FULL-TERM prebuild: "Run all term
   sheets" = crystallize to 180d cap, "Re-plan" = deleteFuturePlanned +
-  rebuild after Lesson-Builder reorders, chronological list + question-crop
-  preview drawer with ‹› sheet nav — groupSheetHistory/groupSheetPreview),
+  rebuild after Lesson-Builder reorders; grid of date cards grouped into
+  unit "line segments" + question-crop preview drawer with ‹› sheet nav —
+  groupSheetHistory/groupSheetPreview; amber banner + honest toast when the
+  question bank runs dry: crystallize returns exhausted/unplannedSessions),
   Forecast (grade rollup), Tracks + Exams (moved FROM /algorithm; Exams =
   grade×term grid/year + Quick entry). Backend `plannerBoard.ts`. Board nav
   slot freed → leaderboard link in /students.
@@ -96,6 +98,12 @@ by the Sheets tab via consumeCarryRows after generating). skeletonInputs
 adds unconsumed main-carry to unit demand, so skeleton/calendar/examPlan
 all count re-teaching; deletePlanned un-consumes absorbed carries. The
 bookmark is NEVER un-seen — carries are an explicit queue on top.
+Units with ZERO bank questions get verdict "no-questions" (2026-07-15), never
+"done" — a book-entry gap must look like one everywhere (runway, Term,
+Calendar `unitsWithoutQuestions`, Sheets banner). Deleting an exercise now
+cascades to its crops (exercises.cleanupCropsForExercise: delete unreferenced
+/ unlink printed) — dangling linkedExerciseId made crops invisible to every
+ladder (52 stale dupes cleaned off prod via migrations:cleanupOrphanCrops).
 
 ## Coverage forecast advisor (2026-07-14)
 `coverageForecast.ts` (query) + pure math `convex/lib/coverageForecastCore.ts`
