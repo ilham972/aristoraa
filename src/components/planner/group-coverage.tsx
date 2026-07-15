@@ -13,12 +13,13 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation } from 'convex/react';
-import { BookOpen, Check, ChevronDown } from 'lucide-react';
+import { ArrowUpDown, BookOpen, Check, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { useUnitName } from './group-plan-card';
+import { UnitArrangeDialog } from './unit-arrange-dialog';
 import { fmtWeekdayDate } from './verdict';
 
 type QBox = {
@@ -66,6 +67,7 @@ export function GroupCoverage({ groupId }: { groupId: Id<'groups'> }) {
 
   const [openUnit, setOpenUnit] = useState<string | null>(null);
   const [selectedQ, setSelectedQ] = useState<string | null>(null);
+  const [arrangeUnit, setArrangeUnit] = useState<string | null>(null);
 
   const ready = coverage && 'status' in coverage && coverage.status === 'ok';
 
@@ -153,9 +155,18 @@ export function GroupCoverage({ groupId }: { groupId: Id<'groups'> }) {
             selectedQ={selectedQ}
             onSelectQ={setSelectedQ}
             onToggleStudent={toggleStudentUnit}
+            onArrange={() => setArrangeUnit(u.unitId)}
           />
         ))}
       </div>
+
+      {arrangeUnit && (
+        <UnitArrangeDialog
+          unitId={arrangeUnit}
+          unitName={unitName(arrangeUnit)}
+          onClose={() => setArrangeUnit(null)}
+        />
+      )}
     </div>
   );
 }
@@ -181,6 +192,7 @@ function UnitAccordion({
   selectedQ,
   onSelectQ,
   onToggleStudent,
+  onArrange,
 }: {
   unit: UnitRow;
   name: string;
@@ -194,6 +206,7 @@ function UnitAccordion({
     unitId: string,
     done: boolean,
   ) => void;
+  onArrange: () => void;
 }) {
   const selected = useMemo(
     () =>
@@ -256,6 +269,17 @@ function UnitAccordion({
             </div>
           ) : (
             <>
+              {/* Control the order: opens the arrange-difficulty dialog */}
+              <div className="flex justify-end mb-2">
+                <button
+                  onClick={onArrange}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/40"
+                >
+                  <ArrowUpDown className="w-3 h-3" />
+                  Arrange order
+                </button>
+              </div>
+
               {/* The tiny-box question grid */}
               <div className="flex flex-wrap gap-1">
                 {unit.questions.map((q, i) => {
