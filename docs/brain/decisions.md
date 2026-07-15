@@ -309,6 +309,18 @@ because Z.
   is done; non-contiguous pre-teaching isn't worth the complexity. Explicitly
   NOT a teaching record — no points/memory/revision, per-student surfaces
   untouched (individual coverage forecast still shows the real gaps).
+- **Term Coverage Cockpit = a SECOND lens (see-the-whole-term), not a fork of
+  the plan** (2026-07-16). Founder: the Sheets tab showed a forward plan from
+  the bookmark, but he wanted to see the ENTIRE term's questions with no
+  capacity pressure. Chose a new coverage view (`groupTermCoverage`) over
+  reshaping the crystallize walk — the engine's forward plan is correct, the
+  UI just lacked a coverage lens. Per-student "did/didn't" is UNIT-level only
+  (founder's pick) and feeds catch-up + progress; the group Main block stays
+  ONE identical sheet (rejected per-student main sheets — breaks "the class
+  learns together"). Difficulty control brought in via a curate-unit
+  `UnitArrangeDialog` reusing reorderConceptQuestions (NOT extracting the
+  1204-line Lesson Builder — too risky; shared CropThumbnail + local dnd
+  instead). "See + steer by unit; the engine still picks the questions."
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

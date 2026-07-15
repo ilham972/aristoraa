@@ -49,7 +49,12 @@ cumulative-exam holdouts.
   rebuild after Lesson-Builder reorders; grid of date cards grouped into
   unit "line segments" + question-crop preview drawer with ‹› sheet nav —
   groupSheetHistory/groupSheetPreview; amber banner + honest toast when the
-  question bank runs dry: crystallize returns exhausted/unplannedSessions),
+  question bank runs dry: crystallize returns exhausted/unplannedSessions;
+  DEFAULT view now the TERM COVERAGE COCKPIT (2026-07-16) — `groupTermCoverage`
+  term accordions of tiny question boxes taught/planned/unseen + tap-provenance,
+  per-student per-unit marks `groupStudentUnitProgress`/`setStudentUnitDone`
+  (catch-up + progress; group Main stays ONE sheet), tap unit → `UnitArrangeDialog`
+  drag=difficulty, one-tap "earlier terms taught" reuses setGroupStartingPoint),
   Forecast (grade rollup), Tracks + Exams (moved FROM /algorithm; Exams =
   grade×term grid/year + Quick entry). Backend `plannerBoard.ts`. Board nav
   slot freed → leaderboard link in /students.
