@@ -7,12 +7,15 @@
 //   re-pickable until printed).
 //   Re-plan future — after a Lesson-Builder reorder: drop every future
 //   still-planned row and rebuild it from the fresh book order.
-//   The grid — the term as a transit map (2026-07-15 redesign): sheets are
-//   date cards in a 3-across grid, grouped into unit "line segments" with a
-//   colored rail per unit, TODAY as the you-are-here divider. A term stuck
-//   on one unit is visible at a glance — and when the question bank runs
-//   dry (book entry hasn't reached later units) an amber banner says so
-//   instead of the old silent stop.
+//   The timeline — a metro-line master/detail (2026-07-16 redesign): a
+//   narrow left rail lists EVERY week of the term as a tiny ring-station —
+//   the ring outline is term progress (dim teal = covered before this week,
+//   bright emerald = what this week adds), with the exam as a red flag stop
+//   on the same line. All weeks fit on one screen, no scrolling. Tapping a
+//   station fills the fixed right card with that week's detail (7+7 day
+//   grid, session chips, book-order question grids). When the question bank
+//   runs dry (book entry hasn't reached later units) an amber banner says
+//   so instead of the old silent stop.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
@@ -87,6 +90,96 @@ function addDaysYmd(ymd: string, n: number): string {
 
 const DOW_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
+// A week "station" on the rail: the ring outline IS the term progress.
+// Dim teal arc = covered before this week; bright emerald arc = what this
+// week adds. A full circle before the exam flag = the term closes in time.
+function WeekRing({
+  dayNum,
+  before,
+  delta,
+  afterExam,
+  selected,
+}: {
+  dayNum: string;
+  before: number;
+  delta: number;
+  afterExam: boolean;
+  selected: boolean;
+}) {
+  const R = 12;
+  const C = 2 * Math.PI * R;
+  const beforeLen = (Math.min(before, 100) / 100) * C;
+  const deltaLen = (Math.min(delta, Math.max(0, 100 - before)) / 100) * C;
+  return (
+    <span
+      className={cn(
+        'relative w-7 h-7 shrink-0 rounded-full flex items-center justify-center',
+        selected ? 'bg-primary/15' : 'bg-background',
+      )}
+    >
+      <svg viewBox="0 0 28 28" className="absolute inset-0 w-7 h-7 -rotate-90">
+        <circle
+          cx="14"
+          cy="14"
+          r={R}
+          fill="none"
+          strokeWidth="2.5"
+          className={afterExam ? 'stroke-rose-500/25' : 'stroke-muted'}
+        />
+        {beforeLen > 0 && (
+          <circle
+            cx="14"
+            cy="14"
+            r={R}
+            fill="none"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={`${beforeLen} ${C}`}
+            className="stroke-teal-500/40"
+          />
+        )}
+        {deltaLen > 0 && (
+          <circle
+            cx="14"
+            cy="14"
+            r={R}
+            fill="none"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={`${deltaLen} ${C}`}
+            strokeDashoffset={-beforeLen}
+            className="stroke-emerald-400"
+          />
+        )}
+      </svg>
+      <span
+        className={cn(
+          'text-[8.5px] font-bold tabular-nums leading-none',
+          selected ? 'text-primary' : 'text-muted-foreground',
+        )}
+      >
+        {dayNum}
+      </span>
+    </span>
+  );
+}
+
+// The exam as a terminus stop on the same metro line.
+function ExamStop({ date }: { date: string }) {
+  return (
+    <div className="flex items-center gap-2 py-1 sm:px-1.5">
+      <span className="w-7 flex justify-center shrink-0">
+        <span className="w-5 h-5 rounded-full bg-background border-2 border-rose-500/60 flex items-center justify-center">
+          <Flag className="w-2.5 h-2.5 text-rose-500" />
+        </span>
+      </span>
+      <span className="hidden sm:block min-w-0 flex-1 text-[8.5px] font-bold text-rose-500 uppercase tracking-widest truncate">
+        exam · {fmtWeekdayDate(date)}
+      </span>
+    </div>
+  );
+}
+
 type SheetRow = {
   id: Id<'groupSheets'>;
   date: string;
@@ -97,12 +190,17 @@ type SheetRow = {
 };
 
 export function GroupSheets({ grade }: { grade: number }) {
-  const groups = useCachedQuery(api.learningEngine.plannerBoard.plannerGroups, {});
+  const groups = useCachedQuery(
+    api.learningEngine.plannerBoard.plannerGroups,
+    {},
+  );
   const gradeGroups = useMemo(
     () =>
       (groups ?? [])
         .filter((g: PlannerGroupRow) => g.grade === grade)
-        .sort((a: PlannerGroupRow, b: PlannerGroupRow) => a.name.localeCompare(b.name)),
+        .sort((a: PlannerGroupRow, b: PlannerGroupRow) =>
+          a.name.localeCompare(b.name),
+        ),
     [groups, grade],
   );
 
@@ -112,9 +210,13 @@ export function GroupSheets({ grade }: { grade: number }) {
       setGroupId(null);
       return;
     }
-    if (!groupId || !gradeGroups.some((g: PlannerGroupRow) => g.groupId === groupId)) {
+    if (
+      !groupId ||
+      !gradeGroups.some((g: PlannerGroupRow) => g.groupId === groupId)
+    ) {
       const preferred =
-        gradeGroups.find((g: PlannerGroupRow) => g.trackName !== null) ?? gradeGroups[0];
+        gradeGroups.find((g: PlannerGroupRow) => g.trackName !== null) ??
+        gradeGroups[0];
       setGroupId(preferred.groupId);
     }
   }, [gradeGroups, groupId]);
@@ -135,7 +237,9 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [covTerm, setCovTerm] = useState<number | null>(null);
   const coverage = useCachedQuery(
     api.learningEngine.groupPlan.groupTermCoverage,
-    groupId ? { groupId, ...(covTerm !== null ? { term: covTerm } : {}) } : 'skip',
+    groupId
+      ? { groupId, ...(covTerm !== null ? { term: covTerm } : {}) }
+      : 'skip',
   );
   // The group's weekly Main + Revision slot days — the 7+7 day grid.
   const slotDays = useCachedQuery(
@@ -143,14 +247,16 @@ export function GroupSheets({ grade }: { grade: number }) {
     groupId ? { groupId } : 'skip',
   );
 
-  const crystallize = useMutation(api.learningEngine.groupPlan.crystallizeUpcoming);
+  const crystallize = useMutation(
+    api.learningEngine.groupPlan.crystallizeUpcoming,
+  );
   const deleteFuturePlanned = useMutation(
     api.learningEngine.groupPlan.deleteFuturePlanned,
   );
   const unitName = useUnitName();
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
-  const [openWeek, setOpenWeek] = useState<string | null>(null);
+  const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false);
   const [arrangeUnitId, setArrangeUnitId] = useState<string | null>(null);
 
@@ -263,12 +369,14 @@ export function GroupSheets({ grade }: { grade: number }) {
     return m;
   }, [coverage, weeks]);
 
-  // Cumulative term progress by the END of each week: % of the term's
-  // questions covered on or before that week (+ anything already covered
-  // before the timeline). Lets the founder see whether the fill reaches 100%
-  // BEFORE the red exam line — the deadline check, made visual.
+  // Cumulative term progress per week, split for the ring stations:
+  // `before` = % covered before the week starts (dim teal arc), `delta` =
+  // what this week adds (bright emerald arc), `cum` = by the end of the week.
+  // Lets the founder see whether the fill reaches 100% BEFORE the red exam
+  // flag — the deadline check, made visual — and how each week compares to
+  // the one before it.
   const weekProgress = useMemo(() => {
-    const m = new Map<string, number>();
+    const m = new Map<string, { cum: number; before: number; delta: number }>();
     if (!coverage || !('status' in coverage) || coverage.status !== 'ok')
       return m;
     let total = 0;
@@ -287,15 +395,33 @@ export function GroupSheets({ grade }: { grade: number }) {
     }
     let running = baseCovered;
     for (const w of weeks) {
+      const before = total > 0 ? Math.round((running / total) * 100) : 0;
       running += byWeek.get(w.weekStart) ?? 0;
-      m.set(w.weekStart, total > 0 ? Math.round((running / total) * 100) : 0);
+      const cum = total > 0 ? Math.round((running / total) * 100) : 0;
+      m.set(w.weekStart, { cum, before, delta: cum - before });
     }
     return m;
   }, [coverage, weeks]);
 
+  // Default rail selection: the current week, else the first upcoming one,
+  // else the last planned week. Re-resolves when the group (and its weeks)
+  // changes.
+  useEffect(() => {
+    if (weeks.length === 0) {
+      setSelectedWeek(null);
+      return;
+    }
+    if (selectedWeek && weeks.some((w) => w.weekStart === selectedWeek)) return;
+    const thisWeek = weekStartYmd(todayYmd());
+    const pick =
+      weeks.find((w) => w.weekStart >= thisWeek) ?? weeks[weeks.length - 1];
+    setSelectedWeek(pick.weekStart);
+  }, [weeks, selectedWeek]);
+
   // Book-coverage gap, from the live skeleton: units whose ladder is empty.
   const bookGap = useMemo(() => {
-    if (!lessonPlan || lessonPlan.status !== 'ok' || !lessonPlan.units) return null;
+    if (!lessonPlan || lessonPlan.status !== 'ok' || !lessonPlan.units)
+      return null;
     const units = lessonPlan.units as Array<{
       unitId: string;
       verdict: string;
@@ -322,8 +448,13 @@ export function GroupSheets({ grade }: { grade: number }) {
           { duration: 8000 },
         );
       else if (res.written === 0)
-        toast.info('Every session is already planned — the term is fully built.');
-      else toast.success(`Built ${res.written} sheets — the whole term is planned.`);
+        toast.info(
+          'Every session is already planned — the term is fully built.',
+        );
+      else
+        toast.success(
+          `Built ${res.written} sheets — the whole term is planned.`,
+        );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -360,9 +491,6 @@ export function GroupSheets({ grade }: { grade: number }) {
       </div>
     );
   }
-
-  let todayLineShown = false;
-  let examLineShown = false;
 
   const coverageReady =
     coverage && 'status' in coverage && coverage.status === 'ok';
@@ -455,7 +583,9 @@ export function GroupSheets({ grade }: { grade: number }) {
               questions yet.
             </span>{' '}
             Sheets stop when the entered book runs out — next unit needing book
-            entry: <span className="font-semibold">{unitName(bookGap.nextEmpty)}</span>.
+            entry:{' '}
+            <span className="font-semibold">{unitName(bookGap.nextEmpty)}</span>
+            .
           </div>
         </div>
       )}
@@ -503,7 +633,7 @@ export function GroupSheets({ grade }: { grade: number }) {
               Timeline
             </span>
             <span className="text-[10px] text-muted-foreground">
-              by week · tap a week to see its picks
+              tap a week on the line · detail stays on the right
             </span>
             <span className="h-px flex-1 bg-border" />
           </div>
@@ -523,125 +653,163 @@ export function GroupSheets({ grade }: { grade: number }) {
             </div>
           )}
 
-          <div className="space-y-2.5">
-            {weeks.map((w) => {
-              const showToday =
-                !todayLineShown && w.sheets.some((s) => s.date >= today);
-              if (showToday) todayLineShown = true;
-              const showExam =
-                exam !== null && !examLineShown && w.weekStart > exam.date;
-              if (showExam) examLineShown = true;
-              const wd = fmtDayMonth(w.weekStart);
-              const isOpen = openWeek === w.weekStart;
-              const total = w.newTotal + w.reviewTotal;
-              const newPct = total > 0 ? (w.newTotal / total) * 100 : 0;
-              const grids = weekGrids.get(w.weekStart) ?? [];
-              const weekPast = w.sheets.every((s) => s.date < today);
-              const weekAfterExam = exam !== null && w.weekStart > exam.date;
-              return (
-                <div key={w.weekStart}>
-                  {showExam && (
-                    <div className="flex items-center gap-2 my-3">
-                      <div className="h-px flex-1 bg-rose-500/50" />
-                      <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-500 uppercase tracking-widest">
-                        <Flag className="w-3 h-3" />
-                        exam · {exam && fmtWeekdayDate(exam.date)}
-                      </span>
-                      <div className="h-px flex-1 bg-rose-500/50" />
-                    </div>
-                  )}
-                  {showToday && (
-                    <div className="flex items-center gap-2 my-2.5">
-                      <div className="h-px flex-1 bg-primary/40" />
-                      <span className="text-[9px] font-bold text-primary uppercase tracking-widest">
-                        today
-                      </span>
-                      <div className="h-px flex-1 bg-primary/40" />
-                    </div>
-                  )}
-                  <div
-                    className={cn(
-                      'rounded-xl border bg-card overflow-hidden',
-                      weekAfterExam ? 'border-rose-500/40' : 'border-border',
-                      weekPast && 'opacity-60',
-                    )}
-                  >
-                    {/* Week card header — one card, no repeated month */}
-                    <button
-                      onClick={() =>
-                        setOpenWeek((cur) =>
-                          cur === w.weekStart ? null : w.weekStart,
-                        )
-                      }
-                      className="w-full text-left px-3 py-2.5"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-[12px] font-bold text-foreground shrink-0">
-                          Week of {wd.day}
-                        </span>
-                        {weekAfterExam && (
-                          <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
-                            after exam
-                          </span>
+          {list.length > 0 && (
+            <div className="flex items-start gap-2 sm:gap-3">
+              {/* Left rail — every week is a station on one metro line, the
+                  exam a terminus flag. All weeks visible, no scrolling. */}
+              <div className="relative w-11 sm:w-44 shrink-0">
+                <div className="absolute left-3.5 sm:left-5 top-4 bottom-4 w-px bg-border/70" />
+                <div className="relative">
+                  {weeks.map((w) => {
+                    const prog = weekProgress.get(w.weekStart);
+                    const total = w.newTotal + w.reviewTotal;
+                    const weekPast = w.sheets.every((s) => s.date < today);
+                    const weekAfterExam =
+                      exam !== null && w.weekStart > exam.date;
+                    const isSel = selectedWeek === w.weekStart;
+                    const isThisWeek = w.weekStart === weekStartYmd(today);
+                    const firstAfterExam =
+                      weekAfterExam &&
+                      exam !== null &&
+                      weeks.find((x) => x.weekStart > exam.date) === w;
+                    return (
+                      <div key={w.weekStart}>
+                        {firstAfterExam && exam && (
+                          <ExamStop date={exam.date} />
                         )}
-                        <span className="h-px flex-1 bg-border" />
-                        <span className="text-[9.5px] text-muted-foreground tabular-nums shrink-0">
-                          {total}q · {w.sheets.length}sh
-                        </span>
-                        <ChevronDown
+                        <button
+                          onClick={() => setSelectedWeek(w.weekStart)}
                           className={cn(
-                            'w-4 h-4 text-muted-foreground shrink-0 transition-transform',
-                            isOpen && 'rotate-180',
+                            'w-full flex items-center gap-2 rounded-lg py-0.5 sm:px-1.5 text-left',
+                            isSel && 'sm:bg-primary/10',
+                            weekPast && !isSel && 'opacity-50',
                           )}
-                        />
-                      </div>
-                      {/* tiny new/review mix bar */}
-                      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden flex mt-2">
-                        <div
-                          className="h-full bg-teal-400"
-                          style={{ width: `${newPct}%` }}
-                        />
-                        <div
-                          className="h-full bg-amber-400"
-                          style={{ width: `${100 - newPct}%` }}
-                        />
-                      </div>
-                      <div className="flex gap-3 mt-1 text-[8.5px]">
-                        <span className="text-teal-500 font-semibold">
-                          {w.newTotal} new
-                        </span>
-                        {w.reviewTotal > 0 && (
-                          <span className="text-amber-500 font-semibold">
-                            {w.reviewTotal} review
+                        >
+                          <span className="relative shrink-0">
+                            <WeekRing
+                              dayNum={String(Number(w.weekStart.slice(8, 10)))}
+                              before={prog?.before ?? 0}
+                              delta={prog?.delta ?? 0}
+                              afterExam={weekAfterExam}
+                              selected={isSel}
+                            />
+                            {isThisWeek && (
+                              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-primary animate-pulse ring-2 ring-background" />
+                            )}
                           </span>
+                          <span className="hidden sm:block min-w-0 flex-1 leading-tight">
+                            <span
+                              className={cn(
+                                'block text-[10.5px] font-bold',
+                                isSel
+                                  ? 'text-foreground'
+                                  : weekAfterExam
+                                    ? 'text-rose-500/80'
+                                    : 'text-muted-foreground',
+                              )}
+                            >
+                              {fmtDayMonth(w.weekStart).day}
+                            </span>
+                            <span className="block text-[8.5px] text-muted-foreground tabular-nums">
+                              {total}q
+                              {prog && prog.delta > 0 && (
+                                <span className="text-emerald-500 font-semibold">
+                                  {' '}
+                                  +{prog.delta}%
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {exam !== null &&
+                    !weeks.some((w) => w.weekStart > exam.date) && (
+                      <ExamStop date={exam.date} />
+                    )}
+                </div>
+              </div>
+
+              {/* Right — the fixed detail card: never moves, only its
+                  content swaps when a station is tapped. */}
+              <div className="flex-1 min-w-0 sticky top-2 self-start">
+                {(() => {
+                  const w =
+                    weeks.find((x) => x.weekStart === selectedWeek) ?? weeks[0];
+                  const wd = fmtDayMonth(w.weekStart);
+                  const total = w.newTotal + w.reviewTotal;
+                  const newPct = total > 0 ? (w.newTotal / total) * 100 : 0;
+                  const grids = weekGrids.get(w.weekStart) ?? [];
+                  const weekAfterExam =
+                    exam !== null && w.weekStart > exam.date;
+                  const prog = weekProgress.get(w.weekStart);
+                  return (
+                    <div
+                      className={cn(
+                        'rounded-xl border bg-card overflow-hidden flex flex-col max-h-[calc(100dvh-9rem)]',
+                        weekAfterExam ? 'border-rose-500/40' : 'border-border',
+                      )}
+                    >
+                      {/* Selected-week header */}
+                      <div className="px-3 py-2.5 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-bold text-foreground shrink-0">
+                            Week of {wd.day}
+                          </span>
+                          {weekAfterExam && (
+                            <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
+                              after exam
+                            </span>
+                          )}
+                          <span className="h-px flex-1 bg-border" />
+                          <span className="text-[9.5px] text-muted-foreground tabular-nums shrink-0">
+                            {total}q · {w.sheets.length}sh
+                          </span>
+                        </div>
+                        {/* tiny new/review mix bar */}
+                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden flex mt-2">
+                          <div
+                            className="h-full bg-teal-400"
+                            style={{ width: `${newPct}%` }}
+                          />
+                          <div
+                            className="h-full bg-amber-400"
+                            style={{ width: `${100 - newPct}%` }}
+                          />
+                        </div>
+                        <div className="flex gap-3 mt-1 text-[8.5px]">
+                          <span className="text-teal-500 font-semibold">
+                            {w.newTotal} new
+                          </span>
+                          {w.reviewTotal > 0 && (
+                            <span className="text-amber-500 font-semibold">
+                              {w.reviewTotal} review
+                            </span>
+                          )}
+                        </div>
+                        {/* Cumulative term progress by the end of this week */}
+                        {prog && (
+                          <div className="mt-1.5">
+                            <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={cn(
+                                  'h-full',
+                                  weekAfterExam && prog.cum < 100
+                                    ? 'bg-rose-500'
+                                    : 'bg-emerald-500',
+                                )}
+                                style={{ width: `${prog.cum}%` }}
+                              />
+                            </div>
+                            <div className="text-[8px] text-muted-foreground mt-0.5">
+                              {prog.cum}% of term done by here
+                            </div>
+                          </div>
                         )}
                       </div>
-                      {/* Cumulative term progress by the end of this week */}
-                      {weekProgress.has(w.weekStart) && (
-                        <div className="mt-1.5">
-                          <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
-                            <div
-                              className={cn(
-                                'h-full',
-                                weekAfterExam &&
-                                  (weekProgress.get(w.weekStart) ?? 0) < 100
-                                  ? 'bg-rose-500'
-                                  : 'bg-emerald-500',
-                              )}
-                              style={{
-                                width: `${weekProgress.get(w.weekStart) ?? 0}%`,
-                              }}
-                            />
-                          </div>
-                          <div className="text-[8px] text-muted-foreground mt-0.5">
-                            {weekProgress.get(w.weekStart)}% of term done by here
-                          </div>
-                        </div>
-                      )}
-                    </button>
 
-                    {isOpen && (
-                      <div className="px-3 pb-3 border-t border-border/60 pt-2.5 space-y-3">
+                      <div className="px-3 pb-3 border-t border-border/60 pt-2.5 space-y-3 overflow-y-auto">
                         {/* 7+7 day grid: Main + Revision, Mon→Sun. Filled Main
                             box = a sheet that day (tap to open); Revision box =
                             a revision session that day. */}
@@ -813,12 +981,12 @@ export function GroupSheets({ grade }: { grade: number }) {
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -830,8 +998,11 @@ export function GroupSheets({ grade }: { grade: number }) {
           const occupied = new Set(
             list.filter((s) => s.status !== 'delegated').map((s) => s.date),
           );
-          const moveTargets: Array<{ date: string; label: string; rev: boolean }> =
-            [];
+          const moveTargets: Array<{
+            date: string;
+            label: string;
+            rev: boolean;
+          }> = [];
           for (const dow of new Set([
             ...(slotDays?.mainDays ?? []),
             ...(slotDays?.revisionDays ?? []),
@@ -901,10 +1072,14 @@ function SheetPreviewDrawer({
   const sheet = useQuery(api.learningEngine.groupPlan.groupSheetPreview, {
     groupSheetId: sheetId,
   });
-  const chip = sheet ? (STATUS_CHIP[sheet.status] ?? STATUS_CHIP.planned) : null;
+  const chip = sheet
+    ? (STATUS_CHIP[sheet.status] ?? STATUS_CHIP.planned)
+    : null;
 
   const resizePlanned = useMutation(api.learningEngine.groupPlan.resizePlanned);
-  const moveGroupSheet = useMutation(api.learningEngine.groupPlan.moveGroupSheet);
+  const moveGroupSheet = useMutation(
+    api.learningEngine.groupPlan.moveGroupSheet,
+  );
   const deletePlanned = useMutation(api.learningEngine.groupPlan.deletePlanned);
   const cancelDay = useMutation(api.sessionRecords.cancelDay);
   const [busy, setBusy] = useState(false);
@@ -1136,7 +1311,10 @@ function SheetPreviewDrawer({
                       key={t.date}
                       onClick={() =>
                         run(() =>
-                          moveGroupSheet({ groupSheetId: sheetId, toDate: t.date }),
+                          moveGroupSheet({
+                            groupSheetId: sheetId,
+                            toDate: t.date,
+                          }),
                         )
                       }
                       disabled={busy}
