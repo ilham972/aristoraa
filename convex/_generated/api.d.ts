@@ -93,6 +93,7 @@ import type * as paperStructures from "../paperStructures.js";
 import type * as pastPaperPages from "../pastPaperPages.js";
 import type * as pastPapers from "../pastPapers.js";
 import type * as questionBank from "../questionBank.js";
+import type * as revisionTimetable from "../revisionTimetable.js";
 import type * as rooms from "../rooms.js";
 import type * as scheduleSlots from "../scheduleSlots.js";
 import type * as seed from "../seed.js";
@@ -206,6 +207,7 @@ declare const fullApi: ApiFromModules<{
   pastPaperPages: typeof pastPaperPages;
   pastPapers: typeof pastPapers;
   questionBank: typeof questionBank;
+  revisionTimetable: typeof revisionTimetable;
   rooms: typeof rooms;
   scheduleSlots: typeof scheduleSlots;
   seed: typeof seed;
