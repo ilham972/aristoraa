@@ -21,21 +21,22 @@ import {
   Clock,
   LayoutGrid,
   MoreVertical,
+  Repeat,
   UserMinus,
   UserPlus,
   UserRoundX,
   Users,
   XCircle,
 } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
-import {
-  DAYS,
-  fmtLKR,
-  fmtTime12,
-  type HourBand,
-} from '@/lib/groups/time-grid';
+import { DAYS, fmtLKR, fmtTime12, type HourBand } from '@/lib/groups/time-grid';
 import { WeekGrid } from '@/components/groups/week-grid';
 import { LibraryGrid } from '@/components/groups/library-grid';
 import { PaperStudentRail } from '@/components/groups/paper-student-rail';
@@ -45,6 +46,7 @@ import { CancelDaySheet } from '@/components/groups/cancel-day-sheet';
 import { SessionLauncher } from '@/components/groups/session-launcher';
 import { OrganizeBoard } from '@/components/groups/organize-board';
 import { PlanningModeBar } from '@/components/groups/planning-mode-bar';
+import { RevisionTimetable } from '@/components/groups/revision-timetable';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -72,17 +74,24 @@ function addDays(dateYmd: string, n: number): string {
 
 export default function GroupsPage() {
   const router = useRouter();
-  const [view, setView] = useState<'week' | 'day' | 'session' | 'library' | 'group'>('day');
+  const [view, setView] = useState<
+    'week' | 'day' | 'session' | 'library' | 'group' | 'revision'
+  >('day');
   // Library (paper-class) state. The view is student-centric: pick a student
   // pill (pickedUpId) then tap hour slots to drop them in. Tapping an occupied
   // slot with nothing picked opens its room dialog (selectedSlot).
   const [pickedUpId, setPickedUpId] = useState<Id<'students'> | null>(null);
-  const [selectedSlot, setSelectedSlot] = useState<{ dayOfWeek: number; startTime: string } | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<{
+    dayOfWeek: number;
+    startTime: string;
+  } | null>(null);
   const [slotDialogOpen, setSlotDialogOpen] = useState(false);
   // Which day the Session view targets. Lives here (not in SessionLauncher) so
   // the Yesterday/Today/Tomorrow selector can sit on the right of the
   // Day/Week/Session toggle row. Today is the default.
-  const [sessionDay, setSessionDay] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
+  const [sessionDay, setSessionDay] = useState<
+    'yesterday' | 'today' | 'tomorrow'
+  >('today');
   const [editingGroup, setEditingGroup] = useState<Id<'groups'> | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [unassignedOpen, setUnassignedOpen] = useState(false);
@@ -105,7 +114,8 @@ export default function GroupsPage() {
   const draftWeek = useQuery(
     // Same cell shape as the live grid (ids are draft ids at runtime); cast to
     // the live ref's type so `week` stays fully typed downstream.
-    api.timetableDraftEdit.weekGridDraft as unknown as typeof api.groups.weekGrid,
+    api.timetableDraftEdit
+      .weekGridDraft as unknown as typeof api.groups.weekGrid,
     planning ? {} : 'skip',
   );
   const week = planning ? draftWeek : liveWeek;
@@ -153,7 +163,9 @@ export default function GroupsPage() {
   const createGroup = useMutation(api.groups.create);
   const toggleSession = useMutation(api.groups.toggleSession);
   const createGroupDraft = useMutation(api.timetableDraftEdit.createGroupDraft);
-  const toggleSessionDraft = useMutation(api.timetableDraftEdit.toggleSessionDraft);
+  const toggleSessionDraft = useMutation(
+    api.timetableDraftEdit.toggleSessionDraft,
+  );
   // Optimistic so a tap-drop lands INSTANTLY: bump the grid cell, recolour +
   // re-sort the rail pill, and add the slot to the picked student's overlay —
   // all in the local store before the server round-trips. The live result
@@ -170,7 +182,9 @@ export default function GroupsPage() {
       const wg = store.getQuery(api.paperClasses.weekGrid, {});
       if (wg) {
         const cells = wg.cells.slice();
-        const i = cells.findIndex((c) => c.dayOfWeek === dayOfWeek && c.startTime === startTime);
+        const i = cells.findIndex(
+          (c) => c.dayOfWeek === dayOfWeek && c.startTime === startTime,
+        );
         if (i >= 0) cells[i] = { ...cells[i], count: cells[i].count + 1 };
         else cells.push({ dayOfWeek, startTime, endTime, count: 1 });
         store.setQuery(api.paperClasses.weekGrid, {}, { cells });
@@ -179,16 +193,27 @@ export default function GroupsPage() {
       const rail = store.getQuery(api.paperClasses.rail, {});
       if (rail) {
         const next = rail
-          .map((r) => (r.studentId === studentId ? { ...r, assignedHours: r.assignedHours + 1 } : r))
-          .sort((a, b) => a.assignedHours - b.assignedHours || a.name.localeCompare(b.name));
+          .map((r) =>
+            r.studentId === studentId
+              ? { ...r, assignedHours: r.assignedHours + 1 }
+              : r,
+          )
+          .sort(
+            (a, b) =>
+              a.assignedHours - b.assignedHours || a.name.localeCompare(b.name),
+          );
         store.setQuery(api.paperClasses.rail, {}, next);
       }
 
       if (sm) {
-        store.setQuery(api.paperClasses.studentMap, { studentId }, {
-          ...sm,
-          paperSlots: [...sm.paperSlots, { dayOfWeek, startTime }],
-        });
+        store.setQuery(
+          api.paperClasses.studentMap,
+          { studentId },
+          {
+            ...sm,
+            paperSlots: [...sm.paperSlots, { dayOfWeek, startTime }],
+          },
+        );
       }
     },
   );
@@ -197,7 +222,12 @@ export default function GroupsPage() {
   const dropAt = async (dayOfWeek: number, band: HourBand) => {
     if (!pickedUpId) return;
     try {
-      await assignPaper({ studentId: pickedUpId, dayOfWeek, startTime: band.start, endTime: band.end });
+      await assignPaper({
+        studentId: pickedUpId,
+        dayOfWeek,
+        startTime: band.start,
+        endTime: band.end,
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not add student');
     }
@@ -222,9 +252,17 @@ export default function GroupsPage() {
     // Draft twins share arg/return shapes with their live counterparts; cast to
     // the live mutation type so the call sites stay typed (ids are draft ids at
     // runtime in planning mode).
-    const create = (planning ? createGroupDraft : createGroup) as typeof createGroup;
-    const toggle = (planning ? toggleSessionDraft : toggleSession) as typeof toggleSession;
-    const id = await create({ name: 'new_group', autoName: true, defaultRoomId: onlyRoom });
+    const create = (
+      planning ? createGroupDraft : createGroup
+    ) as typeof createGroup;
+    const toggle = (
+      planning ? toggleSessionDraft : toggleSession
+    ) as typeof toggleSession;
+    const id = await create({
+      name: 'new_group',
+      autoName: true,
+      defaultRoomId: onlyRoom,
+    });
     if (seed && onlyRoom) {
       try {
         await toggle({
@@ -287,46 +325,73 @@ export default function GroupsPage() {
             onClick={() => setView('day')}
             className={cn(
               'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'day' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              view === 'day'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground',
             )}
           >
-            <CalendarDays className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Day</span>
+            <CalendarDays className="w-3.5 h-3.5" />{' '}
+            <span className="hidden sm:inline">Day</span>
           </button>
           <button
             onClick={() => setView('week')}
             className={cn(
               'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'week' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              view === 'week'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground',
             )}
           >
-            <LayoutGrid className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Week</span>
+            <LayoutGrid className="w-3.5 h-3.5" />{' '}
+            <span className="hidden sm:inline">Week</span>
           </button>
           <button
             onClick={() => setView('session')}
             className={cn(
               'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'session' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              view === 'session'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground',
             )}
           >
-            <Clock className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Session</span>
+            <Clock className="w-3.5 h-3.5" />{' '}
+            <span className="hidden sm:inline">Session</span>
           </button>
           <button
             onClick={() => setView('library')}
             className={cn(
               'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'library' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              view === 'library'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground',
             )}
           >
-            <BookOpen className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Library</span>
+            <BookOpen className="w-3.5 h-3.5" />{' '}
+            <span className="hidden sm:inline">Library</span>
           </button>
           <button
             onClick={() => setView('group')}
             className={cn(
               'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-              view === 'group' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              view === 'group'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground',
             )}
           >
-            <ArrowLeftRight className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Group</span>
+            <ArrowLeftRight className="w-3.5 h-3.5" />{' '}
+            <span className="hidden sm:inline">Group</span>
+          </button>
+          <button
+            onClick={() => setView('revision')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              view === 'revision'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground',
+            )}
+          >
+            <Repeat className="w-3.5 h-3.5" />{' '}
+            <span className="hidden sm:inline">Revision</span>
           </button>
         </div>
 
@@ -340,7 +405,9 @@ export default function GroupsPage() {
               aria-label="Yesterday"
               className={cn(
                 'flex items-center justify-center w-7 py-1.5 rounded-lg transition-all',
-                sessionDay === 'yesterday' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+                sessionDay === 'yesterday'
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground',
               )}
             >
               <ChevronLeft className="w-4 h-4" />
@@ -350,7 +417,9 @@ export default function GroupsPage() {
               title="Today"
               className={cn(
                 'px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-                sessionDay === 'today' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+                sessionDay === 'today'
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground',
               )}
             >
               Today
@@ -361,7 +430,9 @@ export default function GroupsPage() {
               aria-label="Tomorrow"
               className={cn(
                 'flex items-center justify-center w-7 py-1.5 rounded-lg transition-all',
-                sessionDay === 'tomorrow' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+                sessionDay === 'tomorrow'
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground',
               )}
             >
               <ChevronRight className="w-4 h-4" />
@@ -393,8 +464,13 @@ export default function GroupsPage() {
                 >
                   <Users className="w-3 h-3" />
                   <span>
-                    <span className="text-foreground">{assignmentSummary.assignedCount}</span>
-                    <span className="opacity-60"> / {assignmentSummary.totalCount}</span>
+                    <span className="text-foreground">
+                      {assignmentSummary.assignedCount}
+                    </span>
+                    <span className="opacity-60">
+                      {' '}
+                      / {assignmentSummary.totalCount}
+                    </span>
                   </span>
                   <span className="hidden sm:inline">in groups</span>
                 </span>
@@ -405,7 +481,9 @@ export default function GroupsPage() {
                     title="Students not in any group"
                   >
                     <UserRoundX className="w-3 h-3" />
-                    <span className="tabular-nums">{assignmentSummary.unassigned.length}</span>
+                    <span className="tabular-nums">
+                      {assignmentSummary.unassigned.length}
+                    </span>
                     <span className="hidden sm:inline">unassigned</span>
                   </button>
                 )}
@@ -419,10 +497,7 @@ export default function GroupsPage() {
             made in the Week view. */}
         {view === 'group' && (
           <div className="ml-auto flex items-center gap-1.5">
-            <PlanningModeBar
-              active={planning}
-              onActiveChange={setPlanning}
-            />
+            <PlanningModeBar active={planning} onActiveChange={setPlanning} />
           </div>
         )}
 
@@ -462,7 +537,9 @@ export default function GroupsPage() {
             the DRAFT rosters (same branch as the Week view). */}
         {view === 'group' && planning && (
           <div className="shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2 text-[11px] text-amber-600 flex items-center gap-1.5">
-            <span className="font-semibold uppercase tracking-wider">Planning</span>
+            <span className="font-semibold uppercase tracking-wider">
+              Planning
+            </span>
             <span className="text-amber-600/80">
               Reshuffling a draft — rosters go live only when you press Merge.
             </span>
@@ -477,13 +554,18 @@ export default function GroupsPage() {
 
         {/* Library view — student-centric paper-class timetable. Pill rail on
             top, slot grid below. Independent of groups, owns its own loading. */}
-        {view === 'library' && (
-          paperWeek === undefined || paperRail === undefined ? (
+        {view === 'library' &&
+          (paperWeek === undefined || paperRail === undefined ? (
             <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
               {[...Array(8)].map((_, i) => (
-                <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
+                <div
+                  key={i}
+                  className="grid grid-cols-[44px_repeat(7,1fr)] gap-1"
+                >
                   <div className="h-9 rounded-md bg-muted/40" />
-                  {[...Array(7)].map((_, j) => <div key={j} className="h-9 rounded-md bg-muted/30" />)}
+                  {[...Array(7)].map((_, j) => (
+                    <div key={j} className="h-9 rounded-md bg-muted/30" />
+                  ))}
                 </div>
               ))}
             </div>
@@ -502,33 +584,60 @@ export default function GroupsPage() {
                 onOpenSlot={openSlot}
               />
             </>
-          )
-        )}
+          ))}
 
-        {view !== 'session' && view !== 'library' && view !== 'group' && loading && (
-          <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
-            {[...Array(8)].map((_, i) => (
-              <div key={i} className="grid grid-cols-[44px_repeat(7,1fr)] gap-1">
-                <div className="h-9 rounded-md bg-muted/40" />
-                {[...Array(7)].map((_, j) => <div key={j} className="h-9 rounded-md bg-muted/30" />)}
-              </div>
-            ))}
+        {/* Revision view — day-only revision-class timetable. */}
+        {view === 'revision' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <RevisionTimetable />
           </div>
         )}
 
-        {view !== 'session' && view !== 'library' && view !== 'group' && !loading && !hasGroups && !planning && (
-          <div className="flex-1 min-h-0 flex items-center justify-center">
-            <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
-              <p className="text-sm text-muted-foreground mb-1">No groups yet.</p>
-              <p className="text-xs text-muted-foreground">Tap any empty slot below to create one.</p>
+        {view !== 'session' &&
+          view !== 'library' &&
+          view !== 'group' &&
+          view !== 'revision' &&
+          loading && (
+            <div className="animate-pulse space-y-1 flex-1 min-h-0 overflow-hidden">
+              {[...Array(8)].map((_, i) => (
+                <div
+                  key={i}
+                  className="grid grid-cols-[44px_repeat(7,1fr)] gap-1"
+                >
+                  <div className="h-9 rounded-md bg-muted/40" />
+                  {[...Array(7)].map((_, j) => (
+                    <div key={j} className="h-9 rounded-md bg-muted/30" />
+                  ))}
+                </div>
+              ))}
             </div>
-          </div>
-        )}
+          )}
+
+        {view !== 'session' &&
+          view !== 'library' &&
+          view !== 'group' &&
+          view !== 'revision' &&
+          !loading &&
+          !hasGroups &&
+          !planning && (
+            <div className="flex-1 min-h-0 flex items-center justify-center">
+              <div className="rounded-xl border border-dashed border-border/60 px-6 py-8 text-center max-w-xs">
+                <p className="text-sm text-muted-foreground mb-1">
+                  No groups yet.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Tap any empty slot below to create one.
+                </p>
+              </div>
+            </div>
+          )}
 
         {/* Planning-mode banner — a constant reminder that edits aren't live. */}
         {view === 'week' && planning && (
           <div className="shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 mb-2 text-[11px] text-amber-600 flex items-center gap-1.5">
-            <span className="font-semibold uppercase tracking-wider">Planning</span>
+            <span className="font-semibold uppercase tracking-wider">
+              Planning
+            </span>
             <span className="text-amber-600/80">
               Editing a draft — changes go live only when you press Merge.
             </span>
@@ -551,9 +660,13 @@ export default function GroupsPage() {
             weekStartYmd={weekStartYmd}
             selectedDate={selectedDate}
             setSelectedDate={setSelectedDate}
-            shiftWeek={(deltaDays) => setSelectedDate((d) => addDays(d, deltaDays))}
+            shiftWeek={(deltaDays) =>
+              setSelectedDate((d) => addDays(d, deltaDays))
+            }
             data={weekSessions}
-            onOpenSession={(slotId, date) => router.push(`/session/${slotId}/${date}`)}
+            onOpenSession={(slotId, date) =>
+              router.push(`/session/${slotId}/${date}`)
+            }
           />
         )}
       </div>
@@ -738,7 +851,18 @@ function DayList({
   selectedDate: string;
   setSelectedDate: (d: string) => void;
   shiftWeek: (deltaDays: number) => void;
-  data: { sessions: SessionEntry[]; perStudentWeek: Array<{ studentId: Id<'students'>; name: string; expected: number; collected: number; credit: number }> } | undefined;
+  data:
+    | {
+        sessions: SessionEntry[];
+        perStudentWeek: Array<{
+          studentId: Id<'students'>;
+          name: string;
+          expected: number;
+          collected: number;
+          credit: number;
+        }>;
+      }
+    | undefined;
   onOpenSession: (slotId: Id<'scheduleSlots'>, date: string) => void;
 }) {
   const now = new Date();
@@ -747,7 +871,12 @@ function DayList({
 
   // Seven dates of the visible week — Mon..Sun, paired with their dow label.
   const weekDates = useMemo(() => {
-    const out: Array<{ date: string; dow: number; label: string; dayNum: number }> = [];
+    const out: Array<{
+      date: string;
+      dow: number;
+      label: string;
+      dayNum: number;
+    }> = [];
     const start = new Date(weekStartYmd + 'T00:00:00');
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
@@ -773,17 +902,22 @@ function DayList({
   const dayCounts = useMemo(() => {
     const map = new Map<
       string,
-      { logged: number; needsEntry: number; cancelled: number; upcoming: number; preTracking: number }
+      {
+        logged: number;
+        needsEntry: number;
+        cancelled: number;
+        upcoming: number;
+        preTracking: number;
+      }
     >();
     for (const s of data?.sessions ?? []) {
-      const cur =
-        map.get(s.date) ?? {
-          logged: 0,
-          needsEntry: 0,
-          cancelled: 0,
-          upcoming: 0,
-          preTracking: 0,
-        };
+      const cur = map.get(s.date) ?? {
+        logged: 0,
+        needsEntry: 0,
+        cancelled: 0,
+        upcoming: 0,
+        preTracking: 0,
+      };
       if (s.logStatus === 'pre-tracking') cur.preTracking += 1;
       else if (s.logStatus === 'cancelled') cur.cancelled += 1;
       else if (s.logStatus === 'held') cur.logged += 1;
@@ -806,8 +940,14 @@ function DayList({
     const end = new Date(start);
     end.setDate(end.getDate() + 6);
     const sameMonth = start.getMonth() === end.getMonth();
-    const startStr = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const endStr = end.toLocaleDateString(undefined, sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' });
+    const startStr = start.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+    const endStr = end.toLocaleDateString(
+      undefined,
+      sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' },
+    );
     return `${startStr} – ${endStr}`;
   }, [weekStartYmd]);
 
@@ -899,12 +1039,20 @@ function DayList({
       {todaysSessions.length > 0 && (
         <div className="shrink-0 grid grid-cols-3 gap-1.5 mb-2 text-[10px]">
           <div className="rounded-md bg-muted px-2 py-1">
-            <p className="text-muted-foreground uppercase tracking-wider">Expected</p>
-            <p className="font-bold text-foreground tabular-nums">{fmtLKR(dayTotalExpected)}</p>
+            <p className="text-muted-foreground uppercase tracking-wider">
+              Expected
+            </p>
+            <p className="font-bold text-foreground tabular-nums">
+              {fmtLKR(dayTotalExpected)}
+            </p>
           </div>
           <div className="rounded-md bg-muted px-2 py-1">
-            <p className="text-muted-foreground uppercase tracking-wider">Collected</p>
-            <p className="font-bold text-foreground tabular-nums">{fmtLKR(dayTotalCollected)}</p>
+            <p className="text-muted-foreground uppercase tracking-wider">
+              Collected
+            </p>
+            <p className="font-bold text-foreground tabular-nums">
+              {fmtLKR(dayTotalCollected)}
+            </p>
           </div>
           <div
             className={cn(
@@ -912,14 +1060,22 @@ function DayList({
               dayTotalCredit > 0 ? 'bg-amber-500/10' : 'bg-muted',
             )}
           >
-            <p className={cn(
-              'uppercase tracking-wider',
-              dayTotalCredit > 0 ? 'text-amber-600' : 'text-muted-foreground',
-            )}>Credit</p>
-            <p className={cn(
-              'font-bold tabular-nums',
-              dayTotalCredit > 0 ? 'text-amber-600' : 'text-foreground',
-            )}>{fmtLKR(dayTotalCredit)}</p>
+            <p
+              className={cn(
+                'uppercase tracking-wider',
+                dayTotalCredit > 0 ? 'text-amber-600' : 'text-muted-foreground',
+              )}
+            >
+              Credit
+            </p>
+            <p
+              className={cn(
+                'font-bold tabular-nums',
+                dayTotalCredit > 0 ? 'text-amber-600' : 'text-foreground',
+              )}
+            >
+              {fmtLKR(dayTotalCredit)}
+            </p>
           </div>
         </div>
       )}
@@ -1004,7 +1160,8 @@ function DaySessionsBody({
   // Full-day cancellation banner — only when EVERY live session is
   // cancelled (and there's at least one). Picks the dominant reason for
   // the headline.
-  const allCancelled = live.length > 0 && live.every((s) => s.logStatus === 'cancelled');
+  const allCancelled =
+    live.length > 0 && live.every((s) => s.logStatus === 'cancelled');
   if (allCancelled) {
     const reasonCount = new Map<string, number>();
     for (const s of live) {
@@ -1091,7 +1248,11 @@ function DaySessionsBody({
   return (
     <div className="space-y-4">
       {needsEntry.length > 0 && (
-        <Section title="Needs entry" count={needsEntry.length} tone="destructive">
+        <Section
+          title="Needs entry"
+          count={needsEntry.length}
+          tone="destructive"
+        >
           {needsEntry.map(renderCard)}
         </Section>
       )}
@@ -1111,7 +1272,11 @@ function DaySessionsBody({
         </Section>
       )}
       {preTracking.length > 0 && (
-        <Section title="Before tracking" count={preTracking.length} tone="muted">
+        <Section
+          title="Before tracking"
+          count={preTracking.length}
+          tone="muted"
+        >
           {preTracking.map(renderCard)}
         </Section>
       )}
@@ -1164,7 +1329,13 @@ function DayStatusDots({
   counts,
   selected,
 }: {
-  counts: { logged: number; needsEntry: number; cancelled: number; upcoming: number; preTracking: number };
+  counts: {
+    logged: number;
+    needsEntry: number;
+    cancelled: number;
+    upcoming: number;
+    preTracking: number;
+  };
   selected: boolean;
 }) {
   const dots: Array<{ key: string; cls: string }> = [];
@@ -1239,7 +1410,10 @@ function SessionCard({
 
   let ringClass = '';
   let accentClass = 'bg-muted-foreground/20';
-  let badge: { label: string; tone: 'green' | 'red' | 'grey' | 'none' } = { label: '', tone: 'none' };
+  let badge: { label: string; tone: 'green' | 'red' | 'grey' | 'none' } = {
+    label: '',
+    tone: 'none',
+  };
   if (session.logStatus === 'cancelled') {
     ringClass = 'ring-2 ring-muted-foreground/30';
     accentClass = 'bg-muted-foreground/40';
@@ -1286,9 +1460,11 @@ function SessionCard({
             <span
               className={cn(
                 'shrink-0 inline-flex items-center gap-0.5 px-1.5 py-px rounded text-[9px] font-bold uppercase tracking-wide',
-                badge.tone === 'green' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+                badge.tone === 'green' &&
+                  'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
                 badge.tone === 'red' && 'bg-destructive/15 text-destructive',
-                badge.tone === 'grey' && 'bg-muted-foreground/15 text-muted-foreground',
+                badge.tone === 'grey' &&
+                  'bg-muted-foreground/15 text-muted-foreground',
               )}
             >
               {badge.tone === 'grey' && <XCircle className="w-2.5 h-2.5" />}

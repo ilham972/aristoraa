@@ -10,7 +10,7 @@ crystallized rows (delegate/delete), projection collapsed into unit SPANS
 (nav) — see learning-engine.md. Backend `convex/learningEngine/groupPlan.ts`.
 
 ## What the screen does
-`src/app/groups/page.tsx` (~1030 lines) is the daily home. Three views:
+`src/app/groups/page.tsx` (~1030 lines) is the daily home. Views:
 - **Day view (default, date-aware)** — sessions of the selected date; prev/next
   day arrows; tap a session → per-session page `/session/[slotId]/[date]`.
   Bulk cancel/uncancel a whole day or range (CancelDaySheet).
@@ -39,6 +39,14 @@ crystallized rows (delegate/delete), projection collapsed into unit SPANS
   (`library-grid.tsx`). Tap a pill = pick it up (glow) + highlight their week;
   tap hour slots to drop them in. Tap an occupied slot (nothing picked) →
   `paper-slot-dialog.tsx`.
+- **Revision view (2026-07-17)** — DAY-only revision-class board, NO times:
+  weekday sections, each holds multiple group chips + individual-student
+  chips (for the groupless). `revision-timetable.tsx` +
+  `convex/revisionTimetable.ts` (`revisionClasses` table). Planner Sheets tab
+  reads a group's revision-class days via `groupSlotDays` (merged into
+  revisionDays) and can assign/move/add planned sheets onto them
+  (moveGroupSheet accepts slotless days; addPlannedSheet = extra sheet).
+  Supersedes "revision capacity = flipped slots ONLY" — see decisions.md.
 
 ## Paper classes (the Library) — student-centric (redesigned 2026-06-18)
 Deliberately SEPARATE from scheduleSlots — no sheets/scoring/engine/leaderboard.

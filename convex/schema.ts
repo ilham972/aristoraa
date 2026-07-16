@@ -958,6 +958,23 @@ export default defineSchema({
     updatedByTeacherId: v.optional(v.id("teachers")),
   }).index("by_group", ["groupId"]),
 
+  // Revision-class timetable (2026-07-17): DAY-based, no times — "who comes
+  // in for revision on which weekday". A row is one attendee on one day:
+  // either a whole group OR an individual student (for students without a
+  // group). Multiple entries per day. Supersedes "revision capacity =
+  // flipped slots ONLY": planned group sheets can now be assigned onto these
+  // days too (moveGroupSheet / addPlannedSheet).
+  revisionClasses: defineTable({
+    dayOfWeek: v.number(), // 1=Mon..7=Sun (app convention)
+    groupId: v.optional(v.id("groups")),
+    studentId: v.optional(v.id("students")),
+    createdAt: v.number(),
+    createdByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_day", ["dayOfWeek"])
+    .index("by_group", ["groupId"])
+    .index("by_student", ["studentId"]),
+
   // Per-student per-unit "did / didn't do" marks (2026-07-16, Term Planning
   // Cockpit). Existence of a row = that STUDENT has covered that unit (before
   // or outside the app) — the founder hand-corrects each student's coverage,

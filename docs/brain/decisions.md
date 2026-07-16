@@ -183,6 +183,22 @@ because Z.
   crop/PDF-only. Old per-layer dialogs deleted, ExercisePickerBody's grid
   moved into the count drawer.
 
+## Revision classes: day-only timetable (2026-07-17)
+- **SUPERSEDES "revision capacity = flipped group slots ONLY"** (2026-07-15
+  ruling). Founder now runs revision as day-based classes: a `revisionClasses`
+  row = one group OR one individual student attending one weekday — no
+  time-of-day on purpose. /groups gained a Revision view to edit this board.
+- Planned group sheets can be ASSIGNED onto revision-class days (chip pill →
+  moveGroupSheet, which now accepts slotless days) and EXTRA sheets can be
+  added on any free session/revision day (+ sheet → addPlannedSheet, same
+  pick queues — no duplicates because planned rows are already bookmarked).
+- Flipped `scheduleSlots.sessionType="revision"` slots still exist and still
+  drive per-student revision QUEUES; the new board does NOT feed queues yet —
+  follow-up if the founder asks.
+- Caveat (accepted): extra/moved sheets on non-session days are dropped and
+  NOT rebuilt by "Re-plan" (crystallize only fills skeleton session dates);
+  re-assign after a re-plan.
+
 ## Planner Sheets tab: curation + preview (2026-07-17)
 - **Unit ticks = CURATE THE UNIT** (founder chose over sheet-scoped ticks or
   view-only): unticking a question in the group Lesson Builder BANS it from

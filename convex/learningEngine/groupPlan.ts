@@ -1055,6 +1055,125 @@ export const resizePlanned = mutation({
   },
 });
 
+// Add an EXTRA planned sheet on a free day (2026-07-17) — the founder's
+// "+ sheet" in the week card: the group's session days are taken, but a
+// revision-class day (or any other free session day) can carry one more.
+// Picks from the same fresh queues as crystallize (planned rows are already
+// in the bookmark, so no duplicates); revision-class days carry no slotId.
+export const addPlannedSheet = mutation({
+  args: { groupId: v.id("groups"), date: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const now = Date.now();
+    const todayYmd = ymdFromMs(now);
+    if (args.date < todayYmd) throw new Error("That day is already gone");
+
+    const dow = dowFromYmd(args.date);
+    const slots = (
+      await ctx.db
+        .query("scheduleSlots")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    ).filter((s) => s.dayOfWeek === dow);
+    let slotId: Id<"scheduleSlots"> | undefined;
+    if (slots.length > 0) {
+      slotId = slots.reduce((a, b) => (a.startTime <= b.startTime ? a : b))._id;
+    } else {
+      const revClass = (
+        await ctx.db
+          .query("revisionClasses")
+          .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+          .collect()
+      ).some((r) => r.dayOfWeek === dow);
+      if (!revClass)
+        throw new Error(
+          "That day has no session or revision class for this group",
+        );
+    }
+    const clash = (
+      await ctx.db
+        .query("groupSheets")
+        .withIndex("by_group_date", (q) =>
+          q.eq("groupId", args.groupId).eq("date", args.date),
+        )
+        .collect()
+    ).some((r) => r.status !== "delegated");
+    if (clash) throw new Error("That day already has a sheet");
+
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const { currentUnitIdx } = skeletonInputs(state);
+    const { spiralPool, newQueue, carryItems } = await buildPickQueues(
+      ctx,
+      state,
+      currentUnitIdx,
+      now,
+    );
+
+    const size = state.mainSize;
+    const spiralCount =
+      currentUnitIdx > 0
+        ? Math.min(size - 1, Math.round(size * GROUP_SPIRAL_SHARE))
+        : 0;
+    const newCount = size - spiralCount;
+    const newPicks: Id<"questionBank">[] = [];
+    let primaryUnitId: string | null = null;
+    let newCursor = 0;
+    while (newPicks.length < newCount && newCursor < newQueue.length) {
+      const item = newQueue[newCursor++];
+      newPicks.push(item.qid as unknown as Id<"questionBank">);
+      if (primaryUnitId === null) primaryUnitId = item.unitId;
+    }
+    const spiralPicks: Id<"questionBank">[] = [];
+    let spiralCursor = 0;
+    while (
+      spiralPicks.length < spiralCount &&
+      spiralCursor < spiralPool.length
+    ) {
+      spiralPicks.push(
+        spiralPool[spiralCursor++].qid as unknown as Id<"questionBank">,
+      );
+    }
+    if (newPicks.length === 0 && spiralPicks.length === 0)
+      return { status: "exhausted" as const };
+
+    await ctx.db.insert("groupSheets", {
+      groupId: args.groupId,
+      slotId,
+      date: args.date,
+      unitId: primaryUnitId ?? state.ladders[currentUnitIdx]?.unitId ?? "",
+      newQuestionIds: newPicks,
+      spiralQuestionIds: spiralPicks,
+      status: "planned",
+      createdAt: now,
+      createdByTeacherId: teacherId ?? undefined,
+    });
+    // Consume the carry rows just absorbed (same accounting as crystallize).
+    if (carryItems.length > 0) {
+      const placed = Math.min(newCursor, carryItems.length);
+      let covered = 0;
+      for (const c of state.mainCarry) {
+        if (covered >= placed) break;
+        const n = c.questionIds.length;
+        if (covered + n <= placed)
+          await ctx.db.patch(c._id, { consumedAt: now });
+        else
+          await ctx.db.patch(c._id, {
+            questionIds: c.questionIds.slice(placed - covered),
+          });
+        covered += n;
+      }
+    }
+    return {
+      status: "ok" as const,
+      written: newPicks.length + spiralPicks.length,
+    };
+  },
+});
+
 // Log a session's unfinished tail AFTER class. The teacher picks how many
 // questions (from the END of the sheet — sessions run out of time at the
 // tail) and where they go: "main" = the whole group re-does them next Main
@@ -1804,6 +1923,134 @@ export const groupTermCoverage = query({
   },
 });
 
+// Rail rings for the Insights → Coverage "Groups" lens (2026-07-17): every
+// group's term progress in ONE query, so the founder can compare groups at a
+// glance instead of opening each planner. Deliberately NOT groupTermCoverage
+// in a loop — this skips the per-question document fetches (labels are only
+// needed once a group is tapped), which is that query's dominant cost.
+// The pct formula matches the Sheets tab summary exactly: banned questions
+// leave the denominator, so both surfaces always show the same number.
+export const groupsTermCoverageSummary = query({
+  args: { term: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const todayYmd = ymdFromMs(Date.now());
+    const groups = await ctx.db.query("groups").collect();
+
+    const rows = await Promise.all(
+      groups.map(async (g) => {
+        const base = {
+          groupId: g._id,
+          name: g.name,
+          grade: g.grade ?? null,
+        };
+        const loaded = await loadGroupPlanState(ctx, g._id, todayYmd);
+        if (loaded.status !== "ok") {
+          return {
+            ...base,
+            status: loaded.status,
+            term: null,
+            availableTerms: [] as number[],
+            pct: null,
+            doneCount: 0,
+            plannedCount: 0,
+            plannableTotal: 0,
+            needsBookCount: 0,
+          };
+        }
+        const state = loaded.state;
+
+        const availableTerms = Array.from(
+          new Set(
+            state.ladders
+              .map((l) => termFromUnitId(l.unitId))
+              .filter((t): t is number => t !== null),
+          ),
+        ).sort((a, b) => a - b);
+
+        // Same term-resolution rule as groupTermCoverage: an explicit chip
+        // wins, else the nearest upcoming exam's term, else the last term.
+        const nearestExamTerm = Object.entries(state.examDateByTerm).sort(
+          (a, b) => a[1].localeCompare(b[1]),
+        )[0]?.[0];
+        const resolvedTerm =
+          args.term ??
+          (nearestExamTerm !== undefined
+            ? Number(nearestExamTerm)
+            : (availableTerms[availableTerms.length - 1] ?? 1));
+
+        // Provenance, counts only — no question docs. materialized = taught;
+        // any other status is a future claim (planned/delegated).
+        const allSheets = await ctx.db
+          .query("groupSheets")
+          .withIndex("by_group_date", (q) => q.eq("groupId", g._id))
+          .collect();
+        const statusByQid = new Map<string, string>();
+        for (const row of allSheets) {
+          for (const qid of [...row.newQuestionIds, ...row.spiralQuestionIds]) {
+            const k = qid as unknown as string;
+            if (!statusByQid.has(k)) statusByQid.set(k, row.status);
+          }
+        }
+
+        let doneCount = 0;
+        let plannedCount = 0;
+        let plannableTotal = 0;
+        let needsBookCount = 0;
+        for (const l of state.ladders) {
+          if (termFromUnitId(l.unitId) !== resolvedTerm) continue;
+          if (l.ladder.length === 0) {
+            needsBookCount++;
+            continue;
+          }
+          const preTaught = state.preTaughtUnitIds.has(l.unitId);
+          for (const rung of l.ladder) {
+            const prov = statusByQid.get(rung.qid);
+            if (prov) {
+              if (prov === "materialized") doneCount++;
+              else plannedCount++;
+              plannableTotal++;
+            } else if (preTaught || state.seen.has(rung.qid)) {
+              doneCount++;
+              plannableTotal++;
+            } else if (state.banned.has(rung.qid)) {
+              // Excluded from the plan — never counted as covered, and it
+              // leaves the denominator so 100% stays reachable.
+            } else {
+              plannableTotal++;
+            }
+          }
+        }
+
+        return {
+          ...base,
+          status: "ok" as const,
+          term: resolvedTerm,
+          availableTerms,
+          pct:
+            plannableTotal > 0
+              ? Math.round((doneCount / plannableTotal) * 100)
+              : 0,
+          doneCount,
+          plannedCount,
+          plannableTotal,
+          needsBookCount,
+        };
+      }),
+    );
+
+    // Phantom groups (Week-view creations that were abandoned) have no members
+    // and nothing to cover — same hidden rule as the planner board.
+    return rows
+      .filter((r) => r.status !== "no-members")
+      .sort(
+        (a, b) =>
+          (b.grade ?? 0) - (a.grade ?? 0) || a.name.localeCompare(b.name),
+      );
+  },
+});
+
 // Toggle a student's "did / didn't do" mark for one unit (Term Coverage
 // Cockpit). Existence = done. Pure per-student bookmark: no sheet/point/memory
 // effects — it drives the catch-up list and each student's progress.
@@ -1965,6 +2212,14 @@ export const groupSlotDays = query({
         revisionDays.add(s.dayOfWeek);
       else mainDays.add(s.dayOfWeek);
     }
+    // Revision CLASSES (day-only timetable, 2026-07-17): days this group is
+    // booked in for revision. Merged into revisionDays — the Sheets tab
+    // treats both kinds as assignable revision capacity.
+    const revClasses = await ctx.db
+      .query("revisionClasses")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    for (const r of revClasses) revisionDays.add(r.dayOfWeek);
     return {
       mainDays: Array.from(mainDays).sort((a, b) => a - b),
       revisionDays: Array.from(revisionDays).sort((a, b) => a - b),
@@ -2086,10 +2341,24 @@ export const moveGroupSheet = mutation({
         .withIndex("by_group", (q) => q.eq("groupId", row.groupId))
         .collect()
     ).filter((s) => s.dayOfWeek === dow);
-    if (slots.length === 0)
-      throw new Error("That day has no session for this group");
-    // Earliest slot represents the (possibly fused) session.
-    const slot = slots.reduce((a, b) => (a.startTime <= b.startTime ? a : b));
+    // No timetable slot? A revision CLASS day (day-only timetable) is also a
+    // valid target — the sheet then carries no slotId.
+    let slotId: Id<"scheduleSlots"> | undefined;
+    if (slots.length > 0) {
+      // Earliest slot represents the (possibly fused) session.
+      slotId = slots.reduce((a, b) => (a.startTime <= b.startTime ? a : b))._id;
+    } else {
+      const revClass = (
+        await ctx.db
+          .query("revisionClasses")
+          .withIndex("by_group", (q) => q.eq("groupId", row.groupId))
+          .collect()
+      ).some((r) => r.dayOfWeek === dow);
+      if (!revClass)
+        throw new Error(
+          "That day has no session or revision class for this group",
+        );
+    }
     const clash = (
       await ctx.db
         .query("groupSheets")
@@ -2101,7 +2370,7 @@ export const moveGroupSheet = mutation({
     if (clash) throw new Error("That day already has a sheet");
     await ctx.db.patch(args.groupSheetId, {
       date: args.toDate,
-      slotId: slot._id,
+      slotId,
     });
     return { ok: true as const };
   },

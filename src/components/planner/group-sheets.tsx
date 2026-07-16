@@ -34,6 +34,7 @@ import {
   MoveRight,
   Plus,
   RefreshCw,
+  Repeat,
   ScanSearch,
   Sparkles,
   X,
@@ -259,6 +260,12 @@ export function GroupSheets({ grade }: { grade: number }) {
   const deleteFuturePlanned = useMutation(
     api.learningEngine.groupPlan.deleteFuturePlanned,
   );
+  const moveGroupSheetMut = useMutation(
+    api.learningEngine.groupPlan.moveGroupSheet,
+  );
+  const addPlannedSheetMut = useMutation(
+    api.learningEngine.groupPlan.addPlannedSheet,
+  );
   const unitName = useUnitName();
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
@@ -273,6 +280,14 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [highlightDate, setHighlightDate] = useState<string | null>(null);
   // Unit-curation dialog (the group Lesson Builder) — opened from a unit name.
   const [builderUnitId, setBuilderUnitId] = useState<string | null>(null);
+  // Day pickers: assign a planned sheet to a revision class this week, or
+  // add an EXTRA sheet on a free session/revision day.
+  const [assignSheet, setAssignSheet] = useState<{
+    id: Id<'groupSheets'>;
+    weekStart: string;
+    date: string;
+  } | null>(null);
+  const [addSheetWeek, setAddSheetWeek] = useState<string | null>(null);
 
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
@@ -885,9 +900,33 @@ export function GroupSheets({ grade }: { grade: number }) {
                                 >
                                   <ScanSearch className="w-3 h-3" />
                                 </button>
+                                {s.status === 'planned' && (
+                                  <button
+                                    onClick={() =>
+                                      setAssignSheet({
+                                        id: s.id,
+                                        weekStart: w.weekStart,
+                                        date: s.date,
+                                      })
+                                    }
+                                    title="Assign this sheet to a revision class"
+                                    aria-label="Assign to revision"
+                                    className="px-1.5 border-l border-border/60 text-muted-foreground hover:text-amber-500 flex items-center"
+                                  >
+                                    <Repeat className="w-3 h-3" />
+                                  </button>
+                                )}
                               </div>
                             );
                           })}
+                          <button
+                            onClick={() => setAddSheetWeek(w.weekStart)}
+                            title="Add an extra sheet on a free day this week"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-border text-[10px] font-semibold text-muted-foreground hover:text-foreground"
+                          >
+                            <Plus className="w-3 h-3" />
+                            sheet
+                          </button>
                         </div>
                         {highlightDate !== null && (
                           <div className="text-[9px] text-primary font-semibold">
@@ -1023,7 +1062,26 @@ export function GroupSheets({ grade }: { grade: number }) {
                             Rev
                           </span>
                           {DOW_LETTERS.map((_, i) => {
-                            const isRevDay = revisionDays.has(i + 1);
+                            const dow = i + 1;
+                            const date = addDaysYmd(w.weekStart, i);
+                            const isRevDay = revisionDays.has(dow);
+                            // A sheet living on a revision day renders here
+                            // (tap to open) — unless the day is also a Main
+                            // day, where the Main row already shows it.
+                            const sh = !mainDays.has(dow)
+                              ? sheetByDate.get(date)
+                              : undefined;
+                            if (sh) {
+                              return (
+                                <button
+                                  key={i}
+                                  onClick={() => setPreviewId(sh.id)}
+                                  className="h-6 rounded-md border text-[8.5px] font-bold flex items-center justify-center tabular-nums bg-amber-500/20 border-amber-500/60 text-amber-600 dark:text-amber-400"
+                                >
+                                  {sh.newCount + sh.spiralCount}
+                                </button>
+                              );
+                            }
                             return (
                               <span
                                 key={i}
@@ -1112,6 +1170,71 @@ export function GroupSheets({ grade }: { grade: number }) {
         />
       )}
 
+      {assignSheet && (
+        <DayPickerDialog
+          title="Assign to a revision class"
+          hint="The sheet moves onto the revision day you pick."
+          options={Array.from(revisionDays)
+            .sort((a, b) => a - b)
+            .map((dow) => addDaysYmd(assignSheet.weekStart, dow - 1))
+            .filter((date) => {
+              if (date < today || date === assignSheet.date) return false;
+              const occ = sheetByDate.get(date);
+              return !occ || occ.status === 'delegated';
+            })
+            .map((date) => ({ date, rev: true }))}
+          emptyText="No free revision class this week — add this group to a day on the Revision tab (home page) first."
+          onPick={async (date) => {
+            try {
+              await moveGroupSheetMut({
+                groupSheetId: assignSheet.id,
+                toDate: date,
+              });
+              toast.success('Sheet assigned to the revision class.');
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Failed to assign');
+            }
+            setAssignSheet(null);
+          }}
+          onClose={() => setAssignSheet(null)}
+        />
+      )}
+
+      {addSheetWeek && groupId && (
+        <DayPickerDialog
+          title="Add an extra sheet"
+          hint="Pick a free day — the next questions in the plan fill it."
+          options={Array.from(new Set([...mainDays, ...revisionDays]))
+            .sort((a, b) => a - b)
+            .map((dow) => ({
+              date: addDaysYmd(addSheetWeek, dow - 1),
+              rev: revisionDays.has(dow) && !mainDays.has(dow),
+            }))
+            .filter(({ date }) => {
+              if (date < today) return false;
+              const occ = sheetByDate.get(date);
+              return !occ || occ.status === 'delegated';
+            })}
+          emptyText="No free session or revision day left this week."
+          onPick={async (date) => {
+            try {
+              const res = await addPlannedSheetMut({ groupId, date });
+              if (res.status === 'ok')
+                toast.success(`Added a sheet with ${res.written} questions.`);
+              else if (res.status === 'exhausted')
+                toast.warning(
+                  'The question bank has nothing left to plan — enter more of the book.',
+                );
+              else toast.error(`Cannot add: ${res.status}`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Failed to add');
+            }
+            setAddSheetWeek(null);
+          }}
+          onClose={() => setAddSheetWeek(null)}
+        />
+      )}
+
       {builderUnitId && groupId && (
         <GroupUnitBuilderDialog
           groupId={groupId}
@@ -1121,6 +1244,79 @@ export function GroupSheets({ grade }: { grade: number }) {
         />
       )}
     </>
+  );
+}
+
+// Small bottom-sheet day picker shared by "assign to revision class" and
+// "add an extra sheet": one tap per free day, amber-tagged when the day is
+// revision capacity.
+function DayPickerDialog({
+  title,
+  hint,
+  options,
+  emptyText,
+  onPick,
+  onClose,
+}: {
+  title: string;
+  hint: string;
+  options: Array<{ date: string; rev: boolean }>;
+  emptyText: string;
+  onPick: (date: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-2 pb-[calc(4rem+env(safe-area-inset-bottom,0px)+0.5rem)] sm:pb-2"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl bg-card border border-border shadow-xl p-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-bold text-foreground flex-1">
+            {title}
+          </span>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="text-[10.5px] text-muted-foreground mb-2.5">{hint}</div>
+        {options.length === 0 ? (
+          <div className="text-[11px] text-muted-foreground italic py-2">
+            {emptyText}
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((o) => (
+              <button
+                key={o.date}
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await onPick(o.date);
+                }}
+                className={cn(
+                  'px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold disabled:opacity-50',
+                  o.rev
+                    ? 'border-amber-500/50 text-amber-500'
+                    : 'border-border text-foreground',
+                )}
+              >
+                {fmtDayMonth(o.date).weekday} {fmtDayMonth(o.date).day}
+                {o.rev && ' · rev'}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

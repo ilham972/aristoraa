@@ -13,7 +13,13 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation } from 'convex/react';
-import { ArrowUpDown, BookOpen, Check, ChevronDown } from 'lucide-react';
+import {
+  ArrowUpDown,
+  BookOpen,
+  Check,
+  ChevronDown,
+  RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { cn } from '@/lib/utils';
