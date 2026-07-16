@@ -56,6 +56,7 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
+import { sortByBookOrder } from '@/lib/book-order';
 import { api, type Id } from '@/lib/convex';
 import { findUnit } from '@/lib/curriculum-data';
 import { describeError } from '@/lib/sheets/scope';
@@ -66,11 +67,24 @@ import { toast } from 'sonner';
 type PersonalKey = 'warmup' | 'revision' | 'examPrep';
 type TabKey = 'main' | PersonalKey;
 
-const PERSONAL_TABS: Array<{ key: PersonalKey; label: string; hint: string }> = [
-  { key: 'warmup', label: 'Warm-up', hint: 'each student’s recent mistakes, easiest first' },
-  { key: 'revision', label: 'Revision', hint: 'each student’s forgetting curve — due concepts across all units' },
-  { key: 'examPrep', label: 'Exam prep', hint: 'past-paper questions on each student’s mastered concepts' },
-];
+const PERSONAL_TABS: Array<{ key: PersonalKey; label: string; hint: string }> =
+  [
+    {
+      key: 'warmup',
+      label: 'Warm-up',
+      hint: 'each student’s recent mistakes, easiest first',
+    },
+    {
+      key: 'revision',
+      label: 'Revision',
+      hint: 'each student’s forgetting curve — due concepts across all units',
+    },
+    {
+      key: 'examPrep',
+      label: 'Exam prep',
+      hint: 'past-paper questions on each student’s mastered concepts',
+    },
+  ];
 
 export type PlannerRosterEntry = {
   studentId: Id<'students'>;
@@ -123,7 +137,9 @@ export function SheetPlannerPanel({
   };
 
   // ── Personal-section targets (steppers on their tabs) ───────────────
-  const [targets, setTargets] = useState<Partial<Record<PersonalKey, number>>>({});
+  const [targets, setTargets] = useState<Partial<Record<PersonalKey, number>>>(
+    {},
+  );
   const [busy, setBusy] = useState(false);
 
   // ── The taught unit + tick state ────────────────────────────────────
@@ -137,7 +153,9 @@ export function SheetPlannerPanel({
   // order IS difficulty (persists pickerOrder + rewrites difficulty 1-5).
   const [bookView, setBookView] = useState(false);
   const [arranging, setArranging] = useState(false);
-  const [arrangeOrder, setArrangeOrder] = useState<Record<string, string[]>>({});
+  const [arrangeOrder, setArrangeOrder] = useState<Record<string, string[]>>(
+    {},
+  );
 
   const tickedArr = useMemo(() => Array.from(ticked), [ticked]);
   const cleanedTargets = useMemo(() => {
@@ -185,7 +203,9 @@ export function SheetPlannerPanel({
     unitId ? { unitId } : 'skip',
   );
   const saveLesson = useMutation(api.learningEngine.lessonSets.saveLessonSet);
-  const deleteLesson = useMutation(api.learningEngine.lessonSets.deleteLessonSet);
+  const deleteLesson = useMutation(
+    api.learningEngine.lessonSets.deleteLessonSet,
+  );
   const saveSheet = useMutation(api.learningEngine.planner.saveSheetForStudent);
   const reorderQuestions = useMutation(
     api.learningEngine.lessonSets.reorderConceptQuestions,
@@ -199,7 +219,9 @@ export function SheetPlannerPanel({
       if (!plan) return; // wait for picks
       seededForUnit.current = unitId;
       setTicked(
-        new Set((plan.main ?? []).map((p) => p.question._id as unknown as string)),
+        new Set(
+          (plan.main ?? []).map((p) => p.question._id as unknown as string),
+        ),
       );
     } else {
       seededForUnit.current = unitId;
@@ -212,7 +234,10 @@ export function SheetPlannerPanel({
   }, [unitId, frontierUnitId, plan]);
 
   const algoPicks = useMemo(
-    () => new Set((plan?.main ?? []).map((p) => p.question._id as unknown as string)),
+    () =>
+      new Set(
+        (plan?.main ?? []).map((p) => p.question._id as unknown as string),
+      ),
     [plan],
   );
 
@@ -272,28 +297,31 @@ export function SheetPlannerPanel({
     let t = 0;
     for (const c of catalog.concepts) {
       for (const q of c.questions) {
-        if (ticked.has(q.questionId as unknown as string)) t += q.expectedTimeMin ?? 4;
+        if (ticked.has(q.questionId as unknown as string))
+          t += q.expectedTimeMin ?? 4;
       }
     }
     return t;
   }, [catalog, ticked]);
 
-  const unitName = unitId ? findUnit(unitId)?.unit.name ?? unitId : null;
+  const unitName = unitId ? (findUnit(unitId)?.unit.name ?? unitId) : null;
   const isOffDay = plan?.status === 'off-day';
   const loading = plan === undefined;
 
   const personalCount = (k: PersonalKey): number =>
     targets[k] ??
     (k === 'warmup'
-      ? plan?.warmup?.length ?? 0
+      ? (plan?.warmup?.length ?? 0)
       : k === 'revision'
-        ? plan?.revision?.length ?? 0
-        : plan?.examPrep?.length ?? 0);
+        ? (plan?.revision?.length ?? 0)
+        : (plan?.examPrep?.length ?? 0));
 
   // ── Save lesson set ─────────────────────────────────────────────────
   const onSaveLesson = async () => {
     if (!unitId || orderedTicks.length === 0) return;
-    const name = window.prompt('Lesson name (e.g. "Layer 1 — intro", "Layer 2 — hard"):');
+    const name = window.prompt(
+      'Lesson name (e.g. "Layer 1 — intro", "Layer 2 — hard"):',
+    );
     if (!name || name.trim().length === 0) return;
     try {
       const res = await saveLesson({
@@ -301,7 +329,9 @@ export function SheetPlannerPanel({
         name: name.trim(),
         questionIds: orderedTicks as Id<'questionBank'>[],
       });
-      toast.success(res.updated ? `"${name.trim()}" updated` : `"${name.trim()}" saved`);
+      toast.success(
+        res.updated ? `"${name.trim()}" updated` : `"${name.trim()}" saved`,
+      );
     } catch (e) {
       toast.error(describeError(e));
     }
@@ -331,7 +361,8 @@ export function SheetPlannerPanel({
             : {}),
         });
         if (res.status === 'ok') saved += 1;
-        else if (res.status === 'off-day') errs.push(`${r.studentName}: off day`);
+        else if (res.status === 'off-day')
+          errs.push(`${r.studentName}: off day`);
       } catch (e) {
         errs.push(`${r.studentName}: ${describeError(e)}`);
       }
@@ -353,9 +384,9 @@ export function SheetPlannerPanel({
 
   const activeConcept =
     catalog && conceptFilter !== 'all'
-      ? catalog.concepts.find(
+      ? (catalog.concepts.find(
           (c) => (c.conceptId as unknown as string) === conceptFilter,
-        ) ?? null
+        ) ?? null)
       : null;
   const visibleConcepts = catalog
     ? activeConcept
@@ -402,7 +433,9 @@ export function SheetPlannerPanel({
                   : 'bg-muted/40 border-border text-muted-foreground',
                 r.locked && 'opacity-40',
               )}
-              title={r.locked ? 'Sheet already printed — delete it first' : undefined}
+              title={
+                r.locked ? 'Sheet already printed — delete it first' : undefined
+              }
             >
               {on && <Check className="w-3 h-3" />}
               {r.studentName.split(' ')[0]}
@@ -413,16 +446,14 @@ export function SheetPlannerPanel({
 
       {/* Section tabs */}
       <div className="shrink-0 flex px-2 border-b border-border">
-        {(
-          [
-            { key: 'main' as TabKey, label: 'Main', count: orderedTicks.length },
-            ...PERSONAL_TABS.map((t) => ({
-              key: t.key as TabKey,
-              label: t.label,
-              count: personalCount(t.key),
-            })),
-          ]
-        ).map((t) => (
+        {[
+          { key: 'main' as TabKey, label: 'Main', count: orderedTicks.length },
+          ...PERSONAL_TABS.map((t) => ({
+            key: t.key as TabKey,
+            label: t.label,
+            count: personalCount(t.key),
+          })),
+        ].map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -494,7 +525,9 @@ export function SheetPlannerPanel({
                   <button
                     onClick={() =>
                       setTicked(
-                        new Set(ls.questionIds.map((q) => q as unknown as string)),
+                        new Set(
+                          ls.questionIds.map((q) => q as unknown as string),
+                        ),
                       )
                     }
                     className="px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-muted/70"
@@ -598,7 +631,9 @@ export function SheetPlannerPanel({
                     count={`${nTicked}/${c.questions.length}`}
                     active={conceptFilter === k}
                     warn={c.questions.length === 0}
-                    onClick={() => setConceptFilter(conceptFilter === k ? 'all' : k)}
+                    onClick={() =>
+                      setConceptFilter(conceptFilter === k ? 'all' : k)
+                    }
                   />
                 );
               })}
@@ -611,12 +646,17 @@ export function SheetPlannerPanel({
               {[1, 2, 3, 4].map((i) => (
                 <div
                   key={i}
-                  className={cn('h-20 bg-muted rounded-lg', i === 1 && 'col-span-2')}
+                  className={cn(
+                    'h-20 bg-muted rounded-lg',
+                    i === 1 && 'col-span-2',
+                  )}
                 />
               ))}
             </div>
           ) : catalog === null ? (
-            <div className="text-[11px] text-muted-foreground">Not signed in.</div>
+            <div className="text-[11px] text-muted-foreground">
+              Not signed in.
+            </div>
           ) : catalog.concepts.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border/60 p-4 text-center text-[11px] text-muted-foreground">
               No concepts found for this unit.
@@ -639,7 +679,9 @@ export function SheetPlannerPanel({
                       questions={c.questions}
                       orderIds={
                         arrangeOrder[c.conceptId as unknown as string] ??
-                        c.questions.map((q) => q.questionId as unknown as string)
+                        c.questions.map(
+                          (q) => q.questionId as unknown as string,
+                        )
                       }
                       onReorder={(next) => {
                         setArrangeOrder((s) => ({
@@ -647,22 +689,29 @@ export function SheetPlannerPanel({
                           [c.conceptId as unknown as string]: next,
                         }));
                         reorderQuestions({
-                          orderedQuestionIds: next as unknown as Id<'questionBank'>[],
+                          orderedQuestionIds:
+                            next as unknown as Id<'questionBank'>[],
                         }).catch((e) => toast.error(describeError(e)));
                       }}
                     />
                   ) : (
                     <div className="grid grid-cols-2 gap-1.5">
-                      {(bookView ? sortByBookOrder(c.questions) : c.questions).map((q, qi, qs) => {
+                      {(bookView
+                        ? sortByBookOrder(c.questions)
+                        : c.questions
+                      ).map((q, qi, qs) => {
                         const k = q.questionId as unknown as string;
                         const on = ticked.has(k);
                         const byAlgo = algoPicks.has(k);
                         const stems = q.stems ?? [];
                         const stemKey =
                           stems.length > 0
-                            ? stems.map((s) => s.stemId as unknown as string).join('|')
+                            ? stems
+                                .map((s) => s.stemId as unknown as string)
+                                .join('|')
                             : null;
-                        const prevStems = qi > 0 ? qs[qi - 1].stems ?? [] : [];
+                        const prevStems =
+                          qi > 0 ? (qs[qi - 1].stems ?? []) : [];
                         const prevStemKey =
                           prevStems.length > 0
                             ? prevStems
@@ -673,7 +722,9 @@ export function SheetPlannerPanel({
                         // side by side at the SAME page scale as a full-width
                         // crop — text stays equally readable in both tracks.
                         const wide =
-                          !!q.overrideImageUrl || !q.cropBox || q.cropBox.w > 0.5;
+                          !!q.overrideImageUrl ||
+                          !q.cropBox ||
+                          q.cropBox.w > 0.5;
                         return (
                           <Fragment key={k}>
                             {/* Stem row — shown once per run of siblings */}
@@ -723,7 +774,10 @@ export function SheetPlannerPanel({
                                   )}
                                 >
                                   {on && (
-                                    <Check className="w-2.5 h-2.5" strokeWidth={3.5} />
+                                    <Check
+                                      className="w-2.5 h-2.5"
+                                      strokeWidth={3.5}
+                                    />
                                   )}
                                 </span>
                                 <span className="text-[9px] font-semibold text-foreground truncate">
@@ -761,10 +815,10 @@ export function SheetPlannerPanel({
             const meta = PERSONAL_TABS.find((t) => t.key === tab)!;
             const picks =
               tab === 'warmup'
-                ? plan?.warmup ?? []
+                ? (plan?.warmup ?? [])
                 : tab === 'revision'
-                  ? plan?.revision ?? []
-                  : plan?.examPrep ?? [];
+                  ? (plan?.revision ?? [])
+                  : (plan?.examPrep ?? []);
             const unitsPulled = Array.from(
               new Set(picks.map((p) => p.concept.unitId)),
             ).map((u) => findUnit(u)?.unit.name ?? u);
@@ -776,20 +830,28 @@ export function SheetPlannerPanel({
                       <div className="text-xs font-semibold text-foreground">
                         {meta.label} · personal per student
                       </div>
-                      <div className="text-[10px] text-muted-foreground">{meta.hint}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {meta.hint}
+                      </div>
                     </div>
                     <Stepper
                       value={personalCount(tab as PersonalKey)}
                       onDec={() =>
                         setTargets((t) => ({
                           ...t,
-                          [tab]: Math.max(0, personalCount(tab as PersonalKey) - 1),
+                          [tab]: Math.max(
+                            0,
+                            personalCount(tab as PersonalKey) - 1,
+                          ),
                         }))
                       }
                       onInc={() =>
                         setTargets((t) => ({
                           ...t,
-                          [tab]: Math.min(30, personalCount(tab as PersonalKey) + 1),
+                          [tab]: Math.min(
+                            30,
+                            personalCount(tab as PersonalKey) + 1,
+                          ),
                         }))
                       }
                       disabled={loading || busy}
@@ -801,16 +863,19 @@ export function SheetPlannerPanel({
                     Preview for {studentName.split(' ')[0]}
                   </div>
                   {loading ? (
-                    <div className="text-[11px] text-muted-foreground">loading…</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      loading…
+                    </div>
                   ) : picks.length === 0 ? (
                     <div className="text-[11px] text-muted-foreground italic">
                       nothing to pull yet
                     </div>
                   ) : (
                     <div className="text-[11px] text-muted-foreground">
-                      {picks.length} question{picks.length === 1 ? '' : 's'} from{' '}
-                      {unitsPulled.slice(0, 4).join(' · ')}
-                      {unitsPulled.length > 4 && ` +${unitsPulled.length - 4} more`}
+                      {picks.length} question{picks.length === 1 ? '' : 's'}{' '}
+                      from {unitsPulled.slice(0, 4).join(' · ')}
+                      {unitsPulled.length > 4 &&
+                        ` +${unitsPulled.length - 4} more`}
                     </div>
                   )}
                   <div className="mt-1 text-[10px] text-muted-foreground/80">
@@ -911,7 +976,11 @@ function LessonCrop({
 }) {
   const thumbUrl = crop.pageImageUrlSmall || crop.pageImageUrl;
   const isOverride = !!crop.overrideImageUrl;
-  const [dims, setDims] = useState<{ url: string; w: number; h: number } | null>(null);
+  const [dims, setDims] = useState<{
+    url: string;
+    w: number;
+    h: number;
+  } | null>(null);
   const [zoomOpen, setZoomOpen] = useState(false);
 
   useEffect(() => {
@@ -949,7 +1018,8 @@ function LessonCrop({
 
   const safeW = Math.max(crop.cropBox.w, 0.001);
   const safeH = Math.max(crop.cropBox.h, 0.001);
-  const natural = dims && dims.url === thumbUrl ? { w: dims.w, h: dims.h } : null;
+  const natural =
+    dims && dims.url === thumbUrl ? { w: dims.w, h: dims.h } : null;
   const imgAspect = natural ? natural.w / natural.h : PAGE_ASPECT_FALLBACK;
   const cropAspect = Math.max(0.05, (imgAspect * safeW) / safeH);
   // background-position percentage p aligns p% of the image with p% of the
@@ -1013,49 +1083,8 @@ function LessonCrop({
   );
 }
 
-// ── Book-order lens ─────────────────────────────────────────────────────
-// Sorts a concept's questions by their textbook identity ("3" < "3.a" <
-// "3.a.ii" < "12.b") so families sit together and stems never repeat.
-// VIEW ONLY — tick/print order stays the canonical easy-first list.
-const ROMAN_ONLY = /^[ivx]+$/;
-const ROMAN_VALS: Record<string, number> = { i: 1, v: 5, x: 10 };
-function romanVal(s: string): number {
-  let total = 0;
-  for (let i = 0; i < s.length; i++) {
-    const v0 = ROMAN_VALS[s[i]] ?? 0;
-    const v1 = i + 1 < s.length ? ROMAN_VALS[s[i + 1]] ?? 0 : 0;
-    total += v0 < v1 ? -v0 : v0;
-  }
-  return total;
-}
-function cmpSeg(a: string, b: string): number {
-  const na = parseInt(a, 10);
-  const nb = parseInt(b, 10);
-  const aNum = Number.isFinite(na);
-  const bNum = Number.isFinite(nb);
-  if (aNum && bNum && na !== nb) return na - nb;
-  if (aNum !== bNum) return aNum ? -1 : 1; // numbered questions first
-  if (!aNum && ROMAN_ONLY.test(a) && ROMAN_ONLY.test(b)) {
-    const d = romanVal(a) - romanVal(b);
-    if (d !== 0) return d; // "ix" before "x"; single i/v/x match alpha order
-  }
-  return a.localeCompare(b);
-}
-function cmpLabel(a: string | null, b: string | null): number {
-  if (!a || !b) return a ? -1 : b ? 1 : 0; // unlabeled sink to the end
-  const as = a.split('.');
-  const bs = b.split('.');
-  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
-    if (as[i] === undefined) return -1; // "3" before "3.a"
-    if (bs[i] === undefined) return 1;
-    const d = cmpSeg(as[i].trim().toLowerCase(), bs[i].trim().toLowerCase());
-    if (d !== 0) return d;
-  }
-  return 0;
-}
-function sortByBookOrder<T extends { label: string | null }>(qs: T[]): T[] {
-  return [...qs].sort((a, b) => cmpLabel(a.label, b.label));
-}
+// Book-order lens sort now lives in src/lib/book-order.ts (shared with the
+// planner's per-week question grids).
 
 // ── Arrange mode: drag order = difficulty ───────────────────────────────
 // Mirror of the backend bucket formula in reorderConceptQuestions — the dN
@@ -1132,8 +1161,14 @@ function ArrangeRow({
   index: number;
   count: number;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
   return (
     <div
       ref={setNodeRef}

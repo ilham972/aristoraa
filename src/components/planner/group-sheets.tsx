@@ -12,10 +12,10 @@
 //   the ring outline is term progress (dim teal = covered before this week,
 //   bright emerald = what this week adds), with the exam as a red flag stop
 //   on the same line. All weeks fit on one screen, no scrolling. Tapping a
-//   station fills the fixed right card with that week's detail (7+7 day
-//   grid, session chips, book-order question grids). When the question bank
-//   runs dry (book entry hasn't reached later units) an amber banner says
-//   so instead of the old silent stop.
+//   station fills the fixed right card with that week's detail (session
+//   chips, book-order question grids, horizontal 7+7 day strip at the
+//   bottom). When the question bank runs dry (book entry hasn't reached
+//   later units) an amber banner says so instead of the old silent stop.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
+import { sortByBookOrder } from '@/lib/book-order';
 import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
@@ -314,11 +315,12 @@ export function GroupSheets({ grade }: { grade: number }) {
     return out;
   }, [list]);
 
-  // Per-week book-order grids: for each unit taught that week, its questions in
-  // book order, each marked by what THIS week does with it — new pick, review
-  // pick, picked another week, or not yet. Built from coverage (every question
-  // carries the sheetDate it landed on). Units with no pick this week are
-  // dropped from the week.
+  // Per-week question grids: for each unit taught that week, its questions in
+  // BOOK order (coverage returns the ladder = pick order, so we re-sort by
+  // label — the point is seeing WHERE in the book the algorithm's picks
+  // landed, even when it jumped around), each marked by what THIS week does
+  // with it — new pick, review pick, picked another week, or not yet. Units
+  // with no pick this week are dropped from the week.
   const weekGrids = useMemo(() => {
     const m = new Map<
       string,
@@ -362,7 +364,8 @@ export function GroupSheets({ grade }: { grade: number }) {
             mark,
           };
         });
-        if (picks > 0) units.push({ unitId: u.unitId, boxes });
+        if (picks > 0)
+          units.push({ unitId: u.unitId, boxes: sortByBookOrder(boxes) });
       }
       m.set(w.weekStart, units);
     }
@@ -739,7 +742,6 @@ export function GroupSheets({ grade }: { grade: number }) {
                     weeks.find((x) => x.weekStart === selectedWeek) ?? weeks[0];
                   const wd = fmtDayMonth(w.weekStart);
                   const total = w.newTotal + w.reviewTotal;
-                  const newPct = total > 0 ? (w.newTotal / total) * 100 : 0;
                   const grids = weekGrids.get(w.weekStart) ?? [];
                   const weekAfterExam =
                     exam !== null && w.weekStart > exam.date;
@@ -767,17 +769,8 @@ export function GroupSheets({ grade }: { grade: number }) {
                             {total}q · {w.sheets.length}sh
                           </span>
                         </div>
-                        {/* tiny new/review mix bar */}
-                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden flex mt-2">
-                          <div
-                            className="h-full bg-teal-400"
-                            style={{ width: `${newPct}%` }}
-                          />
-                          <div
-                            className="h-full bg-amber-400"
-                            style={{ width: `${100 - newPct}%` }}
-                          />
-                        </div>
+                        {/* Counts, not a mix bar — a two-color composition
+                            bar is always 100% full, so it said nothing. */}
                         <div className="flex gap-3 mt-1 text-[8.5px]">
                           <span className="text-teal-500 font-semibold">
                             {w.newTotal} new
@@ -810,78 +803,6 @@ export function GroupSheets({ grade }: { grade: number }) {
                       </div>
 
                       <div className="px-3 pb-3 border-t border-border/60 pt-2.5 space-y-3 overflow-y-auto">
-                        {/* 7+7 day grid: Main + Revision, Mon→Sun. Filled Main
-                            box = a sheet that day (tap to open); Revision box =
-                            a revision session that day. */}
-                        <div className="flex items-start gap-3">
-                          <div className="text-[9px] text-muted-foreground leading-[1.6rem] pt-4">
-                            {DOW_LETTERS.map((L, i) => (
-                              <div key={i} className="h-6">
-                                {L}
-                              </div>
-                            ))}
-                          </div>
-                          {(['Main', 'Rev'] as const).map((col) => (
-                            <div key={col} className="text-center">
-                              <div className="text-[8.5px] font-semibold text-muted-foreground mb-1">
-                                {col}
-                              </div>
-                              <div className="space-y-1">
-                                {DOW_LETTERS.map((_, i) => {
-                                  const dow = i + 1;
-                                  const date = addDaysYmd(w.weekStart, i);
-                                  if (col === 'Main') {
-                                    const isMainDay = mainDays.has(dow);
-                                    const sh = sheetByDate.get(date);
-                                    if (!isMainDay && !sh)
-                                      return (
-                                        <div key={i} className="w-7 h-6" />
-                                      );
-                                    return (
-                                      <button
-                                        key={i}
-                                        onClick={() =>
-                                          sh && setPreviewId(sh.id)
-                                        }
-                                        disabled={!sh}
-                                        className={cn(
-                                          'w-7 h-6 rounded-md border text-[8.5px] font-bold flex items-center justify-center tabular-nums',
-                                          sh
-                                            ? 'bg-primary/15 border-primary/50 text-primary'
-                                            : 'border-dashed border-border text-muted-foreground/40',
-                                        )}
-                                      >
-                                        {sh ? sh.newCount + sh.spiralCount : ''}
-                                      </button>
-                                    );
-                                  }
-                                  const isRevDay = revisionDays.has(dow);
-                                  return (
-                                    <div
-                                      key={i}
-                                      className={cn(
-                                        'w-7 h-6 rounded-md border flex items-center justify-center',
-                                        isRevDay
-                                          ? 'bg-amber-500/15 border-amber-500/50 text-amber-500'
-                                          : 'border-dashed border-border/60',
-                                      )}
-                                    >
-                                      {isRevDay && (
-                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ))}
-                          <div className="flex-1 text-[8.5px] text-muted-foreground pt-4 leading-snug">
-                            Tap a Main box to open that day&rsquo;s sheet.
-                            Revision days are marked; moving sheets onto them
-                            comes next.
-                          </div>
-                        </div>
-
                         {/* This week's sessions — tap to preview the sheet */}
                         <div className="flex flex-wrap gap-1.5">
                           {w.sheets.map((s) => {
@@ -980,6 +901,69 @@ export function GroupSheets({ grade }: { grade: number }) {
                             </span>
                           </div>
                         )}
+
+                        {/* 7+7 day strip — last row, horizontal Mon→Sun so it
+                            tucks under everything else. Filled Main box = a
+                            sheet that day (tap to open); amber Rev box = a
+                            revision session that day. */}
+                        <div className="grid grid-cols-[auto_repeat(7,minmax(0,1fr))] gap-1 items-center pt-2 border-t border-border/60">
+                          <span />
+                          {DOW_LETTERS.map((L, i) => (
+                            <span
+                              key={i}
+                              className="text-center text-[8.5px] text-muted-foreground"
+                            >
+                              {L}
+                            </span>
+                          ))}
+                          <span className="text-[8.5px] font-semibold text-muted-foreground pr-1.5">
+                            Main
+                          </span>
+                          {DOW_LETTERS.map((_, i) => {
+                            const dow = i + 1;
+                            const date = addDaysYmd(w.weekStart, i);
+                            const isMainDay = mainDays.has(dow);
+                            const sh = sheetByDate.get(date);
+                            if (!isMainDay && !sh)
+                              return <span key={i} className="h-6" />;
+                            return (
+                              <button
+                                key={i}
+                                onClick={() => sh && setPreviewId(sh.id)}
+                                disabled={!sh}
+                                className={cn(
+                                  'h-6 rounded-md border text-[8.5px] font-bold flex items-center justify-center tabular-nums',
+                                  sh
+                                    ? 'bg-primary/15 border-primary/50 text-primary'
+                                    : 'border-dashed border-border text-muted-foreground/40',
+                                )}
+                              >
+                                {sh ? sh.newCount + sh.spiralCount : ''}
+                              </button>
+                            );
+                          })}
+                          <span className="text-[8.5px] font-semibold text-muted-foreground pr-1.5">
+                            Rev
+                          </span>
+                          {DOW_LETTERS.map((_, i) => {
+                            const isRevDay = revisionDays.has(i + 1);
+                            return (
+                              <span
+                                key={i}
+                                className={cn(
+                                  'h-6 rounded-md border flex items-center justify-center',
+                                  isRevDay
+                                    ? 'bg-amber-500/15 border-amber-500/50'
+                                    : 'border-dashed border-border/60',
+                                )}
+                              >
+                                {isRevDay && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   );

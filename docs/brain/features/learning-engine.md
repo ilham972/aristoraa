@@ -38,19 +38,19 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   days, levers — `groupTermCalendar`). Forecast: grade rollup. Tracks +
   Exams (moved FROM /algorithm; grade×term grid + Quick entry).
 - Sheets tab = the CONTROL ROOM (2026-07-16): "Run all term sheets"
-  (crystallize, 180d cap) + "Re-plan" (deleteFuturePlanned + rebuild after
-  Lesson-Builder reorders); amber banner when the bank runs dry
-  (exhausted/unplannedSessions). Coverage collapses to a summary = TERM
+  (crystallize, 180d cap) + "Re-plan" (deleteFuturePlanned + rebuild); amber
+  banner when the bank runs dry. Coverage collapses to a summary = TERM
   COVERAGE COCKPIT (`groupTermCoverage` question boxes + tap-provenance,
   per-student unit marks, UnitArrangeDialog drag=difficulty, one-tap
   "earlier terms taught"). Timeline = METRO-LINE MASTER/DETAIL: left rail of
   week ring-stations (ring = term progress, dim teal before / bright emerald
   this week's delta; exam = rose flag terminus; today = pulsing dot; all
   weeks visible, no scroll; circle-only on phones) + fixed sticky detail
-  card per tapped week (mix bar; cumulative bar red past exam — crystallize
-  ignores the exam, overshoot shown not prevented; 7+7 day grid
-  `groupSlotDays`; book-order pick grids). Drawer ‹› nav + planned-row
-  actions: resize, arrange, skip, move. TODO: group-scoped Lesson Builder.
+  card per tapped week: new/review counts (mix bar dropped — always 100%),
+  cumulative bar (red past exam; crystallize ignores the exam, overshoot
+  shown not prevented), pick grids in TRUE book order (src/lib/book-order.ts
+  — coverage returns ladder order), horizontal 7+7 day strip LAST
+  (`groupSlotDays`). Drawer ‹› nav + planned-row actions. TODO: group Lesson Builder.
 - `/algorithm` — inspection only (Coverage, Blueprint, Path; stale tabs →
   /planner). `/algorithm/exam-calendar` — exam mode MANUAL (`examModeActive`
   + daily alert cron). `/algorithm/scoring` — weights (`difficultyTab.ts`).
