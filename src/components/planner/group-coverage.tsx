@@ -28,7 +28,7 @@ type QBox = {
   difficulty: number;
   pastPaper: boolean;
   section: 'new' | 'spiral' | null;
-  state: 'done' | 'planned' | 'unseen';
+  state: 'done' | 'planned' | 'unseen' | 'banned';
   sheetDate: string | null;
   sheetStatus: string | null;
 };
@@ -39,6 +39,7 @@ type UnitRow = {
   totalQuestions: number;
   doneCount: number;
   plannedCount: number;
+  bannedCount: number;
   unseenCount: number;
   hasBook: boolean;
   preTaught: boolean;
@@ -68,10 +69,13 @@ export function GroupCoverage({
   // Same query+args as the parent's copy → deduped by the Convex client, so
   // the week grids in GroupSheets and this summary share one subscription and
   // one term selection.
-  const coverage = useCachedQuery(api.learningEngine.groupPlan.groupTermCoverage, {
-    groupId,
-    ...(term !== null ? { term } : {}),
-  });
+  const coverage = useCachedQuery(
+    api.learningEngine.groupPlan.groupTermCoverage,
+    {
+      groupId,
+      ...(term !== null ? { term } : {}),
+    },
+  );
   const setDone = useMutation(api.learningEngine.groupPlan.setStudentUnitDone);
   const setStartingPoint = useMutation(
     api.learningEngine.groupPlan.setGroupStartingPoint,
@@ -164,8 +168,8 @@ export function GroupCoverage({
               <span className="font-semibold text-amber-600 dark:text-amber-400">
                 This group&rsquo;s plan still starts at Term 1.
               </span>{' '}
-              If you already taught the earlier terms in class, mark them done so
-              the whole-term build starts at Term {activeTerm}.
+              If you already taught the earlier terms in class, mark them done
+              so the whole-term build starts at Term {activeTerm}.
             </div>
             <button
               onClick={() =>
@@ -368,7 +372,10 @@ function UnitAccordion({
                           'bg-primary/15 border-primary/50 text-primary',
                         q.state === 'unseen' &&
                           'bg-muted/60 border-border text-muted-foreground',
-                        isSel && 'ring-2 ring-primary ring-offset-1 ring-offset-card',
+                        q.state === 'banned' &&
+                          'bg-transparent border-dashed border-rose-500/40 text-rose-500/60 line-through',
+                        isSel &&
+                          'ring-2 ring-primary ring-offset-1 ring-offset-card',
                       )}
                     >
                       {shortLabel(q.label, i)}
@@ -413,19 +420,25 @@ function UnitAccordion({
                   <div className="text-muted-foreground mt-0.5">
                     {selected.state === 'unseen' &&
                       'Not picked yet — will be served by a future sheet.'}
+                    {selected.state === 'banned' &&
+                      'Excluded from the plan (unticked in the unit curation).'}
                     {selected.state !== 'unseen' && selected.sheetDate && (
                       <>
                         {selected.state === 'done' ? 'Taught' : 'Planned'} on{' '}
                         <b className="text-foreground">
                           {fmtWeekdayDate(selected.sheetDate)}
                         </b>{' '}
-                        as {selected.section === 'spiral' ? 'spiral review' : 'new work'}
+                        as{' '}
+                        {selected.section === 'spiral'
+                          ? 'spiral review'
+                          : 'new work'}
                         {selected.sheetStatus === 'delegated' &&
                           ' · delegated to Revision'}
                         .
                       </>
                     )}
-                    {selected.state !== 'unseen' && !selected.sheetDate &&
+                    {selected.state !== 'unseen' &&
+                      !selected.sheetDate &&
                       'Already covered (before the app or in per-student mode).'}
                   </div>
                 </div>

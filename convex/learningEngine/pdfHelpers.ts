@@ -12,7 +12,11 @@
 //       storage URL + concept-name footnote
 //   setPdfStorageId(sheetId, storageId) → patches the sheet after render.
 
-import { internalQuery, internalMutation } from "../_generated/server";
+import {
+  internalQuery,
+  internalMutation,
+  type QueryCtx,
+} from "../_generated/server";
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import {
@@ -94,6 +98,152 @@ export type QuestionForRender = {
   stemAttachments: StemAttachment[];
 };
 
+// Shared enrichment core — joins each picked question with its crop, source-
+// page URL, typed override, concept footnote and glued stems. Used by both
+// the per-student sheet render and the planned-group-sheet preview render so
+// the two can never drift apart.
+function makeRenderEnricher(
+  ctx: QueryCtx,
+  integrityByQId: Map<string, CropIntegrityWithMessage>,
+) {
+  // Resolve a textbookPage or pastPaperPage to a storage URL.
+  const pageUrlFor = async (q: {
+    textbookPageId?: Id<"textbookPages">;
+    pastPaperPageId?: Id<"pastPaperPages">;
+  }): Promise<string | null> => {
+    if (q.textbookPageId) {
+      const page = await ctx.db.get(q.textbookPageId);
+      if (page) return await ctx.storage.getUrl(page.storageId);
+    } else if (q.pastPaperPageId) {
+      const page = await ctx.db.get(q.pastPaperPageId);
+      if (page) return await ctx.storage.getUrl(page.storageId);
+    }
+    return null;
+  };
+
+  // Resolve a typed-override snapshot to a fetchable URL + print size.
+  const overrideFor = async (q: {
+    overrideRender?: {
+      storageId: Id<"_storage">;
+      widthMm: number;
+      heightMm: number;
+    };
+  }): Promise<OverrideRenderForPdf | null> => {
+    if (!q.overrideRender) return null;
+    const url = await ctx.storage.getUrl(q.overrideRender.storageId);
+    if (!url) return null;
+    return {
+      url,
+      widthMm: q.overrideRender.widthMm,
+      heightMm: q.overrideRender.heightMm,
+    };
+  };
+
+  // Resolve stem attachments for a picked sub-question / level-3-leaf
+  // crop. Both "ok-sub-with-stem" and "ok-leaf3-with-stems" expose the
+  // same `stemQuestionIds` field (level-3 packs mainQ stems first, then
+  // sub-stems, in print order). For other integrity kinds → [] (whole
+  // questions have no stem; blocking kinds throw before render so the
+  // field never gets read).
+  const resolveStemAttachments = async (
+    integrity: CropIntegrityWithMessage,
+  ): Promise<QuestionForRender["stemAttachments"]> => {
+    if (
+      integrity.kind !== "ok-sub-with-stem" &&
+      integrity.kind !== "ok-leaf3-with-stems"
+    ) {
+      return [];
+    }
+    const stems: QuestionForRender["stemAttachments"] = [];
+    for (const sid of integrity.stemQuestionIds) {
+      const stemDoc = await ctx.db.get(sid);
+      if (!stemDoc) continue;
+      const url = await pageUrlFor(stemDoc);
+      stems.push({
+        questionId: sid,
+        cropBox: stemDoc.cropBox ?? null,
+        pageImageUrl: url,
+        override: await overrideFor(stemDoc),
+      });
+    }
+    return stems;
+  };
+
+  return async (ids: Id<"questionBank">[]): Promise<QuestionForRender[]> => {
+    const out: QuestionForRender[] = [];
+    for (const qid of ids) {
+      const q = await ctx.db.get(qid);
+      if (!q) {
+        // Question deleted after sheet save. Render a placeholder marker
+        // so the slot ordering doesn't shift silently.
+        out.push({
+          questionId: qid,
+          cropBox: null,
+          pageImageUrl: null,
+          override: null,
+          source: "missing",
+          conceptNames: [],
+          questionNumberInPaper: null,
+          marksAvailable: null,
+          difficulty: null,
+          stemAttachments: [],
+        });
+        continue;
+      }
+
+      // Resolve source page → storage URL.
+      const pageImageUrl = await pageUrlFor(q);
+
+      // Concept-name footnote: join questionConcepts → exercises.name.
+      const links = await ctx.db
+        .query("questionConcepts")
+        .withIndex("by_question", (qq) => qq.eq("questionId", q._id))
+        .collect();
+      const conceptNames: string[] = [];
+      for (const l of links) {
+        const c = await ctx.db.get(l.conceptExerciseId);
+        if (c?.name) conceptNames.push(c.name);
+      }
+
+      const integrity =
+        integrityByQId.get(q._id as unknown as string) ??
+        ({ kind: "ok-pass-through", message: "", blocking: false } as
+          CropIntegrityWithMessage);
+      const stemAttachments = await resolveStemAttachments(integrity);
+
+      out.push({
+        questionId: q._id,
+        cropBox: q.cropBox ?? null,
+        pageImageUrl,
+        override: await overrideFor(q),
+        source: q.source,
+        conceptNames,
+        questionNumberInPaper: q.questionNumberInPaper ?? null,
+        marksAvailable: q.marksAvailable ?? null,
+        difficulty: q.difficulty ?? null,
+        stemAttachments,
+      });
+    }
+    return out;
+  };
+}
+
+// Topic label = distinct Main-block concept names (first two), the actual
+// thing the sheet is teaching.
+function topicLabelFrom(main: QuestionForRender[]): string | null {
+  const topicNames: string[] = [];
+  const seenTopic = new Set<string>();
+  for (const q of main) {
+    for (const n of q.conceptNames) {
+      if (n && !seenTopic.has(n)) {
+        seenTopic.add(n);
+        topicNames.push(n);
+      }
+    }
+  }
+  return topicNames.length > 0 ? topicNames.slice(0, 2).join("  ·  ") : null;
+}
+
 export const getSheetForRender = internalQuery({
   args: { sheetId: v.id("generatedSheets") },
   handler: async (ctx, args): Promise<RenderSheetData | null> => {
@@ -124,143 +274,14 @@ export const getSheetForRender = internalQuery({
       );
     }
 
-    // Helper: resolve a textbookPage or pastPaperPage to a storage URL.
-    const pageUrlFor = async (
-      q: { textbookPageId?: Id<"textbookPages">; pastPaperPageId?: Id<"pastPaperPages"> },
-    ): Promise<string | null> => {
-      if (q.textbookPageId) {
-        const page = await ctx.db.get(q.textbookPageId);
-        if (page) return await ctx.storage.getUrl(page.storageId);
-      } else if (q.pastPaperPageId) {
-        const page = await ctx.db.get(q.pastPaperPageId);
-        if (page) return await ctx.storage.getUrl(page.storageId);
-      }
-      return null;
-    };
-
-    // Resolve a typed-override snapshot to a fetchable URL + print size.
-    const overrideFor = async (q: {
-      overrideRender?: { storageId: Id<"_storage">; widthMm: number; heightMm: number };
-    }): Promise<OverrideRenderForPdf | null> => {
-      if (!q.overrideRender) return null;
-      const url = await ctx.storage.getUrl(q.overrideRender.storageId);
-      if (!url) return null;
-      return {
-        url,
-        widthMm: q.overrideRender.widthMm,
-        heightMm: q.overrideRender.heightMm,
-      };
-    };
-
-    // Resolve stem attachments for a picked sub-question / level-3-leaf
-    // crop. Both "ok-sub-with-stem" and "ok-leaf3-with-stems" expose the
-    // same `stemQuestionIds` field (level-3 packs mainQ stems first, then
-    // sub-stems, in print order). For other integrity kinds → [] (whole
-    // questions have no stem; blocking kinds throw before render so the
-    // field never gets read).
-    const resolveStemAttachments = async (
-      integrity: CropIntegrityWithMessage,
-    ): Promise<QuestionForRender["stemAttachments"]> => {
-      if (
-        integrity.kind !== "ok-sub-with-stem" &&
-        integrity.kind !== "ok-leaf3-with-stems"
-      ) {
-        return [];
-      }
-      const stems: QuestionForRender["stemAttachments"] = [];
-      for (const sid of integrity.stemQuestionIds) {
-        const stemDoc = await ctx.db.get(sid);
-        if (!stemDoc) continue;
-        const url = await pageUrlFor(stemDoc);
-        stems.push({
-          questionId: sid,
-          cropBox: stemDoc.cropBox ?? null,
-          pageImageUrl: url,
-          override: await overrideFor(stemDoc),
-        });
-      }
-      return stems;
-    };
-
-    const enrich = async (
-      ids: Id<"questionBank">[],
-    ): Promise<QuestionForRender[]> => {
-      const out: QuestionForRender[] = [];
-      for (const qid of ids) {
-        const q = await ctx.db.get(qid);
-        if (!q) {
-          // Question deleted after sheet save. Render a placeholder marker
-          // so the slot ordering doesn't shift silently.
-          out.push({
-            questionId: qid,
-            cropBox: null,
-            pageImageUrl: null,
-            override: null,
-            source: "missing",
-            conceptNames: [],
-            questionNumberInPaper: null,
-            marksAvailable: null,
-            difficulty: null,
-            stemAttachments: [],
-          });
-          continue;
-        }
-
-        // Resolve source page → storage URL.
-        const pageImageUrl = await pageUrlFor(q);
-
-        // Concept-name footnote: join questionConcepts → exercises.name.
-        const links = await ctx.db
-          .query("questionConcepts")
-          .withIndex("by_question", (qq) => qq.eq("questionId", q._id))
-          .collect();
-        const conceptNames: string[] = [];
-        for (const l of links) {
-          const c = await ctx.db.get(l.conceptExerciseId);
-          if (c?.name) conceptNames.push(c.name);
-        }
-
-        const integrity =
-          integrityByQId.get(q._id as unknown as string) ??
-          ({ kind: "ok-pass-through", message: "", blocking: false } as
-            CropIntegrityWithMessage);
-        const stemAttachments = await resolveStemAttachments(integrity);
-
-        out.push({
-          questionId: q._id,
-          cropBox: q.cropBox ?? null,
-          pageImageUrl,
-          override: await overrideFor(q),
-          source: q.source,
-          conceptNames,
-          questionNumberInPaper: q.questionNumberInPaper ?? null,
-          marksAvailable: q.marksAvailable ?? null,
-          difficulty: q.difficulty ?? null,
-          stemAttachments,
-        });
-      }
-      return out;
-    };
+    const enrich = makeRenderEnricher(ctx, integrityByQId);
 
     const warmup = await enrich(sheet.warmupQuestionIds);
     const main = await enrich(sheet.mainQuestionIds);
     const revision = await enrich(sheet.revisionQuestionIds ?? []);
     const examPrep = await enrich(sheet.examPrepQuestionIds);
 
-    // Topic label = distinct Main-block concept names (first two), the actual
-    // thing the student is learning today.
-    const topicNames: string[] = [];
-    const seenTopic = new Set<string>();
-    for (const q of main) {
-      for (const n of q.conceptNames) {
-        if (n && !seenTopic.has(n)) {
-          seenTopic.add(n);
-          topicNames.push(n);
-        }
-      }
-    }
-    const topicLabel =
-      topicNames.length > 0 ? topicNames.slice(0, 2).join("  ·  ") : null;
+    const topicLabel = topicLabelFrom(main);
 
     // Pair each integrity row with the slot it came from so the consumer
     // can render banners that pinpoint a problem location on the sheet.
@@ -292,6 +313,90 @@ export const getSheetForRender = internalQuery({
         perQuestion,
       },
     };
+  },
+});
+
+// Group-sheet PDF PREVIEW (2026-07-17): everything the renderer needs for a
+// planned/any group sheet — the Main block is [new..., spiral...] in exactly
+// the order materialization uses, so the preview IS what would print. The
+// group name stands in for the student name in the header; other sections
+// are empty (warm-up/revision/exam-prep are personal, planned at generation).
+export const getGroupSheetForRender = internalQuery({
+  args: { groupSheetId: v.id("groupSheets") },
+  handler: async (ctx, args): Promise<RenderSheetData | null> => {
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) return null;
+    const group = await ctx.db.get(row.groupId);
+    if (!group) return null;
+
+    const mainIds = [...row.newQuestionIds, ...row.spiralQuestionIds];
+    const allIds = mainIds.map((id) => ({ id, slot: "main" as const }));
+    const integrityList = await analyzeManyCropIntegrity(
+      ctx,
+      allIds.map((r) => r.id),
+    );
+    const integrityByQId = new Map<string, CropIntegrityWithMessage>();
+    for (const r of integrityList.byQuestion) {
+      integrityByQId.set(r.questionId as unknown as string, r.integrity);
+    }
+
+    const enrich = makeRenderEnricher(ctx, integrityByQId);
+    const main = await enrich(mainIds);
+
+    const perQuestion: RenderSheetData["integrity"]["perQuestion"] = [];
+    for (const r of allIds) {
+      const integrity =
+        integrityByQId.get(r.id as unknown as string) ??
+        ({ kind: "ok-pass-through", message: "", blocking: false } as
+          CropIntegrityWithMessage);
+      perQuestion.push({ questionId: r.id, integrity, slot: r.slot });
+    }
+
+    return {
+      // The renderer only reads _id (short sheet #) and date from here — the
+      // group sheet stands in for a generatedSheets row.
+      sheet: {
+        _id: args.groupSheetId as unknown as Id<"generatedSheets">,
+        studentId: row.groupId as unknown as Id<"students">,
+        date: row.date,
+        status: row.status,
+        pdfStorageId: undefined,
+      },
+      student: { name: group.name, schoolGrade: group.grade ?? 0 },
+      topicLabel: topicLabelFrom(main),
+      warmup: [],
+      main,
+      revision: [],
+      examPrep: [],
+      integrity: {
+        blockingCount: integrityList.blockingCount,
+        perQuestion,
+      },
+    };
+  },
+});
+
+// Cache the preview blob on the group sheet, dropping the previous one so a
+// re-previewed sheet never accumulates storage.
+export const setGroupSheetPreviewPdf = internalMutation({
+  args: {
+    groupSheetId: v.id("groupSheets"),
+    storageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) throw new Error("Group sheet not found");
+    if (row.pdfPreviewStorageId && row.pdfPreviewStorageId !== args.storageId) {
+      try {
+        await ctx.storage.delete(row.pdfPreviewStorageId);
+      } catch {
+        // ignore — previous blob already gone
+      }
+    }
+    await ctx.db.patch(args.groupSheetId, {
+      pdfPreviewStorageId: args.storageId,
+    });
+    return { ok: true as const };
   },
 });
 

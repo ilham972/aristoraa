@@ -18,7 +18,7 @@
 //   later units) an amber banner says so instead of the old silent stop.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery } from 'convex/react';
+import { useAction, useMutation, useQuery } from 'convex/react';
 import {
   ArrowUpDown,
   Ban,
@@ -26,11 +26,15 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
+  FileText,
   Flag,
+  Loader2,
   Minus,
   MoveRight,
   Plus,
   RefreshCw,
+  ScanSearch,
   Sparkles,
   X,
 } from 'lucide-react';
@@ -42,6 +46,7 @@ import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
 import { GroupCoverage, shortLabel } from './group-coverage';
+import { GroupUnitBuilderDialog } from './group-unit-builder';
 import { UnitArrangeDialog } from './unit-arrange-dialog';
 import { fmtWeekdayDate } from './verdict';
 
@@ -260,6 +265,14 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false);
   const [arrangeUnitId, setArrangeUnitId] = useState<string | null>(null);
+  // Chip pills: print-preview dialog target + "show this sheet in the grid".
+  const [pdfSheet, setPdfSheet] = useState<{
+    id: Id<'groupSheets'>;
+    date: string;
+  } | null>(null);
+  const [highlightDate, setHighlightDate] = useState<string | null>(null);
+  // Unit-curation dialog (the group Lesson Builder) — opened from a unit name.
+  const [builderUnitId, setBuilderUnitId] = useState<string | null>(null);
 
   const today = todayYmd();
   const list: SheetRow[] = useMemo(() => sheets ?? [], [sheets]);
@@ -319,42 +332,35 @@ export function GroupSheets({ grade }: { grade: number }) {
   // BOOK order (coverage returns the ladder = pick order, so we re-sort by
   // label — the point is seeing WHERE in the book the algorithm's picks
   // landed, even when it jumped around), each marked by what THIS week does
-  // with it — new pick, review pick, picked another week, or not yet. Units
-  // with no pick this week are dropped from the week.
+  // with it — new pick, review pick, picked another week, excluded, or not
+  // yet. Each box carries its sheetDate so a chip's "show in grid" pill can
+  // light up exactly one sheet's picks. Units with no pick this week are
+  // dropped from the week.
+  type GridBox = {
+    questionId: string;
+    label: string | null;
+    mark: 'new' | 'review' | 'other' | 'unseen' | 'banned';
+    sheetDate: string | null;
+  };
   const weekGrids = useMemo(() => {
-    const m = new Map<
-      string,
-      Array<{
-        unitId: string;
-        boxes: Array<{
-          questionId: string;
-          label: string | null;
-          mark: 'new' | 'review' | 'other' | 'unseen';
-        }>;
-      }>
-    >();
+    const m = new Map<string, Array<{ unitId: string; boxes: GridBox[] }>>();
     if (!coverage || !('status' in coverage) || coverage.status !== 'ok')
       return m;
     for (const w of weeks) {
-      const units: Array<{
-        unitId: string;
-        boxes: Array<{
-          questionId: string;
-          label: string | null;
-          mark: 'new' | 'review' | 'other' | 'unseen';
-        }>;
-      }> = [];
+      const units: Array<{ unitId: string; boxes: GridBox[] }> = [];
       for (const u of coverage.units) {
         let picks = 0;
-        const boxes = u.questions.map((q) => {
+        const boxes = u.questions.map((q): GridBox => {
           const inWeek =
             q.sheetDate !== null && weekStartYmd(q.sheetDate) === w.weekStart;
-          let mark: 'new' | 'review' | 'other' | 'unseen';
+          let mark: GridBox['mark'];
           if (inWeek) {
             picks += 1;
             mark = q.section === 'spiral' ? 'review' : 'new';
           } else if (q.state === 'done' || q.state === 'planned') {
             mark = 'other';
+          } else if (q.state === 'banned') {
+            mark = 'banned';
           } else {
             mark = 'unseen';
           }
@@ -362,6 +368,7 @@ export function GroupSheets({ grade }: { grade: number }) {
             questionId: q.questionId as unknown as string,
             label: q.label,
             mark,
+            sheetDate: q.sheetDate,
           };
         });
         if (picks > 0)
@@ -386,7 +393,9 @@ export function GroupSheets({ grade }: { grade: number }) {
     let baseCovered = 0; // covered before the timeline (pre-taught / member)
     const byWeek = new Map<string, number>();
     for (const u of coverage.units) {
-      total += u.totalQuestions;
+      // Excluded (unticked) questions are not part of the plan → not part
+      // of 100% either.
+      total += u.totalQuestions - u.bannedCount;
       for (const q of u.questions) {
         if (q.sheetDate) {
           const ws = weekStartYmd(q.sheetDate);
@@ -503,7 +512,7 @@ export function GroupSheets({ grade }: { grade: number }) {
         let t = 0;
         for (const u of coverage.units) {
           d += u.doneCount;
-          t += u.totalQuestions;
+          t += u.totalQuestions - u.bannedCount;
         }
         return t > 0 ? Math.round((d / t) * 100) : 0;
       })()
@@ -681,7 +690,10 @@ export function GroupSheets({ grade }: { grade: number }) {
                           <ExamStop date={exam.date} />
                         )}
                         <button
-                          onClick={() => setSelectedWeek(w.weekStart)}
+                          onClick={() => {
+                            setSelectedWeek(w.weekStart);
+                            setHighlightDate(null);
+                          }}
                           className={cn(
                             'w-full flex items-center gap-2 rounded-lg py-0.5 sm:px-1.5 text-left',
                             isSel && 'sm:bg-primary/10',
@@ -803,41 +815,87 @@ export function GroupSheets({ grade }: { grade: number }) {
                       </div>
 
                       <div className="px-3 pb-3 border-t border-border/60 pt-2.5 space-y-3 overflow-y-auto">
-                        {/* This week's sessions — tap to preview the sheet */}
+                        {/* This week's sessions — tap to open; the pills:
+                            print-preview PDF · light this sheet up in the
+                            question grids below. */}
                         <div className="flex flex-wrap gap-1.5">
                           {w.sheets.map((s) => {
                             const d = fmtDayMonth(s.date);
                             const chip =
                               STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
+                            const hl = highlightDate === s.date;
                             return (
-                              <button
+                              <div
                                 key={s.id as unknown as string}
-                                onClick={() => setPreviewId(s.id)}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border bg-card text-[10px]"
+                                className={cn(
+                                  'inline-flex items-stretch rounded-lg border bg-card overflow-hidden',
+                                  hl ? 'border-primary/70' : 'border-border',
+                                )}
                               >
-                                <span className="font-bold text-foreground">
-                                  {d.weekday} {d.day}
-                                </span>
-                                <span className="text-muted-foreground tabular-nums">
-                                  {s.newCount}n
-                                  {s.spiralCount > 0 && (
-                                    <span className="text-amber-500">
-                                      +{s.spiralCount}r
+                                <button
+                                  onClick={() => setPreviewId(s.id)}
+                                  className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 text-[10px]"
+                                >
+                                  <span className="font-bold text-foreground">
+                                    {d.weekday} {d.day}
+                                  </span>
+                                  <span className="text-muted-foreground tabular-nums">
+                                    {s.newCount}n
+                                    {s.spiralCount > 0 && (
+                                      <span className="text-amber-500">
+                                        +{s.spiralCount}r
+                                      </span>
+                                    )}
+                                  </span>
+                                  {/* "planned" is the default — badge only the
+                                      exceptions (taught / delegated). */}
+                                  {s.status !== 'planned' && (
+                                    <span
+                                      className={cn(
+                                        'px-1 py-px rounded border text-[7.5px] font-semibold leading-tight',
+                                        chip.className,
+                                      )}
+                                    >
+                                      {chip.label}
                                     </span>
                                   )}
-                                </span>
-                                <span
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    setPdfSheet({ id: s.id, date: s.date })
+                                  }
+                                  title="Print preview (real PDF)"
+                                  aria-label="Print preview"
+                                  className="px-1.5 border-l border-border/60 text-muted-foreground hover:text-foreground flex items-center"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    setHighlightDate(hl ? null : s.date)
+                                  }
+                                  title="Highlight this sheet's questions in the grid"
+                                  aria-label="Highlight in grid"
                                   className={cn(
-                                    'px-1 py-px rounded border text-[7.5px] font-semibold leading-tight',
-                                    chip.className,
+                                    'px-1.5 border-l border-border/60 flex items-center',
+                                    hl
+                                      ? 'bg-primary/15 text-primary'
+                                      : 'text-muted-foreground hover:text-foreground',
                                   )}
                                 >
-                                  {chip.label}
-                                </span>
-                              </button>
+                                  <ScanSearch className="w-3 h-3" />
+                                </button>
+                              </div>
                             );
                           })}
                         </div>
+                        {highlightDate !== null && (
+                          <div className="text-[9px] text-primary font-semibold">
+                            Highlighting {fmtWeekdayDate(highlightDate)}
+                            &rsquo;s picks in the grid — tap the pill again to
+                            clear.
+                          </div>
+                        )}
 
                         {/* Book-order grids: which questions this week covers */}
                         {coverage === undefined && (
@@ -853,31 +911,46 @@ export function GroupSheets({ grade }: { grade: number }) {
                         {grids.map((g) => (
                           <div key={g.unitId}>
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-[10.5px] font-bold text-foreground truncate">
+                              <button
+                                onClick={() => setBuilderUnitId(g.unitId)}
+                                className="text-[10.5px] font-bold text-foreground truncate underline decoration-dotted decoration-muted-foreground/60 underline-offset-2 text-left"
+                                title="Curate this unit's questions (group Lesson Builder)"
+                              >
                                 {unitName(g.unitId)}
-                              </span>
+                              </button>
                               <span className="h-px flex-1 bg-border/60" />
                             </div>
                             <div className="flex flex-wrap gap-1">
-                              {g.boxes.map((b, bi) => (
-                                <span
-                                  key={b.questionId}
-                                  title={b.label ?? undefined}
-                                  className={cn(
-                                    'w-6 h-6 rounded-md border text-[8px] font-semibold leading-none flex items-center justify-center tabular-nums',
-                                    b.mark === 'new' &&
-                                      'bg-teal-500/25 border-teal-500/50 text-teal-600 dark:text-teal-400',
-                                    b.mark === 'review' &&
-                                      'bg-amber-500/25 border-amber-500/50 text-amber-600 dark:text-amber-400',
-                                    b.mark === 'other' &&
-                                      'bg-muted/50 border-border/50 text-muted-foreground/50',
-                                    b.mark === 'unseen' &&
-                                      'bg-transparent border-dashed border-border text-muted-foreground/40',
-                                  )}
-                                >
-                                  {shortLabel(b.label, bi)}
-                                </span>
-                              ))}
+                              {g.boxes.map((b, bi) => {
+                                const hl =
+                                  highlightDate !== null &&
+                                  b.sheetDate === highlightDate;
+                                return (
+                                  <span
+                                    key={b.questionId}
+                                    title={b.label ?? undefined}
+                                    className={cn(
+                                      'w-6 h-6 rounded-md border text-[8px] font-semibold leading-none flex items-center justify-center tabular-nums',
+                                      b.mark === 'new' &&
+                                        'bg-teal-500/25 border-teal-500/50 text-teal-600 dark:text-teal-400',
+                                      b.mark === 'review' &&
+                                        'bg-amber-500/25 border-amber-500/50 text-amber-600 dark:text-amber-400',
+                                      b.mark === 'other' &&
+                                        'bg-muted/50 border-border/50 text-muted-foreground/50',
+                                      b.mark === 'unseen' &&
+                                        'bg-transparent border-dashed border-border text-muted-foreground/40',
+                                      b.mark === 'banned' &&
+                                        'bg-transparent border-dashed border-rose-500/40 text-rose-500/60 line-through',
+                                      highlightDate !== null &&
+                                        (hl
+                                          ? 'ring-2 ring-primary ring-offset-1 ring-offset-card'
+                                          : 'opacity-30'),
+                                    )}
+                                  >
+                                    {shortLabel(b.label, bi)}
+                                  </span>
+                                );
+                              })}
                             </div>
                           </div>
                         ))}
@@ -898,6 +971,10 @@ export function GroupSheets({ grade }: { grade: number }) {
                             <span className="flex items-center gap-1">
                               <span className="w-2.5 h-2.5 rounded border border-dashed border-border" />
                               not yet
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded border border-dashed border-rose-500/40" />
+                              excluded
                             </span>
                           </div>
                         )}
@@ -1026,7 +1103,128 @@ export function GroupSheets({ grade }: { grade: number }) {
           onClose={() => setArrangeUnitId(null)}
         />
       )}
+
+      {pdfSheet && (
+        <PdfPreviewDialog
+          sheetId={pdfSheet.id}
+          date={pdfSheet.date}
+          onClose={() => setPdfSheet(null)}
+        />
+      )}
+
+      {builderUnitId && groupId && (
+        <GroupUnitBuilderDialog
+          groupId={groupId}
+          unitId={builderUnitId}
+          unitName={unitName(builderUnitId)}
+          onClose={() => setBuilderUnitId(null)}
+        />
+      )}
     </>
+  );
+}
+
+// Print-preview dialog: renders the planned group sheet through the REAL
+// per-student PDF composer (same fonts, stems, clipping, page breaks) and
+// embeds the result. "Open" is the fallback for phones whose browser won't
+// render PDFs inline — it hands the file to the native viewer.
+function PdfPreviewDialog({
+  sheetId,
+  date,
+  onClose,
+}: {
+  sheetId: Id<'groupSheets'>;
+  date: string;
+  onClose: () => void;
+}) {
+  const render = useAction(api.learningEngine.pdf.renderGroupSheetPDF);
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pages, setPages] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    render({ groupSheetId: sheetId })
+      .then((res) => {
+        if (cancelled) return;
+        setUrl(res.url);
+        setPages(res.pageCount);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(
+          e instanceof Error
+            ? e.message
+            : 'Preview failed — check the crops of this sheet.',
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [render, sheetId]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl h-[85vh] rounded-2xl bg-card border border-border shadow-xl flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border shrink-0">
+          <FileText className="w-4 h-4 text-primary shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-foreground truncate">
+              Print preview · {fmtWeekdayDate(date)}
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              {pages !== null
+                ? `${pages} page${pages > 1 ? 's' : ''} — exactly what prints`
+                : 'The real sheet PDF, exactly what prints'}
+            </div>
+          </div>
+          {url && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-foreground"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Open
+            </a>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 bg-muted/30">
+          {!url && !error && (
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span className="text-xs">Building the PDF…</span>
+            </div>
+          )}
+          {error && (
+            <div className="h-full flex items-center justify-center p-6 text-center text-xs text-rose-500">
+              {error}
+            </div>
+          )}
+          {url && (
+            <iframe
+              src={url}
+              title="Sheet PDF preview"
+              className="w-full h-full border-0"
+            />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

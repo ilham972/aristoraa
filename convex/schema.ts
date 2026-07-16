@@ -922,6 +922,9 @@ export default defineSchema({
     createdByTeacherId: v.optional(v.id("teachers")),
     materializedAt: v.optional(v.number()),
     delegatedAt: v.optional(v.number()),
+    // Cached print-preview PDF (planner Sheets tab, 2026-07-17). Re-rendering
+    // replaces the blob; the row keeps at most one.
+    pdfPreviewStorageId: v.optional(v.id("_storage")),
   })
     .index("by_group_date", ["groupId", "date"])
     .index("by_slot_date", ["slotId", "date"]),
@@ -939,6 +942,20 @@ export default defineSchema({
     unitId: v.string(),
     createdAt: v.number(),
     createdByTeacherId: v.optional(v.id("teachers")),
+  }).index("by_group", ["groupId"]),
+
+  // Unit curation (2026-07-17, group Lesson Builder): questions the founder
+  // UNTICKED for this group — banned from the group plan. The pick queues
+  // skip them (new + spiral), skeleton demand doesn't count them, coverage
+  // shows them as "excluded". Pure plan filter: no sheet/point/memory
+  // effects; already-taught questions can't be banned (UI locks them).
+  // One row per (group, unit); empty questionIds = row deleted.
+  groupUnitBans: defineTable({
+    groupId: v.id("groups"),
+    unitId: v.string(),
+    questionIds: v.array(v.id("questionBank")),
+    updatedAt: v.number(),
+    updatedByTeacherId: v.optional(v.id("teachers")),
   }).index("by_group", ["groupId"]),
 
   // Per-student per-unit "did / didn't do" marks (2026-07-16, Term Planning

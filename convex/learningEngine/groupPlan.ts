@@ -340,6 +340,11 @@ type GroupPlanState = {
   // crystallize, spiral pool and capacity math all skip them. Kept as a set
   // too so the verdict can read "done" even for a marked unit with no book.
   preTaughtUnitIds: Set<string>;
+  // Questions the founder UNTICKED in the unit-curation dialog
+  // (groupUnitBans): banned from the plan. The pick queues skip them and
+  // the skeleton doesn't count them as demand — but they are NOT "seen":
+  // coverage shows them as excluded, never as covered.
+  banned: Set<string>;
   // Questions per Main session — the group's own override, else the default.
   mainSize: number;
   // Unconsumed "carry to next Main" leftovers (oldest first): the next
@@ -413,6 +418,16 @@ async function loadGroupPlanState(
     Math.round(group?.mainQuestionsPerSession ?? GROUP_MAIN_QUESTIONS_DEFAULT),
   );
 
+  // Unit-curation bans: unticked questions, excluded from the whole plan.
+  // A question that got taught anyway (seen) stays seen — seen wins.
+  const banned = new Set<string>();
+  for (const row of await ctx.db
+    .query("groupUnitBans")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect()) {
+    for (const qid of row.questionIds) banned.add(qid as unknown as string);
+  }
+
   const mainCarry = (
     await ctx.db
       .query("groupCarryOvers")
@@ -433,6 +448,7 @@ async function loadGroupPlanState(
       examDateByTerm,
       crystallized,
       preTaughtUnitIds,
+      banned,
       mainSize,
       mainCarry,
     },
@@ -453,13 +469,17 @@ function skeletonInputs(state: GroupPlanState): {
       (carryByUnit.get(r.unitId) ?? 0) + r.questionIds.length,
     );
   }
+  // Banned (unticked) questions are out of the plan entirely: not demand,
+  // not part of the unit's total. seen-but-banned still counts as covered.
   const units: SkeletonUnitInput[] = state.ladders.map((l) => ({
     unitId: l.unitId,
     term: termFromUnitId(l.unitId),
     unseenCount:
-      l.ladder.filter((q) => !state.seen.has(q.qid)).length +
-      (carryByUnit.get(l.unitId) ?? 0),
-    totalCount: l.ladder.length + (carryByUnit.get(l.unitId) ?? 0),
+      l.ladder.filter((q) => !state.seen.has(q.qid) && !state.banned.has(q.qid))
+        .length + (carryByUnit.get(l.unitId) ?? 0),
+    totalCount:
+      l.ladder.filter((q) => state.seen.has(q.qid) || !state.banned.has(q.qid))
+        .length + (carryByUnit.get(l.unitId) ?? 0),
     preTaught: state.preTaughtUnitIds.has(l.unitId),
   }));
   let currentUnitIdx = units.findIndex((u) => u.unseenCount > 0);
@@ -618,7 +638,7 @@ async function buildPickQueues(
   for (let i = 0; i < Math.min(currentUnitIdx, state.ladders.length); i++) {
     const l = state.ladders[i];
     l.ladder.forEach((q, idx) => {
-      if (state.seen.has(q.qid)) return;
+      if (state.seen.has(q.qid) || state.banned.has(q.qid)) return;
       const concept = l.conceptByQuestion.get(q.qid);
       spiralPool.push({
         qid: q.qid,
@@ -633,7 +653,8 @@ async function buildPickQueues(
   for (let i = currentUnitIdx; i < state.ladders.length; i++) {
     const l = state.ladders[i];
     for (const q of l.ladder) {
-      if (!state.seen.has(q.qid)) newQueue.push({ qid: q.qid, unitId: l.unitId });
+      if (!state.seen.has(q.qid) && !state.banned.has(q.qid))
+        newQueue.push({ qid: q.qid, unitId: l.unitId });
     }
   }
   const carryItems: Array<{ qid: string; unitId: string }> = [];
@@ -845,6 +866,13 @@ export const deletePlanned = mutation({
     if (!row) return;
     if (row.status !== "planned")
       throw new Error(`Only planned sheets can be deleted (status: ${row.status})`);
+    if (row.pdfPreviewStorageId) {
+      try {
+        await ctx.storage.delete(row.pdfPreviewStorageId);
+      } catch {
+        // ignore — preview blob already gone
+      }
+    }
     await ctx.db.delete(args.groupSheetId);
     // Give back any carry-overs this sheet had absorbed: rows fully contained
     // in the deleted sheet's questions become live again, so the leftovers
@@ -960,6 +988,13 @@ export const resizePlanned = mutation({
     const now = Date.now();
     const todayYmd = ymdFromMs(now);
 
+    if (row.pdfPreviewStorageId) {
+      try {
+        await ctx.storage.delete(row.pdfPreviewStorageId);
+      } catch {
+        // ignore — preview blob already gone
+      }
+    }
     await ctx.db.delete(args.groupSheetId);
     const loaded = await loadGroupPlanState(ctx, row.groupId, todayYmd);
     if (loaded.status !== "ok") return { status: loaded.status };
@@ -1315,7 +1350,9 @@ export const scanBookExhaustion = internalMutation({
       let unseenBook = 0;
       let unseenPaper = 0;
       for (const l of state.ladders) {
-        const unseen = l.ladder.filter((q) => !state.seen.has(q.qid));
+        const unseen = l.ladder.filter(
+          (q) => !state.seen.has(q.qid) && !state.banned.has(q.qid),
+        );
         if (unseen.length === 0) continue;
         current = l;
         unseenBook = unseen.filter((q) => !q.pastPaper).length;
@@ -1688,7 +1725,7 @@ export const groupTermCoverage = query({
           const q = qDocs[i];
           const k = r.qid;
           const prov = sheetByQid.get(k);
-          let questionState: "done" | "planned" | "unseen";
+          let questionState: "done" | "planned" | "unseen" | "banned";
           let sheetDate: string | null = null;
           let sheetStatus: string | null = null;
           if (prov) {
@@ -1700,6 +1737,9 @@ export const groupTermCoverage = query({
             // Pre-app starting point, or a member did it in per-student mode:
             // covered, but no group-sheet date to point at.
             questionState = "done";
+          } else if (state.banned.has(k)) {
+            // Unticked in the unit-curation dialog: excluded from the plan.
+            questionState = "banned";
           } else {
             questionState = "unseen";
           }
@@ -1718,13 +1758,18 @@ export const groupTermCoverage = query({
         const plannedCount = questions.filter(
           (q) => q.state === "planned",
         ).length;
+        const bannedCount = questions.filter(
+          (q) => q.state === "banned",
+        ).length;
         return {
           unitId: l.unitId,
           term: resolvedTerm,
           totalQuestions: questions.length,
           doneCount,
           plannedCount,
-          unseenCount: questions.length - doneCount - plannedCount,
+          bannedCount,
+          unseenCount:
+            questions.length - doneCount - plannedCount - bannedCount,
           hasBook: questions.length > 0,
           preTaught,
           studentsDone: Array.from(doneByUnit.get(l.unitId) ?? []),
@@ -1796,6 +1841,108 @@ export const setStudentUnitDone = mutation({
       for (const r of existing) await ctx.db.delete(r._id);
     }
     return { ok: true as const };
+  },
+});
+
+// ── Unit curation (2026-07-17, group Lesson Builder) ─────────────────────
+// Per-question group state for ONE unit — the curation dialog's tick layer.
+// The dialog pairs this with lessonSets.listUnitQuestions (the same tiles the
+// session Lesson Builder shows) by questionId.
+export const groupUnitCuration = query({
+  args: { groupId: v.id("groups"), unitId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const todayYmd = ymdFromMs(Date.now());
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const ladder = state.ladders.find((l) => l.unitId === args.unitId);
+    if (!ladder) return { status: "no-unit" as const };
+
+    // Provenance: which group sheet claimed each question (first wins).
+    const allSheets = await ctx.db
+      .query("groupSheets")
+      .withIndex("by_group_date", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const statusByQid = new Map<string, string>();
+    for (const row of allSheets) {
+      for (const qid of [...row.newQuestionIds, ...row.spiralQuestionIds]) {
+        const k = qid as unknown as string;
+        if (!statusByQid.has(k)) statusByQid.set(k, row.status);
+      }
+    }
+
+    const preTaught = state.preTaughtUnitIds.has(args.unitId);
+    const questions = ladder.ladder.map((r) => {
+      const sheetStatus = statusByQid.get(r.qid) ?? null;
+      const taught =
+        sheetStatus === "materialized" || preTaught || state.seen.has(r.qid);
+      return {
+        questionId: r.qid as unknown as Id<"questionBank">,
+        taught, // locked in the dialog — can't ban what's already done
+        planned: !taught && sheetStatus !== null,
+        banned: state.banned.has(r.qid),
+      };
+    });
+    return { status: "ok" as const, questions };
+  },
+});
+
+// Save the curation ticks: banned = every unit question the founder left
+// UNTICKED. Taught questions can never be banned (silently dropped — the UI
+// locks them anyway). Empty ban list deletes the row. The caller follows up
+// with deleteFuturePlanned + crystallizeUpcoming so planned sheets match.
+export const setGroupUnitBans = mutation({
+  args: {
+    groupId: v.id("groups"),
+    unitId: v.string(),
+    bannedQuestionIds: v.array(v.id("questionBank")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const todayYmd = ymdFromMs(Date.now());
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status, banned: 0 };
+    const state = loaded.state;
+    const ladder = state.ladders.find((l) => l.unitId === args.unitId);
+    if (!ladder) return { status: "no-unit" as const, banned: 0 };
+
+    // Only real, un-taught questions of THIS unit can be banned.
+    const unitQids = new Set(ladder.ladder.map((r) => r.qid));
+    const clean = args.bannedQuestionIds.filter((qid) => {
+      const k = qid as unknown as string;
+      return unitQids.has(k) && !state.seen.has(k);
+    });
+
+    const existing = (
+      await ctx.db
+        .query("groupUnitBans")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    ).filter((r) => r.unitId === args.unitId);
+    for (const r of existing.slice(1)) await ctx.db.delete(r._id); // dedupe
+    const row = existing[0];
+    if (clean.length === 0) {
+      if (row) await ctx.db.delete(row._id);
+    } else if (row) {
+      await ctx.db.patch(row._id, {
+        questionIds: clean,
+        updatedAt: Date.now(),
+        ...(teacherId ? { updatedByTeacherId: teacherId } : {}),
+      });
+    } else {
+      await ctx.db.insert("groupUnitBans", {
+        groupId: args.groupId,
+        unitId: args.unitId,
+        questionIds: clean,
+        updatedAt: Date.now(),
+        ...(teacherId ? { updatedByTeacherId: teacherId } : {}),
+      });
+    }
+    return { status: "ok" as const, banned: clean.length };
   },
 });
 
@@ -1985,6 +2132,13 @@ export const deleteFuturePlanned = mutation({
     for (const r of rows) {
       for (const q of [...r.newQuestionIds, ...r.spiralQuestionIds]) {
         freedIds.add(q as unknown as string);
+      }
+      if (r.pdfPreviewStorageId) {
+        try {
+          await ctx.storage.delete(r.pdfPreviewStorageId);
+        } catch {
+          // ignore — preview blob already gone
+        }
       }
       await ctx.db.delete(r._id);
     }

@@ -183,6 +183,22 @@ because Z.
   crop/PDF-only. Old per-layer dialogs deleted, ExercisePickerBody's grid
   moved into the count drawer.
 
+## Planner Sheets tab: curation + preview (2026-07-17)
+- **Unit ticks = CURATE THE UNIT** (founder chose over sheet-scoped ticks or
+  view-only): unticking a question in the group Lesson Builder BANS it from
+  the whole term plan (`groupUnitBans`); saving auto re-plans future sheets.
+  Taught questions are locked. Banned ≠ seen — coverage shows "excluded",
+  progress denominators drop it.
+- **Sheet print preview = the REAL PDF** (renderGroupSheetPDF through the
+  same buildPDF composer), not an HTML imitation — founder wants to feel the
+  printout; embedded iframe + "Open" fallback for phones.
+- **"planned" badge hidden** on session chips — it's the default state;
+  only taught/delegated are worth ink.
+- Interleaving worry resolved as labeling, not engine: sheets DO mix units
+  (25% spiral + boundary-crossing) but the card names only the primary unit;
+  spiral is empty while the group is on unit 1 or after "earlier terms
+  taught" marks everything seen.
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.

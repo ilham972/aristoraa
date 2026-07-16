@@ -1392,3 +1392,38 @@ export const renderSheetPDF = action({
     };
   },
 });
+
+// Print-preview for a PLANNED group sheet (planner Sheets tab, 2026-07-17):
+// renders the Main block ([new..., spiral...] — exactly the materialization
+// order) through the same composer as the real per-student PDF, caches the
+// blob on the row, and returns a URL the dialog can embed. Policy defaults
+// to "skip" so a missing page image degrades to a placeholder instead of
+// blocking the preview; incomplete CROPPING still throws (that must be
+// fixed, not previewed around).
+export const renderGroupSheetPDF = action({
+  args: { groupSheetId: v.id("groupSheets") },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ url: string; pageCount: number; questionCount: number }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+
+    const data: RenderSheetData | null = await ctx.runQuery(
+      internal.learningEngine.pdfHelpers.getGroupSheetForRender,
+      { groupSheetId: args.groupSheetId },
+    );
+    if (!data) throw new Error("Group sheet not found");
+
+    const { bytes, pageCount } = await buildPDF(data, "skip");
+    const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+    const storageId = await ctx.storage.store(blob);
+    await ctx.runMutation(
+      internal.learningEngine.pdfHelpers.setGroupSheetPreviewPdf,
+      { groupSheetId: args.groupSheetId, storageId },
+    );
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Preview stored but URL unavailable");
+    return { url, pageCount, questionCount: data.main.length };
+  },
+});
