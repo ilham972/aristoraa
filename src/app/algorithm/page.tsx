@@ -16,6 +16,7 @@ import { CoverageBanner } from '@/components/coverage/coverage-banner';
 import { UnitCoverageCard, type CoverageRow } from '@/components/coverage/unit-coverage-card';
 import { ConceptDetailPanel } from '@/components/coverage/concept-detail-panel';
 import { OrphanList } from '@/components/coverage/orphan-list';
+import { GroupsLens } from '@/components/coverage/groups-lens';
 import { toast } from 'sonner';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -24,6 +25,14 @@ const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
 
 type TabId = 'coverage' | 'blueprint' | 'path';
+type LensId = 'groups' | 'bank';
+
+// The Coverage tab's two lenses. "Groups" leads: it's the day-to-day question
+// ("how far is this group?"); Bank is the content-pipeline audit behind it.
+const LENSES: { id: LensId; label: string }[] = [
+  { id: 'groups', label: 'Groups' },
+  { id: 'bank', label: 'Bank' },
+];
 
 // Tracks + Exams moved to the global /planner (2026-07-15) — they are
 // planning INPUTS; Insights keeps the content-inspection tools.
@@ -125,8 +134,15 @@ function GradeTermSelector({
 }
 
 // ── Coverage tab ──────────────────────────────────────────────────────────────
+// Two lenses over the word "coverage", which mean genuinely different things:
+//   Groups — how far has each GROUP got through a term (the Term Coverage
+//            Cockpit, moved here from the Planner's Sheets tab 2026-07-17).
+//   Bank   — does the question BANK hold enough material per concept for a
+//            grade+term. Keyed by grade, cumulative across terms.
+// They share no data and no axis, so they stay separate lenses rather than one
+// merged list; the bridge is a book-gap in Groups linking into Bank.
 
-function CoverageTab({
+function BankLens({
   grade,
   term,
   setGrade,
@@ -250,6 +266,68 @@ function CoverageTab({
         threshold={data?.threshold ?? 5}
         onClose={() => setOpenConceptId(null)}
       />
+    </>
+  );
+}
+
+function CoverageTab({
+  grade,
+  term,
+  lens,
+  groupId,
+  setGrade,
+  setTerm,
+  setFocus,
+}: {
+  grade: number;
+  term: 1 | 2 | 3;
+  lens: LensId;
+  groupId: Id<'groups'> | null;
+  setGrade: (g: number) => void;
+  setTerm: (t: number) => void;
+  setFocus: (next: { lens?: LensId; g?: number; t?: number }) => void;
+}) {
+  // A book-gap in Groups jumps to that unit's grade+term in Bank — one write,
+  // because grade, term and lens all change together.
+  const inspectUnit = useCallback(
+    (unitId: string) => {
+      const ctx = findUnit(unitId);
+      setFocus({
+        lens: 'bank',
+        ...(ctx ? { g: ctx.grade, t: ctx.term } : {}),
+      });
+    },
+    [setFocus],
+  );
+
+  return (
+    <>
+      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-3">
+        {LENSES.map((l) => (
+          <button
+            key={l.id}
+            onClick={() => setFocus({ lens: l.id })}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-semibold transition-all ${
+              l.id === lens
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-3">
+        {lens === 'groups'
+          ? 'How far each group has got through a term. Tap a group on the line to open every question of its term.'
+          : 'Whether the question bank holds enough material per concept. Counts questions that exist — not what any group has been taught.'}
+      </p>
+
+      {lens === 'groups' ? (
+        <GroupsLens initialGroupId={groupId} onInspectUnit={inspectUnit} />
+      ) : (
+        <BankLens grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
+      )}
     </>
   );
 }
@@ -623,32 +701,33 @@ function AlgorithmPageInner() {
   const grade = GRADES.includes(gradeParam) ? gradeParam : 7;
   const term = ([1, 2, 3] as number[]).includes(termParam) ? (termParam as 1 | 2 | 3) : 1;
 
-  const setTab = useCallback(
-    (t: TabId) => {
+  const rawLens = searchParams.get('lens') ?? 'groups';
+  const lens: LensId = (['groups', 'bank'] as LensId[]).includes(rawLens as LensId)
+    ? (rawLens as LensId)
+    : 'groups';
+
+  // Set by the Sheets tab's "See full coverage" link. Not validated here — the
+  // rail falls back to its first group if the id isn't one of them.
+  const groupId = (searchParams.get('group') as Id<'groups'> | null) ?? null;
+
+  // ONE writer for the query string. Separate per-param setters each rebuilt
+  // the URL from the same snapshot, so changing grade and term together lost
+  // one of them — the book-gap jump into Bank changes both at once.
+  const setParams = useCallback(
+    (next: { tab?: TabId; lens?: LensId; g?: number; t?: number }) => {
       const params = new URLSearchParams(searchParams.toString());
-      params.set('tab', t);
-      router.replace(`/algorithm?${params.toString()}`);
+      if (next.tab !== undefined) params.set('tab', next.tab);
+      if (next.lens !== undefined) params.set('lens', next.lens);
+      if (next.g !== undefined) params.set('g', String(next.g));
+      if (next.t !== undefined) params.set('t', String(next.t));
+      router.replace(`/algorithm?${params.toString()}`, { scroll: false });
     },
     [router, searchParams],
   );
 
-  const setGrade = useCallback(
-    (g: number) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set('g', String(g));
-      router.replace(`/algorithm?${params.toString()}`);
-    },
-    [router, searchParams],
-  );
-
-  const setTerm = useCallback(
-    (t: number) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set('t', String(t));
-      router.replace(`/algorithm?${params.toString()}`);
-    },
-    [router, searchParams],
-  );
+  const setTab = useCallback((t: TabId) => setParams({ tab: t }), [setParams]);
+  const setGrade = useCallback((g: number) => setParams({ g }), [setParams]);
+  const setTerm = useCallback((t: number) => setParams({ t }), [setParams]);
 
   const currentTab = TABS.find((t) => t.id === tab)!;
   const TabIcon = currentTab.icon;
@@ -680,7 +759,15 @@ function AlgorithmPageInner() {
 
       {/* Tab content */}
       {tab === 'coverage' && (
-        <CoverageTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
+        <CoverageTab
+          grade={grade}
+          term={term}
+          lens={lens}
+          groupId={groupId}
+          setGrade={setGrade}
+          setTerm={setTerm}
+          setFocus={setParams}
+        />
       )}
       {tab === 'blueprint' && (
         <BlueprintTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />

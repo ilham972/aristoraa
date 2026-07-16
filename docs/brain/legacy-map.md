@@ -54,6 +54,15 @@ src/lib/scoring.ts (12), src/lib/sub-questions.ts (7), src/lib/types.ts
 | shadcn, tw-animate-css | KEEP | knip false positives — imported in globals.css |
 | tailwindcss (devDep) | KEEP | knip false positive (PostCSS pipeline) |
 
+## Duplicate /algorithm routes (found 2026-07-17)
+The tabs were consolidated into `/algorithm/page.tsx`, but the old standalone
+pages were left behind as full copies that drift separately.
+| Route | Verdict | Why |
+|---|---|---|
+| `/algorithm/coverage` | DONE: now a redirect | was a 258-line copy of the Coverage tab; nothing linked to it |
+| `/algorithm/blueprint` | LIVE DUPLICATE — 564 lines | copy of the Blueprint tab, but still linked from `student-exam-outlook.tsx`; fix = point those links at `/algorithm?tab=blueprint` then redirect it |
+| `/algorithm/scoring` | KEEP | 237 lines, admin parallel-run view; has no tab equivalent |
+
 ## Cleanup ground rules (when founder approves a cleanup phase)
 Delete in small commits, run `npm run build` + `npm test` + `npx convex
 codegen` after each, never touch TRANSITION rows, export any convex table

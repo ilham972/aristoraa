@@ -39,6 +39,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { api, type Id } from '@/lib/convex';
 import { sortByBookOrder } from '@/lib/book-order';
@@ -46,7 +47,7 @@ import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
-import { GroupCoverage, shortLabel } from './group-coverage';
+import { shortLabel } from './group-coverage';
 import { GroupUnitBuilderDialog } from './group-unit-builder';
 import { UnitArrangeDialog } from './unit-arrange-dialog';
 import { fmtWeekdayDate } from './verdict';
@@ -270,7 +271,6 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<Id<'groupSheets'> | null>(null);
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
-  const [coverageOpen, setCoverageOpen] = useState(false);
   const [arrangeUnitId, setArrangeUnitId] = useState<string | null>(null);
   // Chip pills: print-preview dialog target + "show this sheet in the grid".
   const [pdfSheet, setPdfSheet] = useState<{
@@ -617,13 +617,14 @@ export function GroupSheets({ grade }: { grade: number }) {
         </div>
       )}
 
-      {/* ── Coverage — collapsed to a whole-term summary ──────────────── */}
+      {/* ── Coverage — a summary strip only (2026-07-17) ────────────────
+          The cockpit itself moved to Insights → Coverage → Groups so coverage
+          has one home. The TERM CHIPS stay here: they set covTerm, which the
+          week question grids below are built from — losing them would freeze
+          the timeline on the backend's default term. */}
       {groupId && (
-        <div className="mb-4">
-          <button
-            onClick={() => setCoverageOpen((o) => !o)}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-border bg-card"
-          >
+        <div className="mb-4 rounded-xl border border-border bg-card px-3 py-2.5">
+          <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold text-foreground uppercase tracking-wide">
               Coverage
             </span>
@@ -633,20 +634,36 @@ export function GroupSheets({ grade }: { grade: number }) {
               </span>
             )}
             <span className="h-px flex-1 bg-border" />
-            <ChevronDown
-              className={cn(
-                'w-4 h-4 text-muted-foreground transition-transform',
-                coverageOpen && 'rotate-180',
-              )}
-            />
-          </button>
-          {coverageOpen && (
-            <div className="mt-2">
-              <GroupCoverage
-                groupId={groupId}
-                term={covTerm}
-                setTerm={setCovTerm}
-              />
+            <Link
+              href={`/algorithm?tab=coverage&lens=groups&group=${groupId as unknown as string}`}
+              className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-primary"
+            >
+              See full coverage
+              <ExternalLink className="w-3 h-3" />
+            </Link>
+          </div>
+          {coverageReady && coverage.availableTerms.length > 1 && (
+            <div className="flex items-center gap-1.5 mt-2">
+              <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wide mr-0.5">
+                Term
+              </span>
+              {coverage.availableTerms.map((t: number) => (
+                <button
+                  key={t}
+                  onClick={() => {
+                    setCovTerm(t);
+                    setSelectedWeek(null);
+                  }}
+                  className={cn(
+                    'w-7 h-7 rounded-lg border text-[11px] font-bold',
+                    t === coverage.term
+                      ? 'border-primary/60 bg-primary/10 text-foreground'
+                      : 'border-border bg-card text-muted-foreground',
+                  )}
+                >
+                  {t}
+                </button>
+              ))}
             </div>
           )}
         </div>

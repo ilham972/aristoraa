@@ -353,6 +353,27 @@ because Z.
   `UnitArrangeDialog` reusing reorderConceptQuestions (NOT extracting the
   1204-line Lesson Builder — too risky; shared CropThumbnail + local dnd
   instead). "See + steer by unit; the engine still picks the questions."
+- **Coverage has ONE home: Insights → Coverage, two lenses** (2026-07-17,
+  founder). He asked to merge the Insights Coverage tab with the Planner
+  Sheets-tab coverage accordion. They CANNOT merge into one list: Insights
+  Coverage is keyed by GRADE and counts how many questions EXIST per concept
+  (a content-stock audit, cumulative across terms, every curriculum unit);
+  the Cockpit is keyed by GROUP and shows taught/planned per track unit for
+  ONE term. Different axes, different unit sets, no shared data. So: a
+  `Groups | Bank` toggle inside the tab (Groups default), each keeping its own
+  selector; the bridge is a book-gap in Groups deep-linking to that unit in
+  Bank (delivers backlog 5e: gaps drive what to crop next). Founder chose MOVE
+  (not mirror) — the cockpit is GONE from the Sheets tab, which keeps only a %
+  strip + term chips + a link. This AMENDS "Insights keeps inspection"
+  (2026-07-15): Insights is no longer read-only — Arrange-order, per-student
+  marks and "mark earlier terms taught" now live there, so the cockpit carries
+  its OWN Re-plan (Arrange doesn't bite until a re-plan, and that button is
+  now a page away). New win the founder didn't have: a rail of ALL groups'
+  rings compares every group on one term (`groupsTermCoverageSummary` — counts
+  only, no question docs; only the tapped group pays for the full query).
+  Gotcha baked in: the Sheets tab's term chips are NOT decorative — they set
+  covTerm, which the week question grids read; removing the cockpit without
+  re-adding them would silently freeze the timeline on the default term.
 - **Topic Journey reader = overlay above the tag drawer, not a route**
   (2026-07-14). Tapping a concept in Settings → Tags opens its marked book
   pages full-screen with a G6→G11 concept strip + Next/Prev — reading one

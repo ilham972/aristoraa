@@ -10,6 +10,11 @@
 //
 // Reads groupTermCoverage (one query per group+term); writes setStudentUnitDone.
 // It shows what the engine plans — it does not pick questions itself.
+//
+// HOME: Insights → Coverage → Groups (moved off the Planner's Sheets tab on
+// 2026-07-17 so coverage has one home). The Sheets tab keeps only a % strip
+// that links here. Because Arrange-order needs a Re-plan to bite and that
+// button no longer sits alongside, the cockpit carries its own (showReplan).
 
 import { useMemo, useState } from 'react';
 import { useMutation } from 'convex/react';
@@ -67,10 +72,23 @@ export function GroupCoverage({
   groupId,
   term,
   setTerm,
+  hideTermChips = false,
+  showReplan = false,
+  onInspectUnit,
 }: {
   groupId: Id<'groups'>;
   term: number | null;
   setTerm: (t: number | null) => void;
+  // The Insights "Groups" lens owns the term chips (they sit with the group
+  // rail, which is term-wide), so the cockpit must not repeat them.
+  hideTermChips?: boolean;
+  // "Arrange order" only bites after a re-plan. In the Sheets tab that button
+  // is right there; on Insights it's a page away — so the cockpit carries its
+  // own, using the identical delete-future + re-crystallize pair.
+  showReplan?: boolean;
+  // Hand a book-gap off to the Bank lens (Insights only): an empty unit here
+  // is exactly the unit worth photographing next.
+  onInspectUnit?: (unitId: string) => void;
 }) {
   // Same query+args as the parent's copy → deduped by the Convex client, so
   // the week grids in GroupSheets and this summary share one subscription and
@@ -86,7 +104,14 @@ export function GroupCoverage({
   const setStartingPoint = useMutation(
     api.learningEngine.groupPlan.setGroupStartingPoint,
   );
+  const deleteFuturePlanned = useMutation(
+    api.learningEngine.groupPlan.deleteFuturePlanned,
+  );
+  const crystallize = useMutation(
+    api.learningEngine.groupPlan.crystallizeUpcoming,
+  );
   const [markingPrior, setMarkingPrior] = useState(false);
+  const [replanning, setReplanning] = useState(false);
   const unitName = useUnitName();
 
   const [openUnit, setOpenUnit] = useState<string | null>(null);
@@ -123,6 +148,29 @@ export function GroupCoverage({
       toast.error(e instanceof Error ? e.message : 'Failed to update');
     } finally {
       setMarkingPrior(false);
+    }
+  };
+
+  // Same pair the Sheets tab runs: drop every future still-planned row, then
+  // rebuild it from the current book order. Taught + delegated are untouched.
+  const replan = async () => {
+    if (
+      !window.confirm(
+        'Re-plan the term? Every future sheet that is not yet taught will be re-picked from the current book order. Taught and delegated sheets are untouched.',
+      )
+    )
+      return;
+    setReplanning(true);
+    try {
+      const del = await deleteFuturePlanned({ groupId });
+      const res = await crystallize({ groupId, daysAhead: 180 });
+      toast.success(
+        `Re-planned: ${del.deleted} sheets dropped, ${res.status === 'ok' ? res.written : 0} rebuilt from the current order.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setReplanning(false);
     }
   };
 
@@ -190,30 +238,50 @@ export function GroupCoverage({
           </div>
         ))}
 
-      {/* Term chips */}
-      <div className="flex items-center gap-1.5 mb-3">
-        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-0.5">
-          Term
-        </span>
-        {coverage.availableTerms.map((t) => (
-          <button
-            key={t}
-            onClick={() => {
-              setTerm(t);
-              setOpenUnit(null);
-              setSelectedQ(null);
-            }}
-            className={cn(
-              'w-8 h-8 rounded-lg border text-xs font-bold',
-              t === activeTerm
-                ? 'border-primary/60 bg-primary/10 text-foreground'
-                : 'border-border bg-card text-muted-foreground',
-            )}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      {/* Term chips + group-level actions. The Insights lens hides the chips
+          (its rail owns the term) but keeps the Re-plan button. */}
+      {(!hideTermChips || showReplan) && (
+        <div className="flex items-center gap-1.5 mb-3">
+          {!hideTermChips && (
+            <>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mr-0.5">
+                Term
+              </span>
+              {coverage.availableTerms.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => {
+                    setTerm(t);
+                    setOpenUnit(null);
+                    setSelectedQ(null);
+                  }}
+                  className={cn(
+                    'w-8 h-8 rounded-lg border text-xs font-bold',
+                    t === activeTerm
+                      ? 'border-primary/60 bg-primary/10 text-foreground'
+                      : 'border-border bg-card text-muted-foreground',
+                  )}
+                >
+                  {t}
+                </button>
+              ))}
+            </>
+          )}
+          {showReplan && (
+            <button
+              onClick={replan}
+              disabled={replanning}
+              title="After changing a unit's order: re-pick every future planned sheet from the new order"
+              className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-foreground text-[11px] font-semibold disabled:opacity-50"
+            >
+              <RefreshCw
+                className={cn('w-3.5 h-3.5', replanning && 'animate-spin')}
+              />
+              {replanning ? 'Re-planning…' : 'Re-plan'}
+            </button>
+          )}
+        </div>
+      )}
 
       {coverage.units.length === 0 && (
         <div className="rounded-xl border border-border bg-card p-4 text-center text-sm text-muted-foreground">
@@ -236,6 +304,7 @@ export function GroupCoverage({
             onSelectQ={setSelectedQ}
             onToggleStudent={toggleStudentUnit}
             onArrange={() => setArrangeUnit(u.unitId)}
+            onInspectUnit={onInspectUnit}
           />
         ))}
       </div>
@@ -252,7 +321,9 @@ export function GroupCoverage({
 }
 
 function CoverageBar({ unit }: { unit: UnitRow }) {
-  const total = Math.max(1, unit.totalQuestions);
+  // Unticked questions leave the denominator — same rule as the % summary and
+  // the rail rings, so an excluded question can never hold the bar under 100%.
+  const total = Math.max(1, unit.totalQuestions - unit.bannedCount);
   const donePct = (unit.doneCount / total) * 100;
   const planPct = (unit.plannedCount / total) * 100;
   return (
@@ -273,6 +344,7 @@ function UnitAccordion({
   onSelectQ,
   onToggleStudent,
   onArrange,
+  onInspectUnit,
 }: {
   unit: UnitRow;
   name: string;
@@ -287,6 +359,7 @@ function UnitAccordion({
     done: boolean,
   ) => void;
   onArrange: () => void;
+  onInspectUnit?: (unitId: string) => void;
 }) {
   const selected = useMemo(
     () =>
@@ -326,7 +399,7 @@ function UnitAccordion({
               {unit.plannedCount > 0 && (
                 <span className="text-primary">+{unit.plannedCount}</span>
               )}
-              /{unit.totalQuestions}
+              /{unit.totalQuestions - unit.bannedCount}
             </span>
           )}
           <ChevronDown
@@ -344,8 +417,18 @@ function UnitAccordion({
           {!unit.hasBook ? (
             <div className="flex gap-2 items-start text-[11px] text-muted-foreground">
               <BookOpen className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-              No questions entered for this unit yet. Photograph &amp; enter the
-              book pages in Settings → Book to see its questions here.
+              <div>
+                No questions entered for this unit yet. Photograph &amp; enter
+                the book pages in Settings → Book to see its questions here.
+                {onInspectUnit && (
+                  <button
+                    onClick={() => onInspectUnit(unit.unitId)}
+                    className="block mt-1.5 text-primary font-semibold underline underline-offset-2"
+                  >
+                    Check this unit in the question bank →
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <>
@@ -407,6 +490,12 @@ function UnitAccordion({
                   <span className="w-2.5 h-2.5 rounded bg-muted border border-border" />
                   not yet
                 </span>
+                {unit.bannedCount > 0 && (
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded border border-dashed border-rose-500/40" />
+                    excluded
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                   spiral review
@@ -443,7 +532,10 @@ function UnitAccordion({
                         .
                       </>
                     )}
-                    {selected.state !== 'unseen' &&
+                    {/* Only "done" with no sheet means pre-app / per-student
+                        coverage. "banned" also has no sheetDate, and it is the
+                        opposite of covered — it must not fall in here. */}
+                    {selected.state === 'done' &&
                       !selected.sheetDate &&
                       'Already covered (before the app or in per-student mode).'}
                   </div>
