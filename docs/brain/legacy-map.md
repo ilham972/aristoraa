@@ -27,6 +27,7 @@ but may hold wanted ideas) · TRANSITION (dual-running by design) · KEEP
 ## Convex modules (zero real callers)
 | Path | Verdict | Why |
 |---|---|---|
+| convex/learningEngine/groupPlan.ts:addPlannedSheet | FOUNDER-DECIDES | "+ session" button removed 2026-07-18 (capacity = Revision timetable); mutation kept unwired |
 | convex/sessionSubmissions.ts | SAFE-DELETE* | superseded by learningEngine scoring (*table may hold old data — export first) |
 | convex/studentModulePositions.ts | SAFE-DELETE* | superseded by path/tracks (*same data caveat) |
 | convex/messaging/testSend.ts | SAFE-DELETE | dead twin of wired sendTest.ts |

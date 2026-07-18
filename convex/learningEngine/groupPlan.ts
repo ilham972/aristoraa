@@ -2309,9 +2309,29 @@ export const compressionPreview = query({
     const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
     if (loaded.status !== "ok") return { status: loaded.status };
     const state = loaded.state;
-    const { currentUnitIdx } = skeletonInputs(state);
-    if (currentUnitIdx >= state.ladders.length)
-      return { status: "nothing-to-teach" as const };
+
+    // The bookmark counts PLANNED future rows as claimed — correct for the
+    // pick queues, but compression must see those questions as still
+    // MOVABLE: the whole term is usually prebuilt, and planned rows get
+    // dropped + re-picked right after the routes are written (2026-07-18
+    // founder bug: "+ unit" said everything was covered on a fully-planned
+    // term). Only NEW-section claims re-open a unit — a planned spiral pick
+    // of a long-finished unit doesn't make that unit "current" again.
+    const replannable = new Set<string>();
+    for (const c of state.crystallized) {
+      if (c.status !== "planned") continue;
+      for (const qid of c.newQuestionIds)
+        replannable.add(qid as unknown as string);
+    }
+    const movable = (qid: string) =>
+      (!state.seen.has(qid) || replannable.has(qid)) &&
+      !state.banned.has(qid) &&
+      !state.routedRevision.has(qid);
+
+    const currentUnitIdx = state.ladders.findIndex((l) =>
+      l.ladder.some((q) => movable(q.qid)),
+    );
+    if (currentUnitIdx < 0) return { status: "nothing-to-teach" as const };
     const current = state.ladders[currentUnitIdx];
     // Next unit that actually has book entered — an empty ladder can't start.
     const next = state.ladders
@@ -2319,12 +2339,7 @@ export const compressionPreview = query({
       .find((l) => l.ladder.length > 0);
     if (!next) return { status: "no-next-unit" as const };
 
-    const remainder = current.ladder.filter(
-      (q) =>
-        !state.seen.has(q.qid) &&
-        !state.banned.has(q.qid) &&
-        !state.routedRevision.has(q.qid),
-    );
+    const remainder = current.ladder.filter((q) => movable(q.qid));
     if (remainder.length === 0)
       return { status: "nothing-to-compress" as const };
 

@@ -186,6 +186,29 @@ describe('question routing (green/yellow)', () => {
     expect(byId.get(qids[UNIT1][2])).toBe('revision');
   });
 
+  it('compression still works when the whole term is already planned', async () => {
+    // Founder bug 2026-07-18: after "Run all term sheets" every question is
+    // claimed by a PLANNED row, and "+ unit" reported "everything covered".
+    // Planned rows are re-pickable, so their questions must stay movable.
+    const t = convexTest(schema, modules);
+    const { groupId, qids } = await seed(t);
+    await asUser(t).mutation(
+      api.learningEngine.groupPlan.crystallizeUpcoming,
+      { groupId, daysAhead: 170 },
+    );
+    const preview = await asUser(t).query(
+      api.learningEngine.groupPlan.compressionPreview,
+      { groupId },
+    );
+    expect(preview?.status).toBe('ok');
+    if (preview?.status !== 'ok') return;
+    expect(preview.currentUnitId).toBe(UNIT1);
+    expect(preview.nextUnitId).toBe(UNIT2);
+    expect(preview.questions.map((q) => q.questionId).sort()).toEqual(
+      [...qids[UNIT1]].sort(),
+    );
+  });
+
   it('applyCompression writes auto rows but never overwrites a manual route', async () => {
     const t = convexTest(schema, modules);
     const { groupId, qids } = await seed(t);

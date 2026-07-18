@@ -39,13 +39,16 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   "Run all term sheets" (crystallize, 180d cap) + "Re-plan"; amber bank-dry
   banner. Coverage = % strip + TERM CHIPS (set covTerm for the week grids —
   never remove) linking to Insights. Timeline = METRO-LINE MASTER/DETAIL
-  (rules in decisions.md): week ring-station rail + sticky detail card: chips
-  are SESSIONS (one groupSheets row each; "+ session" adds one on a free day);
-  highlight pill lights a session's picks, and its A4 PAGES appear as "Sheet
-  1/2…" pills narrowing the highlight per printed page (`groupSheetPages` —
-  exact from pdfPageAssignments stamped by renderGroupSheetPDF, else estimated
-  via convex/lib/sheetLayout.ts, constants MUST match pdf.ts). Grids in TRUE
-  book order; 7+7 day strip last; drawer ‹› nav. Unit name → GROUP LESSON
+  (rules in decisions.md): week ring-station rail + sticky SESSION-CENTRIC
+  card (round 2, 2026-07-18): row 1 = session chips (tap = select, tap again
+  = drawer; pills: PDF preview + ↻ assign; NO "+ session" — revision capacity
+  comes from the Revision timetable, sheets are only ASSIGNED onto it), row 2
+  = selected session's unit chips + "+ unit" (ONE unit's grid at a time),
+  row 3 = its physical A4 sheets, always shown, 2 printed pages = 1 paper
+  (`groupSheetPages` — exact from pdfPageAssignments stamped by
+  renderGroupSheetPDF, else estimated via convex/lib/sheetLayout.ts,
+  constants MUST match pdf.ts); tap a sheet = ring its questions. Grid in
+  TRUE book order; 7+7 day strip last (tap = select). Unit name → GROUP LESSON
   BUILDER (`group-lesson-builder.tsx`, SHARED grid with the session builder
   via `components/lesson/lesson-question-grid.tsx`): Main/Revision tabs; tap
   tile = tick/untick (ban), tap tick chip = flip GREEN (Main) ↔ YELLOW

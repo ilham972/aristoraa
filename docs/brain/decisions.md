@@ -413,6 +413,14 @@ because Z.
   flickery. Rejected per-unit "+question" buttons (nothing to add — the plan
   already holds every non-excluded question). The builder decides WHAT goes
   to revision; the week card's ↻ decides WHEN (one job per screen).
+- **"+ session" button removed from the Sheets week card** (2026-07-18,
+  round 2). Founder: capacity is CREATED on the Revision timetable page;
+  the week card only ASSIGNS sheets onto revision days (↻ pill / Rev row).
+  Two add-buttons confused which one makes time vs uses it. Backend
+  `addPlannedSheet` kept (unwired) in case a capacity shortcut returns.
+  Compression bugfix same day: `compressionPreview` must treat PLANNED
+  (re-pickable) claims as movable — on a fully-prebuilt term the bookmark
+  alone says "everything covered" and "+ unit" dead-ends.
 - **One shared Lesson Builder** (2026-07-18) — the planner's group curation
   dialog was a worse clone of the session builder; replaced by group MODE of
   the same screen (`group-lesson-builder.tsx` + shared
