@@ -47,11 +47,9 @@ type CatalogQ = {
   overrideImageUrl: string | null;
 };
 
-// Mirror of the backend bucket formula in reorderConceptQuestions — the dN
-// badge previews the difficulty a row's position will save.
-function difficultyForPosition(i: number, n: number): number {
-  return Math.min(5, Math.floor((i * 5) / n) + 1);
-}
+// Decimal difficulty preview shared with the Lesson Builder (mirror of the
+// backend formula in reorderConceptQuestions).
+import { difficultyForPosition } from '@/components/lesson/lesson-question-grid';
 
 export function UnitArrangeDialog({
   unitId,
@@ -291,7 +289,7 @@ function ArrangeRow({
       <span className="w-9 shrink-0 text-[10px] font-semibold text-foreground truncate">
         {q.label ?? 'Q'}
       </span>
-      <span className="w-6 shrink-0 text-[9px] tabular-nums text-muted-foreground">
+      <span className="w-8 shrink-0 text-[9px] tabular-nums text-muted-foreground">
         d{difficultyForPosition(index, count)}
       </span>
       {q.overrideImageUrl ? (

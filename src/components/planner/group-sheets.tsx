@@ -48,7 +48,8 @@ import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
 import { shortLabel } from './group-coverage';
-import { GroupUnitBuilderDialog } from './group-unit-builder';
+import { CompressionDialog } from './compression-dialog';
+import { GroupLessonBuilder } from './group-lesson-builder';
 import { UnitArrangeDialog } from './unit-arrange-dialog';
 import { fmtWeekdayDate } from './verdict';
 
@@ -278,8 +279,13 @@ export function GroupSheets({ grade }: { grade: number }) {
     date: string;
   } | null>(null);
   const [highlightDate, setHighlightDate] = useState<string | null>(null);
+  // Per-A4-page narrowing of the highlight (sessions redesign, 2026-07-18):
+  // null = the whole session's picks; a set = just that printed page's.
+  const [pageFilter, setPageFilter] = useState<Set<string> | null>(null);
   // Unit-curation dialog (the group Lesson Builder) — opened from a unit name.
   const [builderUnitId, setBuilderUnitId] = useState<string | null>(null);
+  // "+ unit" — unit-compression confirm sheet.
+  const [compressOpen, setCompressOpen] = useState(false);
   // Day pickers: assign a planned sheet to a revision class this week, or
   // add an EXTRA sheet on a free session/revision day.
   const [assignSheet, setAssignSheet] = useState<{
@@ -297,6 +303,13 @@ export function GroupSheets({ grade }: { grade: number }) {
     for (const s of list) m.set(s.date, s);
     return m;
   }, [list]);
+  // A4 pages of the highlighted session — exact after a print-preview
+  // render, estimated from crop sizes before one.
+  const hlSheet = highlightDate ? sheetByDate.get(highlightDate) : undefined;
+  const hlPages = useCachedQuery(
+    api.learningEngine.groupPlan.groupSheetPages,
+    hlSheet ? { groupSheetId: hlSheet.id } : 'skip',
+  );
   const mainDays = useMemo(() => new Set(slotDays?.mainDays ?? []), [slotDays]);
   const revisionDays = useMemo(
     () => new Set(slotDays?.revisionDays ?? []),
@@ -354,7 +367,7 @@ export function GroupSheets({ grade }: { grade: number }) {
   type GridBox = {
     questionId: string;
     label: string | null;
-    mark: 'new' | 'review' | 'other' | 'unseen' | 'banned';
+    mark: 'new' | 'review' | 'other' | 'unseen' | 'banned' | 'routed';
     sheetDate: string | null;
   };
   const weekGrids = useMemo(() => {
@@ -376,6 +389,9 @@ export function GroupSheets({ grade }: { grade: number }) {
             mark = 'other';
           } else if (q.state === 'banned') {
             mark = 'banned';
+          } else if (q.state === 'revision') {
+            // "Yellow": routed to the Revision department's queues.
+            mark = 'routed';
           } else {
             mark = 'unseen';
           }
@@ -409,8 +425,10 @@ export function GroupSheets({ grade }: { grade: number }) {
     const byWeek = new Map<string, number>();
     for (const u of coverage.units) {
       // Excluded (unticked) questions are not part of the plan → not part
-      // of 100% either.
-      total += u.totalQuestions - u.bannedCount;
+      // of 100% either. Routed-to-revision questions leave the MAIN
+      // denominator too — they're the Revision department's load, and they
+      // re-enter as covered once a revision sheet actually serves them.
+      total += u.totalQuestions - u.bannedCount - u.routedCount;
       for (const q of u.questions) {
         if (q.sheetDate) {
           const ws = weekStartYmd(q.sheetDate);
@@ -527,7 +545,7 @@ export function GroupSheets({ grade }: { grade: number }) {
         let t = 0;
         for (const u of coverage.units) {
           d += u.doneCount;
-          t += u.totalQuestions - u.bannedCount;
+          t += u.totalQuestions - u.bannedCount - u.routedCount;
         }
         return t > 0 ? Math.round((d / t) * 100) : 0;
       })()
@@ -725,6 +743,7 @@ export function GroupSheets({ grade }: { grade: number }) {
                           onClick={() => {
                             setSelectedWeek(w.weekStart);
                             setHighlightDate(null);
+                            setPageFilter(null);
                           }}
                           className={cn(
                             'w-full flex items-center gap-2 rounded-lg py-0.5 sm:px-1.5 text-left',
@@ -810,7 +829,8 @@ export function GroupSheets({ grade }: { grade: number }) {
                           )}
                           <span className="h-px flex-1 bg-border" />
                           <span className="text-[9.5px] text-muted-foreground tabular-nums shrink-0">
-                            {total}q · {w.sheets.length}sh
+                            {total}q · {w.sheets.length} session
+                            {w.sheets.length === 1 ? '' : 's'}
                           </span>
                         </div>
                         {/* Counts, not a mix bar — a two-color composition
@@ -903,10 +923,11 @@ export function GroupSheets({ grade }: { grade: number }) {
                                   <FileText className="w-3 h-3" />
                                 </button>
                                 <button
-                                  onClick={() =>
-                                    setHighlightDate(hl ? null : s.date)
-                                  }
-                                  title="Highlight this sheet's questions in the grid"
+                                  onClick={() => {
+                                    setHighlightDate(hl ? null : s.date);
+                                    setPageFilter(null);
+                                  }}
+                                  title="Highlight this session's questions in the grid"
                                   aria-label="Highlight in grid"
                                   className={cn(
                                     'px-1.5 border-l border-border/60 flex items-center',
@@ -938,18 +959,67 @@ export function GroupSheets({ grade }: { grade: number }) {
                           })}
                           <button
                             onClick={() => setAddSheetWeek(w.weekStart)}
-                            title="Add an extra sheet on a free day this week"
+                            title="Add an extra teaching session on a free day this week"
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-border text-[10px] font-semibold text-muted-foreground hover:text-foreground"
                           >
                             <Plus className="w-3 h-3" />
-                            sheet
+                            session
                           </button>
                         </div>
                         {highlightDate !== null && (
-                          <div className="text-[9px] text-primary font-semibold">
-                            Highlighting {fmtWeekdayDate(highlightDate)}
-                            &rsquo;s picks in the grid — tap the pill again to
-                            clear.
+                          <div className="space-y-1">
+                            <div className="text-[9px] text-primary font-semibold">
+                              Highlighting {fmtWeekdayDate(highlightDate)}
+                              &rsquo;s picks in the grid — tap the pill again
+                              to clear.
+                            </div>
+                            {/* The session's physical A4 sheets: tap one to
+                                narrow the highlight to that page's questions.
+                                Exact after a print preview, estimated before. */}
+                            {hlPages && hlPages.pages.length > 0 && (
+                              <div className="flex items-center flex-wrap gap-1">
+                                <span className="text-[8.5px] font-semibold text-muted-foreground uppercase tracking-wide">
+                                  A4
+                                </span>
+                                {hlPages.pages.map((p) => {
+                                  const ids = new Set(
+                                    p.questionIds.map(
+                                      (q) => q as unknown as string,
+                                    ),
+                                  );
+                                  const active =
+                                    pageFilter !== null &&
+                                    p.questionIds.every((q) =>
+                                      pageFilter.has(q as unknown as string),
+                                    ) &&
+                                    pageFilter.size === ids.size;
+                                  return (
+                                    <button
+                                      key={p.page}
+                                      onClick={() =>
+                                        setPageFilter(active ? null : ids)
+                                      }
+                                      className={cn(
+                                        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9px] font-semibold tabular-nums',
+                                        active
+                                          ? 'border-primary bg-primary/15 text-primary'
+                                          : 'border-border text-muted-foreground hover:text-foreground',
+                                      )}
+                                    >
+                                      Sheet {p.page}
+                                      <span className="opacity-70">
+                                        {p.questionIds.length}q
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                                {!hlPages.exact && (
+                                  <span className="text-[8px] text-muted-foreground italic">
+                                    est. — open print preview for exact pages
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -980,7 +1050,9 @@ export function GroupSheets({ grade }: { grade: number }) {
                               {g.boxes.map((b, bi) => {
                                 const hl =
                                   highlightDate !== null &&
-                                  b.sheetDate === highlightDate;
+                                  b.sheetDate === highlightDate &&
+                                  (pageFilter === null ||
+                                    pageFilter.has(b.questionId));
                                 return (
                                   <span
                                     key={b.questionId}
@@ -997,6 +1069,8 @@ export function GroupSheets({ grade }: { grade: number }) {
                                         'bg-transparent border-dashed border-border text-muted-foreground/40',
                                       b.mark === 'banned' &&
                                         'bg-transparent border-dashed border-rose-500/40 text-rose-500/60 line-through',
+                                      b.mark === 'routed' &&
+                                        'bg-amber-400/20 border-amber-400/70 text-amber-600 dark:text-amber-400',
                                       highlightDate !== null &&
                                         (hl
                                           ? 'ring-2 ring-primary ring-offset-1 ring-offset-card'
@@ -1032,8 +1106,24 @@ export function GroupSheets({ grade }: { grade: number }) {
                               <span className="w-2.5 h-2.5 rounded border border-dashed border-rose-500/40" />
                               excluded
                             </span>
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded bg-amber-400/25 border border-amber-400/70" />
+                              → revision dept
+                            </span>
                           </div>
                         )}
+
+                        {/* "+ unit" — start the NEXT unit now by compressing
+                            the current one (drill overflow → Revision). The
+                            teacher's pace lever. */}
+                        <button
+                          onClick={() => setCompressOpen(true)}
+                          title="Start the next unit now — the algorithm proposes which questions move to Revision"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-emerald-500/50 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+                        >
+                          <Plus className="w-3 h-3" />
+                          unit
+                        </button>
 
                         {/* 7+7 day strip — last row, horizontal Mon→Sun so it
                             tucks under everything else. Filled Main box = a
@@ -1190,7 +1280,10 @@ export function GroupSheets({ grade }: { grade: number }) {
       {assignSheet && (
         <DayPickerDialog
           title="Assign to a revision class"
-          hint="The sheet moves onto the revision day you pick."
+          hint={`${(() => {
+            const sh = sheetByDate.get(assignSheet.date);
+            return sh ? `${sh.newCount + sh.spiralCount} questions · ` : '';
+          })()}the session's sheet moves onto the revision day you pick.`}
           options={Array.from(revisionDays)
             .sort((a, b) => a - b)
             .map((dow) => addDaysYmd(assignSheet.weekStart, dow - 1))
@@ -1253,11 +1346,24 @@ export function GroupSheets({ grade }: { grade: number }) {
       )}
 
       {builderUnitId && groupId && (
-        <GroupUnitBuilderDialog
+        <GroupLessonBuilder
           groupId={groupId}
+          groupName={
+            gradeGroups.find((g: PlannerGroupRow) => g.groupId === groupId)
+              ?.name ?? 'Group'
+          }
           unitId={builderUnitId}
           unitName={unitName(builderUnitId)}
+          resolveUnitName={unitName}
           onClose={() => setBuilderUnitId(null)}
+        />
+      )}
+
+      {compressOpen && groupId && (
+        <CompressionDialog
+          groupId={groupId}
+          unitName={unitName}
+          onClose={() => setCompressOpen(false)}
         />
       )}
     </>

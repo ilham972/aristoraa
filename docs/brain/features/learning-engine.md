@@ -35,22 +35,24 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   runway cards + crystallize one/all. Calendar: per-group day-grid to exam
   (unit/state, Revision slots, cancelled days, levers). Forecast: grade rollup.
   Tracks + Exams (from /algorithm; grade×term grid + Quick entry).
-- Sheets tab = the CONTROL ROOM (2026-07-16): "Run all term sheets"
-  (crystallize, 180d cap) + "Re-plan" (deleteFuturePlanned + rebuild); amber
-  banner when the bank runs dry. Coverage = a % strip + TERM CHIPS (they set
-  covTerm, which the week grids are built from — never remove them) linking to
-  Insights; the cockpit itself moved there 2026-07-17. Timeline = METRO-LINE
-  MASTER/DETAIL (visual rules in decisions.md): left rail of week ring-stations
-  (ring = term progress; exam = rose flag terminus) + fixed sticky detail card
-  per tapped week: new/review counts, cumulative bar (crystallize ignores the
-  exam — overshoot shown, not prevented), pick grids in TRUE book order
-  (src/lib/book-order.ts — coverage returns ladder order), horizontal 7+7 day
-  strip LAST (`groupSlotDays`). Drawer ‹› nav + planned-row actions. 2026-07-17
-  chip pills: real-PDF print preview (renderGroupSheetPDF reuses buildPDF; blob
-  in groupSheets.pdfPreviewStorageId) + highlight-sheet-in-grid; unit name →
-  GROUP LESSON BUILDER (group-unit-builder.tsx), CURATION ticks: untick = ban
-  (groupUnitBans — queues/skeleton/coverage/exhaustion respect it, taught
-  locked) + auto re-plan; "planned" chip badge hidden.
+- Sheets tab = the CONTROL ROOM (2026-07-16; sessions redesign 2026-07-18):
+  "Run all term sheets" (crystallize, 180d cap) + "Re-plan"; amber bank-dry
+  banner. Coverage = % strip + TERM CHIPS (set covTerm for the week grids —
+  never remove) linking to Insights. Timeline = METRO-LINE MASTER/DETAIL
+  (rules in decisions.md): week ring-station rail + sticky detail card: chips
+  are SESSIONS (one groupSheets row each; "+ session" adds one on a free day);
+  highlight pill lights a session's picks, and its A4 PAGES appear as "Sheet
+  1/2…" pills narrowing the highlight per printed page (`groupSheetPages` —
+  exact from pdfPageAssignments stamped by renderGroupSheetPDF, else estimated
+  via convex/lib/sheetLayout.ts, constants MUST match pdf.ts). Grids in TRUE
+  book order; 7+7 day strip last; drawer ‹› nav. Unit name → GROUP LESSON
+  BUILDER (`group-lesson-builder.tsx`, SHARED grid with the session builder
+  via `components/lesson/lesson-question-grid.tsx`): Main/Revision tabs; tap
+  tile = tick/untick (ban), tap tick chip = flip GREEN (Main) ↔ YELLOW
+  (revision route, `groupQuestionRoutes`, manual never auto-overwritten).
+  "+ unit" (week card + builder) = UNIT COMPRESSION (`compression-dialog.tsx`,
+  compressionPreview/applyCompression): start the next unit now — keep concept
+  intros + hardest ~20% green, middle drill flips yellow, then re-plan.
 - `/algorithm` — Coverage = TWO LENSES (2026-07-17): GROUPS = the Cockpit moved
   off /planner (`groupsTermCoverageSummary` = cheap all-group rail rings, counts
   only; only the tapped group pays for `groupTermCoverage`), BANK = concept
@@ -76,7 +78,9 @@ unseen ladder, textbook then capped past-paper tail, scanBookExhaustion cron;
 spiral = unseen past-unit Qs, weakest group-avg R first); session Sheets tab
 materializes per student via mainQuestionIdsOverride. Revision dept:
 sessionType="revision"; queues = group-claimed-but-unseen Qs (delegation +
-absence catch-up, ONE rule, cap 10); consolidation students get the personal
+absence catch-up, ONE rule, cap 10) + ROUTED yellow Qs (groupQuestionRoutes,
+2026-07-18 — question-level delegation; out of Main demand/queues/coverage
+denominators, ban wins, seen wins); consolidation students get the personal
 planner. Tuning: mainQuestionsPerSession (3–15), resizePlanned, groupCarryOvers
 log (tail → "main" served FIRST next crystallize, or "revision" per-member
 queue; deletePlanned un-consumes; bookmark never un-seen). Book-gap honesty:

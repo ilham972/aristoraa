@@ -51,8 +51,15 @@ Each entry: what it means here, then [tables in convex/schema.ts | main module].
   of consumed question ids; delegation sends a planned sheet to the Revision
   department (bookmark still advances). Revision sessions
   (scheduleSlots.sessionType) serve each student's queue =
-  group-claimed-but-personally-unseen questions. [groupSheets |
-  convex/learningEngine/groupPlan.ts, convex/lib/groupPlanCore.ts]
+  group-claimed-but-personally-unseen questions + routed yellow questions.
+  [groupSheets | convex/learningEngine/groupPlan.ts, convex/lib/groupPlanCore.ts]
+- **Question route (green/yellow) & unit compression** — per-group,
+  per-question: GREEN = taught in Main (default, no row), YELLOW = routed to
+  the Revision queues (question-level delegation; leaves Main demand — the
+  deadline lever). Manual routes are founder decisions the algorithm never
+  overwrites; ban and seen both win over a route. "+ unit" = compression:
+  start the next unit now, intros + hardest ~20% stay green, middle drill
+  flips yellow. [groupQuestionRoutes | convex/learningEngine/groupPlan.ts]
 - **Track** — named cross-grade progression level (replaces grade-based
   position); students promote along tracks shown as a railway map; leagues group
   students for competition. **Flag `LEADERBOARD_PRIMARY='legacy'`**: track system

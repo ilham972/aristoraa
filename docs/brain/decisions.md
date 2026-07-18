@@ -400,6 +400,25 @@ because Z.
   exactly as left (founder is phone-only; route navigation would lose drawer
   state). Chose the journey strip over a simple per-concept popup because
   the founder's stated goal was continuous cross-grade reading.
+- **Question routing green/yellow + unit compression** (2026-07-18, sessions
+  redesign; spec docs/superpowers/specs/2026-07-18-…-design.md). Every group
+  question is GREEN (taught in Main), YELLOW (routed to Revision queues —
+  `groupQuestionRoutes`, question-level delegation) or unticked (ban).
+  "+ unit" compresses the current unit to start the next one NOW: keep
+  concept intros + hardest ~20% green (hard tail MUST stay in Main — revision
+  teachers can't teach it; do NOT delegate the tail), middle drill flips
+  yellow. Yellow leaves Main demand → the deadline math improves; ban wins
+  over route, seen wins over route; MANUAL routes are never auto-overwritten.
+  Chose chip-tap (not double-tap) for green↔yellow: phone double-tap is
+  flickery. Rejected per-unit "+question" buttons (nothing to add — the plan
+  already holds every non-excluded question). The builder decides WHAT goes
+  to revision; the week card's ↻ decides WHEN (one job per screen).
+- **One shared Lesson Builder** (2026-07-18) — the planner's group curation
+  dialog was a worse clone of the session builder; replaced by group MODE of
+  the same screen (`group-lesson-builder.tsx` + shared
+  `components/lesson/lesson-question-grid.tsx`); `group-unit-builder.tsx`
+  deleted. Arrange now writes DECIMAL difficulty 1.0→5.0 across the dragged
+  order (was whole bands 1–5 that made neighbours look identical).
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.
