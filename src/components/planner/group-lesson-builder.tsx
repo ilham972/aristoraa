@@ -9,10 +9,13 @@
 //   • header shows the GROUP name; the tapped unit is a chip (no dropdown)
 //     plus the "+ unit" button (unit compression — same dialog as the
 //     week card);
-//   • TWO tabs — Main (green) and Revision (yellow): every ticked question
-//     is either taught in Main or routed to the Revision queues. Tap the
-//     tile = tick/untick (untick = ban); tap the tick chip = flip
-//     green↔yellow (saved as a MANUAL route the algorithm never overrides);
+//   • TWO tabs — Main and Timeline (2026-07-19; the Revision tab is gone —
+//     founder: Main should show EVERYTHING, yellow ticks inline, so a
+//     separate yellow-only list said nothing new). Main: tap the tile =
+//     tick/untick (untick = ban); tap the tick chip = flip green↔yellow
+//     (saved as a MANUAL route the algorithm never overrides). Timeline:
+//     this unit on the calendar — real Main dates + SR-predicted revision
+//     days (group-unit-timeline.tsx);
 //   • Save & re-plan writes bans + changed routes, then rebuilds every
 //     future planned sheet.
 
@@ -37,6 +40,7 @@ import {
   type GridQuestion,
 } from '@/components/lesson/lesson-question-grid';
 import { CompressionDialog } from './compression-dialog';
+import { GroupUnitTimeline } from './group-unit-timeline';
 import { UnitArrangeDialog } from './unit-arrange-dialog';
 
 export function GroupLessonBuilder({
@@ -79,7 +83,7 @@ export function GroupLessonBuilder({
     api.learningEngine.groupPlan.crystallizeUpcoming,
   );
 
-  const [tab, setTab] = useState<'main' | 'revision'>('main');
+  const [tab, setTab] = useState<'main' | 'timeline'>('main');
   const [conceptFilter, setConceptFilter] = useState<string | 'all'>('all');
   const [bookView, setBookView] = useState(false);
   const [arranging, setArranging] = useState(false);
@@ -246,15 +250,6 @@ export function GroupLessonBuilder({
     }
   };
 
-  // Tab filter by color — unticked questions stay visible on their tab so
-  // they can be ticked back in.
-  const visibleForTab = (qs: GridQuestion[]): GridQuestion[] =>
-    qs.filter(
-      (q) =>
-        routeOf(q.questionId as string) ===
-        (tab === 'main' ? 'main' : 'revision'),
-    );
-
   const filtered =
     conceptFilter === 'all'
       ? concepts
@@ -294,34 +289,46 @@ export function GroupLessonBuilder({
         </button>
       </div>
 
-      {/* Main / Revision tabs */}
+      {/* Main / Timeline tabs — Main shows EVERYTHING (green + yellow
+          ticks inline); Timeline lays this unit on the calendar. */}
       <div className="flex px-2 border-b border-border shrink-0">
-        {(
-          [
-            { key: 'main' as const, label: 'Main', count: greenCount },
-            { key: 'revision' as const, label: 'Revision', count: yellowCount },
-          ]
-        ).map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              'flex-1 px-1 py-2.5 text-[11px] font-semibold border-b-2 transition-colors',
-              tab === t.key
-                ? t.key === 'revision'
-                  ? 'border-amber-400 text-amber-500'
-                  : 'border-emerald-500 text-emerald-500'
-                : 'border-transparent text-muted-foreground',
-            )}
-          >
-            {t.label}
-            <span className="ml-1 tabular-nums opacity-80">{t.count}</span>
-          </button>
-        ))}
+        <button
+          onClick={() => setTab('main')}
+          className={cn(
+            'flex-1 px-1 py-2.5 text-[11px] font-semibold border-b-2 transition-colors',
+            tab === 'main'
+              ? 'border-emerald-500 text-emerald-500'
+              : 'border-transparent text-muted-foreground',
+          )}
+        >
+          Main
+          <span className="ml-1 tabular-nums opacity-80">{greenCount}</span>
+          {yellowCount > 0 && (
+            <span className="ml-1 tabular-nums text-amber-500">
+              · {yellowCount}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setTab('timeline')}
+          className={cn(
+            'flex-1 px-1 py-2.5 text-[11px] font-semibold border-b-2 transition-colors',
+            tab === 'timeline'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground',
+          )}
+        >
+          Timeline
+        </button>
       </div>
 
-      {/* Toolbar: book-order lens · arrange · lesson sets */}
-      <div className="px-3 py-2 border-b border-border/60 shrink-0 space-y-2">
+      {/* Toolbar: book-order lens · arrange · lesson sets (Main tab only) */}
+      <div
+        className={cn(
+          'px-3 py-2 border-b border-border/60 shrink-0 space-y-2',
+          tab !== 'main' && 'hidden',
+        )}
+      >
         <div className="flex items-center gap-1.5 overflow-x-auto">
           <button
             onClick={() => setBookView((v) => !v)}
@@ -376,14 +383,14 @@ export function GroupLessonBuilder({
         <div className="flex items-center gap-1.5 overflow-x-auto">
           <ConceptChip
             label="All"
-            count={`${tab === 'main' ? greenCount : yellowCount}`}
+            count={`${greenCount + yellowCount}`}
             active={conceptFilter === 'all'}
             onClick={() => setConceptFilter('all')}
           />
           {concepts.map((c) => {
             const cid = c.conceptId as unknown as string;
-            const n = visibleForTab(c.questions as GridQuestion[]).filter(
-              (q) => ticked.has(q.questionId as string),
+            const n = (c.questions as GridQuestion[]).filter((q) =>
+              ticked.has(q.questionId as string),
             ).length;
             return (
               <ConceptChip
@@ -407,8 +414,20 @@ export function GroupLessonBuilder({
         </div>
       </div>
 
+      {/* Timeline tab — this unit on the calendar */}
+      {tab === 'timeline' && (
+        <div className="flex-1 overflow-y-auto pb-28">
+          <GroupUnitTimeline groupId={groupId} unitId={unitId} />
+        </div>
+      )}
+
       {/* Question grid */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 pb-28">
+      <div
+        className={cn(
+          'flex-1 overflow-y-auto px-3 py-3 pb-28',
+          tab !== 'main' && 'hidden',
+        )}
+      >
         {(catalog === undefined || curation === undefined) && (
           <div className="grid grid-cols-2 gap-1.5 animate-pulse">
             {[1, 2, 3, 4].map((i) => (
@@ -436,7 +455,7 @@ export function GroupLessonBuilder({
         {catalog &&
           curation !== undefined &&
           filtered.map((c) => {
-            const qs = visibleForTab(c.questions as GridQuestion[]);
+            const qs = c.questions as GridQuestion[];
             if (qs.length === 0) return null;
             return (
               <div key={c.conceptId as unknown as string} className="mb-4">
@@ -456,15 +475,6 @@ export function GroupLessonBuilder({
               </div>
             );
           })}
-        {curOk &&
-          catalog &&
-          tab === 'revision' &&
-          yellowCount === 0 && (
-            <div className="text-center text-[11px] text-muted-foreground py-8">
-              Nothing routed to Revision yet — flip a green tick yellow on the
-              Main tab, or press &ldquo;+ unit&rdquo; to compress.
-            </div>
-          )}
       </div>
 
       {/* Save bar */}

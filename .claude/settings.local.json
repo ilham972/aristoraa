@@ -179,7 +179,32 @@
       "PowerShell(Select-String -Path \"docs\\\\brain\\\\decisions.md\" -Pattern \"^## \" | Select-Object -Last 8 | ForEach-Object { \"$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
       "Bash(npm i *)",
       "PowerShell(gh api *)",
-      "Bash(git restore *)"
+      "Bash(git restore *)",
+      "Bash(git -C \"C:/Users/Ilham/aaa projects/math-tracker\" show --stat 96c0ce0)",
+      "Bash(unzip -o -q prod-snapshot.zip -d prod)",
+      "Bash(node *)",
+      "PowerShell(npx prettier --write \"src/components/planner/group-sheets.tsx\")",
+      "PowerShell(npx tsc --noEmit)",
+      "PowerShell(npx eslint src/components/planner/group-sheets.tsx)",
+      "PowerShell(npx prettier --write --single-quote \"src/components/planner/group-sheets.tsx\"; git diff --stat)",
+      "PowerShell(npx prettier --write --single-quote \"src/components/planner/group-sheets.tsx\" \"src/components/session/sheet-planner-panel.tsx\" \"src/lib/book-order.ts\"; npx tsc --noEmit; npx eslint src/components/planner/group-sheets.tsx src/components/session/sheet-planner-panel.tsx src/lib/book-order.ts)",
+      "PowerShell(npx prettier --write --single-quote \"src/components/planner/group-sheets.tsx\" \"src/components/planner/group-unit-builder.tsx\" \"src/components/planner/group-coverage.tsx\"; npx tsc --noEmit)",
+      "PowerShell(npx tsc --noEmit; npx eslint src/components/planner/group-sheets.tsx src/components/planner/group-unit-builder.tsx src/components/planner/group-coverage.tsx)",
+      "PowerShell(npx convex deploy -y 2>&1 | Select-Object -Last 5)",
+      "PowerShell(npx convex deploy -y 2>&1 | Select-Object -Last 6)",
+      "PowerShell(npx prettier --write --single-quote \"src/components/planner/group-sheets.tsx\" \"src/components/groups/revision-timetable.tsx\" \"src/app/groups/page.tsx\" \"convex/revisionTimetable.ts\"; npx tsc --noEmit; npx eslint src/components/planner/group-sheets.tsx src/components/groups/revision-timetable.tsx src/app/groups/page.tsx)",
+      "Bash(git status *)",
+      "Bash(git show *)",
+      "Bash(cp convex/learningEngine/groupPlan.ts /tmp/gp.worktree.ts)",
+      "Bash(git merge-file *)",
+      "Bash(sed 's/$/\\\\r/' gp.merged.lf)",
+      "Bash(cp gp.merged.crlf \"C:/Users/Ilham/aaa projects/math-tracker/convex/learningEngine/groupPlan.ts\")",
+      "PowerShell(git rm *)",
+      "PowerShell(npx vitest run tests/questionRoutes.test.ts tests/sheetLayout.test.ts 2>&1 | Select-Object -Last 40)",
+      "Read(//c/Users/Ilham/aaa projects/math-tracker/docs/brain/**)",
+      "PowerShell(npx convex dev --once 2>&1 | Select-Object -Last 4)",
+      "PowerShell(npx convex dev --once 2>&1 | Select-Object -Last 1; npx convex deploy -y 2>&1 | Select-Object -Last 1)",
+      "PowerShell(\\(Get-Content \"docs\\\\brain\\\\features\\\\learning-engine.md\" | Measure-Object -Line\\).Lines)"
     ]
   }
 }

@@ -108,6 +108,34 @@ async function seed(t: ReturnType<typeof convexTest>) {
   });
 }
 
+// Simulate "Main taught this unit's concept N days ago": insert the memory
+// row the scorer would have written (the SR queue reads lastReviewAt + R).
+const introduceConcept = async (
+  t: ReturnType<typeof convexTest>,
+  studentId: Id<'students'>,
+  unitId: string,
+  daysAgo: number,
+) => {
+  await t.run(async (ctx) => {
+    const concept = (await ctx.db.query('exercises').collect()).find(
+      (e) => e.unitId === unitId && e.type === 'concept',
+    )!;
+    const at = Date.now() - daysAgo * 86_400_000;
+    await ctx.db.insert('memoryState', {
+      studentId,
+      conceptExerciseId: concept._id,
+      difficulty: 5,
+      stability: 1,
+      lastReviewAt: at,
+      lastResponse: 'good',
+      attemptCount: 1,
+      correctWeighted: 1,
+      wrongWeighted: 0,
+      initializedAt: at,
+    });
+  });
+};
+
 const unit1Unseen = async (
   t: ReturnType<typeof convexTest>,
   groupId: Id<'groups'>,
@@ -149,7 +177,7 @@ describe('question routing (green/yellow)', () => {
     expect(onSheets).not.toContain(qids[UNIT1][1]);
   });
 
-  it('a routed question reaches the student through the revision queue', async () => {
+  it('a routed question reaches the queue only after its concept is introduced (SR gate)', async () => {
     const t = convexTest(schema, modules);
     const { groupId, studentId, revSlotId, qids } = await seed(t);
     await asUser(t).mutation(api.learningEngine.groupPlan.setQuestionRoutes, {
@@ -157,12 +185,54 @@ describe('question routing (green/yellow)', () => {
       unitId: UNIT1,
       routes: [{ questionId: qids[UNIT1][2], route: 'revision' }],
     });
+    // Concept never taught in Main → the drill is held back (a revision
+    // teacher drills, they don't teach — SR queue, 2026-07-19).
+    const before = await asUser(t).query(
+      api.learningEngine.groupPlan.revisionQueuesForSlotDate,
+      { slotId: revSlotId, dateStr: '2026-07-18' },
+    );
+    expect(
+      before!.queues[studentId as unknown as string].questionIds,
+    ).not.toContain(qids[UNIT1][2]);
+
+    // Main introduced the concept 9 days ago → due (gap ≥ 3d), served.
+    await introduceConcept(t, studentId, UNIT1, 9);
+    const after = await asUser(t).query(
+      api.learningEngine.groupPlan.revisionQueuesForSlotDate,
+      { slotId: revSlotId, dateStr: '2026-07-18' },
+    );
+    expect(
+      after!.queues[studentId as unknown as string].questionIds,
+    ).toContain(qids[UNIT1][2]);
+  });
+
+  it('the queue serves due concepts before fresh ones, easy→hard within a concept', async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, studentId, revSlotId, qids } = await seed(t);
+    await asUser(t).mutation(api.learningEngine.groupPlan.setQuestionRoutes, {
+      groupId,
+      unitId: UNIT1,
+      routes: [
+        { questionId: qids[UNIT1][2], route: 'revision' },
+        { questionId: qids[UNIT1][1], route: 'revision' },
+      ],
+    });
+    await asUser(t).mutation(api.learningEngine.groupPlan.setQuestionRoutes, {
+      groupId,
+      unitId: UNIT2,
+      routes: [{ questionId: qids[UNIT2][0], route: 'revision' }],
+    });
+    // Unit-1 concept reviewed YESTERDAY (inside the 3d gap → top-up only);
+    // unit-2 concept reviewed 9 days ago (due). Despite track order, the due
+    // unit-2 question must come first; unit 1's pair stays easy→hard.
+    await introduceConcept(t, studentId, UNIT1, 1);
+    await introduceConcept(t, studentId, UNIT2, 9);
     const res = await asUser(t).query(
       api.learningEngine.groupPlan.revisionQueuesForSlotDate,
       { slotId: revSlotId, dateStr: '2026-07-18' },
     );
-    const queue = res!.queues[studentId as unknown as string];
-    expect(queue.questionIds).toContain(qids[UNIT1][2]);
+    const queue = res!.queues[studentId as unknown as string].questionIds;
+    expect(queue).toEqual([qids[UNIT2][0], qids[UNIT1][1], qids[UNIT1][2]]);
   });
 
   it('compressionPreview keeps concept intro + hardest green, flips the middle yellow', async () => {

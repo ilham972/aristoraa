@@ -421,6 +421,23 @@ because Z.
   Compression bugfix same day: `compressionPreview` must treat PLANNED
   (re-pickable) claims as movable — on a fully-prebuilt term the bookmark
   alone says "everything covered" and "+ unit" dead-ends.
+- **Builder Main tab shows EVERYTHING; Revision tab → TIMELINE; revision
+  queues are SR-ordered** (2026-07-19, founder). Flipping a tick yellow used
+  to remove the question from the Main tab; founder expected yellow ticks
+  INLINE, which made a yellow-only Revision tab redundant — its slot became
+  the Timeline tab (`group-unit-timeline.tsx`): the unit as week rows of day
+  pills, teal = REAL Main sheet dates, amber dashed = PREDICTED revision
+  days, tap a day → questions by concept + rings on concept-sharing days
+  (the visible spaced repetition). Chose PREDICTION over pre-assigning
+  revision questions to dates (per-student queues survive — the 2026-07-14
+  personal-timing design stands) and over week-bucket-only honesty (founder
+  wants days). Queue serving changed from book-order FIFO to SR
+  (`convex/lib/revisionSR.ts`, pure + tested, SHARED with the prediction so
+  forecast = print): due = every tagged concept introduced in Main +
+  REVISION_ROUTE_MIN_GAP_DAYS since its last review; weakest R first;
+  easy→hard tie-break (founder's ask: sub-question ladders must survive
+  inside revision too); inside-gap = capacity top-up; NEVER-introduced
+  concepts held back — revision teachers drill, they don't teach.
 - **One shared Lesson Builder** (2026-07-18) — the planner's group curation
   dialog was a worse clone of the session builder; replaced by group MODE of
   the same screen (`group-lesson-builder.tsx` + shared

@@ -26,7 +26,10 @@ import { internalMutation, mutation, query } from "../_generated/server";
 import { v } from "convex/values";
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
-import { questionsTaggedToConcept } from "./derivedConcepts";
+import {
+  conceptsForQuestion,
+  questionsTaggedToConcept,
+} from "./derivedConcepts";
 import { masteryFromState } from "./mastery";
 import {
   DEFAULT_QUESTION_DIFFICULTY,
@@ -36,11 +39,18 @@ import {
   GROUP_SKELETON_HORIZON_DAYS,
   GROUP_SPIRAL_SHARE,
   REVISION_QUEUE_CAP,
+  REVISION_ROUTE_MIN_GAP_DAYS,
 } from "./config";
 import {
   buildGroupSkeleton,
   type SkeletonUnitInput,
 } from "../lib/groupPlanCore";
+import {
+  orderRoutedForRevision,
+  predictRevisionDates,
+  type ConceptMemorySummary,
+  type RoutedCandidate,
+} from "../lib/revisionSR";
 import { estimatePageBreaks } from "../lib/sheetLayout";
 
 type QueryCtx = GenericQueryCtx<DataModel>;
@@ -57,6 +67,12 @@ function ymdFromMs(ms: number): string {
 function dowFromYmd(ymd: string): number {
   const d = new Date(`${ymd}T00:00:00.000Z`).getUTCDay(); // 0=Sun..6=Sat
   return d === 0 ? 7 : d;
+}
+
+function addDaysYmd(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 function termFromUnitId(unitId: string): number | null {
@@ -1421,34 +1437,76 @@ async function revisionQueueForStudent(
   }
 
   // Routed-to-revision ("yellow") questions — question-level delegation from
-  // unit compression / the group Lesson Builder. Due as soon as they're
-  // routed; banned questions stay excluded; track-unit order then the order
-  // they were routed in.
-  for (const m of memberships) {
-    const bannedSet = new Set<string>();
-    for (const b of await ctx.db
-      .query("groupUnitBans")
-      .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
-      .collect()) {
-      for (const qid of b.questionIds) bannedSet.add(qid as unknown as string);
-    }
-    const routes = (
-      await ctx.db
-        .query("groupQuestionRoutes")
+  // unit compression / the group Lesson Builder. SR-ORDERED (2026-07-19,
+  // lib/revisionSR.ts): due only once every tagged concept was introduced in
+  // Main plus REVISION_ROUTE_MIN_GAP_DAYS; weakest memory first, easy→hard
+  // tie-break; un-introduced concepts wait (a revision teacher drills, they
+  // don't teach). Banned questions stay excluded.
+  if (out.length < cap) {
+    const candidates: RoutedCandidate[] = [];
+    let bookIdx = 0;
+    for (const m of memberships) {
+      const bannedSet = new Set<string>();
+      for (const b of await ctx.db
+        .query("groupUnitBans")
         .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
-        .collect()
-    )
-      .filter((r) => r.route === "revision")
-      .sort(
-        (a, b) =>
-          a.unitId.localeCompare(b.unitId) || a.createdAt - b.createdAt,
+        .collect()) {
+        for (const qid of b.questionIds)
+          bannedSet.add(qid as unknown as string);
+      }
+      const routes = (
+        await ctx.db
+          .query("groupQuestionRoutes")
+          .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
+          .collect()
+      )
+        .filter((r) => r.route === "revision")
+        .sort(
+          (a, b) =>
+            a.unitId.localeCompare(b.unitId) || a.createdAt - b.createdAt,
+        );
+      for (const r of routes) {
+        const k = r.questionId as unknown as string;
+        bookIdx += 1;
+        if (seen.has(k) || inQueue.has(k) || bannedSet.has(k)) continue;
+        inQueue.add(k);
+        const qDoc = await ctx.db.get(r.questionId);
+        // Dual-path tagging (direct joins + textbook inheritance) — the
+        // same resolution the memory updater uses, so "introduced" here
+        // means exactly "this concept has memory rows".
+        const tagIds = await conceptsForQuestion(ctx, r.questionId);
+        candidates.push({
+          qid: k,
+          difficulty: qDoc?.difficulty ?? DEFAULT_QUESTION_DIFFICULTY,
+          bookIdx,
+          conceptIds: tagIds.map((t) => t as unknown as string),
+        });
+      }
+    }
+    if (candidates.length > 0) {
+      const nowMs = Date.now();
+      const memory = new Map<string, ConceptMemorySummary>();
+      const states = await ctx.db
+        .query("memoryState")
+        .withIndex("by_student", (q) => q.eq("studentId", student._id))
+        .collect();
+      for (const st of states) {
+        memory.set(st.conceptExerciseId as unknown as string, {
+          lastReviewAt: st.lastReviewAt,
+          r: masteryFromState(st, nowMs).R,
+        });
+      }
+      const ordered = orderRoutedForRevision(
+        candidates,
+        memory,
+        nowMs,
+        REVISION_ROUTE_MIN_GAP_DAYS,
       );
-    for (const r of routes) {
-      if (out.length >= cap) return { questionIds: out, carryRowIds };
-      const k = r.questionId as unknown as string;
-      if (seen.has(k) || inQueue.has(k) || bannedSet.has(k)) continue;
-      seen.add(k);
-      out.push(r.questionId);
+      for (const k of ordered) {
+        if (out.length >= cap) break;
+        seen.add(k);
+        out.push(k as unknown as Id<"questionBank">);
+      }
     }
   }
   return { questionIds: out, carryRowIds };
@@ -2236,6 +2294,189 @@ export const groupUnitCuration = query({
       };
     });
     return { status: "ok" as const, questions };
+  },
+});
+
+// The Lesson Builder's Timeline tab (2026-07-19): ONE unit's questions laid
+// out on the calendar. Green Main picks carry their REAL sheet dates
+// (planned or taught rows); yellow routed questions get a PREDICTED revision
+// date by draining the routed set across the group's upcoming revision days
+// with the same SR rule the real queues use (lib/revisionSR.ts +
+// REVISION_ROUTE_MIN_GAP_DAYS) — prediction and print run on one brain.
+// Group-level view: per-student queues can still differ on the day (absence
+// catch-up, carry-overs, consolidation students), so predicted pills are
+// styled as forecasts, never promises.
+export const groupUnitTimeline = query({
+  args: { groupId: v.id("groups"), unitId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const now = Date.now();
+    const todayYmd = ymdFromMs(now);
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const ladder = state.ladders.find((l) => l.unitId === args.unitId);
+    if (!ladder) return { status: "no-unit" as const };
+
+    // Provenance: the earliest group sheet claiming each question.
+    const allSheets = (
+      await ctx.db
+        .query("groupSheets")
+        .withIndex("by_group_date", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    ).sort((a, b) => a.date.localeCompare(b.date));
+    const sheetByQid = new Map<string, { date: string; status: string }>();
+    for (const row of allSheets) {
+      for (const qid of [...row.newQuestionIds, ...row.spiralQuestionIds]) {
+        const k = qid as unknown as string;
+        if (!sheetByQid.has(k))
+          sheetByQid.set(k, { date: row.date, status: row.status });
+      }
+    }
+
+    // Concept intro dates — the prediction's input. Pass 1: the earliest
+    // sheet date holding any question of the concept (future planned rows
+    // count; that's the point). Pass 2: a concept introduced only through
+    // personal per-student history (seen, no group date) counts as
+    // introduced today — earlier than any future planned intro.
+    const introByConcept = new Map<string, string>();
+    for (const r of ladder.ladder) {
+      const cid = ladder.conceptByQuestion.get(r.qid);
+      if (!cid) continue;
+      const prov = sheetByQid.get(r.qid);
+      if (!prov) continue;
+      const cur = introByConcept.get(cid);
+      if (!cur || prov.date < cur) introByConcept.set(cid, prov.date);
+    }
+    for (const r of ladder.ladder) {
+      const cid = ladder.conceptByQuestion.get(r.qid);
+      if (!cid || !state.seen.has(r.qid)) continue;
+      const cur = introByConcept.get(cid);
+      if (!cur || todayYmd < cur) introByConcept.set(cid, todayYmd);
+    }
+
+    // Upcoming revision days: flipped revision slots + day-only revision
+    // classes (the same union groupSlotDays serves the week card).
+    const slots = await ctx.db
+      .query("scheduleSlots")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    const mainDows = new Set<number>();
+    const revDows = new Set<number>();
+    for (const s of slots) {
+      if ((s.sessionType ?? "main") === "revision") revDows.add(s.dayOfWeek);
+      else mainDows.add(s.dayOfWeek);
+    }
+    const revClasses = await ctx.db
+      .query("revisionClasses")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    for (const r of revClasses) revDows.add(r.dayOfWeek);
+
+    const term = termFromUnitId(args.unitId);
+    const examDate =
+      term !== null ? (state.examDateByTerm[term] ?? null) : null;
+    // Prediction horizon: through the exam plus a fortnight of aftermath,
+    // else two months out; hard-capped by the skeleton horizon.
+    const endYmd =
+      examDate && examDate >= todayYmd
+        ? addDaysYmd(examDate, 14)
+        : addDaysYmd(todayYmd, 60);
+    const revisionDates: string[] = [];
+    for (let i = 0; i <= GROUP_SKELETON_HORIZON_DAYS; i++) {
+      const d = addDaysYmd(todayYmd, i);
+      if (d > endYmd) break;
+      if (revDows.has(dowFromYmd(d))) revisionDates.push(d);
+    }
+
+    // Yellow candidates → predicted dates. Seen/banned beat a route (same
+    // precedence the plan state applies everywhere).
+    const yellows: Array<{
+      qid: string;
+      difficulty: number;
+      bookIdx: number;
+      introDate: string | null;
+    }> = [];
+    ladder.ladder.forEach((r, idx) => {
+      if (!state.routedRevision.has(r.qid)) return;
+      if (state.seen.has(r.qid) || state.banned.has(r.qid)) return;
+      const cid = ladder.conceptByQuestion.get(r.qid);
+      yellows.push({
+        qid: r.qid,
+        difficulty: r.difficulty,
+        bookIdx: idx,
+        introDate: cid ? (introByConcept.get(cid) ?? null) : todayYmd,
+      });
+    });
+    const predicted = predictRevisionDates(
+      yellows,
+      revisionDates,
+      REVISION_ROUTE_MIN_GAP_DAYS,
+      REVISION_QUEUE_CAP,
+    );
+
+    const qDocs = await Promise.all(
+      ladder.ladder.map((r) => ctx.db.get(r.qid as unknown as Id<"questionBank">)),
+    );
+    const conceptIds = Array.from(
+      new Set(
+        ladder.ladder
+          .map((r) => ladder.conceptByQuestion.get(r.qid))
+          .filter((c): c is string => c !== undefined),
+      ),
+    );
+    const conceptDocs = await Promise.all(
+      conceptIds.map((cid) => ctx.db.get(cid as unknown as Id<"exercises">)),
+    );
+    const conceptNameById = new Map<string, string>();
+    conceptIds.forEach((cid, i) =>
+      conceptNameById.set(cid, conceptDocs[i]?.name ?? "concept"),
+    );
+
+    const preTaught = state.preTaughtUnitIds.has(args.unitId);
+    const questions = ladder.ladder.map((r, idx) => {
+      const q = qDocs[idx];
+      const prov = sheetByQid.get(r.qid);
+      const cid = ladder.conceptByQuestion.get(r.qid) ?? null;
+      let qState: "done" | "planned" | "revision" | "banned" | "unseen";
+      let date: string | null = null;
+      let isPredicted = false;
+      if (prov) {
+        date = prov.date;
+        qState = prov.status === "materialized" ? "done" : "planned";
+      } else if (preTaught || state.seen.has(r.qid)) {
+        qState = "done";
+      } else if (state.banned.has(r.qid)) {
+        qState = "banned";
+      } else if (state.routedRevision.has(r.qid)) {
+        qState = "revision";
+        date = predicted.get(r.qid) ?? null;
+        isPredicted = date !== null;
+      } else {
+        qState = "unseen";
+      }
+      return {
+        questionId: r.qid as unknown as Id<"questionBank">,
+        label: q?.questionNumberInPaper ?? q?.linkedQuestionKey ?? null,
+        difficulty: r.difficulty,
+        conceptId: cid,
+        conceptName: cid ? (conceptNameById.get(cid) ?? null) : null,
+        state: qState,
+        date,
+        predicted: isPredicted,
+      };
+    });
+
+    return {
+      status: "ok" as const,
+      questions,
+      mainDows: Array.from(mainDows).sort((a, b) => a - b),
+      revisionDows: Array.from(revDows).sort((a, b) => a - b),
+      examDate,
+      todayYmd,
+      minGapDays: REVISION_ROUTE_MIN_GAP_DAYS,
+    };
   },
 });
 

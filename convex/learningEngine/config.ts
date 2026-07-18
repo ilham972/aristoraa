@@ -155,6 +155,12 @@ export const GROUP_SKELETON_HORIZON_DAYS = 180;
 // group material + absence catch-up, oldest first) claim the Main block of
 // one revision sheet; personal sections (mistakes, SR) fill around them.
 export const REVISION_QUEUE_CAP = 10;
+// Spaced-repetition gap for ROUTED ("yellow") questions (2026-07-19): a
+// routed drill becomes DUE only this many days after its concept's latest
+// Main-session review — before that it only tops up spare queue capacity.
+// Shared by the real revision queues AND the Timeline tab's prediction
+// (lib/revisionSR.ts) so what the founder sees is what prints.
+export const REVISION_ROUTE_MIN_GAP_DAYS = 3;
 // When a unit's TEXTBOOK ladder is finished, the group ladder continues into
 // past-paper questions tagged to the same unit's concepts — capped so a fat
 // past-paper pool can't stall the march to the next unit. The daily scan

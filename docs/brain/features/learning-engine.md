@@ -36,33 +36,30 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   (unit/state, Revision slots, cancelled days, levers). Forecast: grade rollup.
   Tracks + Exams (from /algorithm; grade×term grid + Quick entry).
 - Sheets tab = the CONTROL ROOM (2026-07-16; sessions redesign 2026-07-18):
-  "Run all term sheets" (crystallize, 180d cap) + "Re-plan"; amber bank-dry
-  banner. Coverage = % strip + TERM CHIPS (set covTerm for the week grids —
-  never remove) linking to Insights. Timeline = METRO-LINE MASTER/DETAIL
-  (rules in decisions.md): week ring-station rail + sticky SESSION-CENTRIC
-  card (round 2, 2026-07-18): row 1 = session chips (tap = select, tap again
-  = drawer; pills: PDF preview + ↻ assign; NO "+ session" — revision capacity
-  comes from the Revision timetable, sheets are only ASSIGNED onto it), row 2
-  = selected session's unit chips + "+ unit" (ONE unit's grid at a time),
-  row 3 = its physical A4 sheets, always shown, 2 printed pages = 1 paper
-  (`groupSheetPages` — exact from pdfPageAssignments stamped by
-  renderGroupSheetPDF, else estimated via convex/lib/sheetLayout.ts,
-  constants MUST match pdf.ts); tap a sheet = ring its questions. Grid in
-  TRUE book order; 7+7 day strip last (tap = select). Unit name → GROUP LESSON
-  BUILDER (`group-lesson-builder.tsx`, SHARED grid with the session builder
-  via `components/lesson/lesson-question-grid.tsx`): Main/Revision tabs; tap
-  tile = tick/untick (ban), tap tick chip = flip GREEN (Main) ↔ YELLOW
-  (revision route, `groupQuestionRoutes`, manual never auto-overwritten).
-  "+ unit" (week card + builder) = UNIT COMPRESSION (`compression-dialog.tsx`,
-  compressionPreview/applyCompression): start the next unit now — keep concept
-  intros + hardest ~20% green, middle drill flips yellow, then re-plan.
-- `/algorithm` — Coverage = TWO LENSES (2026-07-17): GROUPS = the Cockpit moved
-  off /planner (`groupsTermCoverageSummary` = cheap all-group rail rings, counts
-  only; only the tapped group pays for `groupTermCoverage`), BANK = concept
-  stock (grade×term, cumulative); book-gap bridges Groups→Bank. Plus Blueprint,
-  Path; stale tabs → /planner; duplicate routes → legacy-map.
-  `/algorithm/exam-calendar` — exam mode MANUAL (`examModeActive` + daily alert
-  cron); `/algorithm/scoring` — weights (`difficultyTab.ts`).
+  "Run all term sheets" (crystallize, 180d cap) + "Re-plan"; bank-dry banner;
+  Coverage % strip + TERM CHIPS (set covTerm for the week grids — never
+  remove). Timeline = metro-line master/detail (rules in decisions.md): week
+  ring-station rail + sticky SESSION-CENTRIC card — session chips (PDF
+  preview + ↻ assign; NO "+ session", capacity comes from the Revision
+  timetable), unit chips + "+ unit", physical A4 sheets (2 printed pages =
+  1 paper; `groupSheetPages`, estimator convex/lib/sheetLayout.ts MUST match
+  pdf.ts), book-order grid, 7+7 day strip. Unit name → GROUP LESSON BUILDER
+  (`group-lesson-builder.tsx`, SHARED grid via
+  `components/lesson/lesson-question-grid.tsx`): Main + TIMELINE tabs
+  (2026-07-19; Revision tab retired — Main shows ALL, yellow ticks inline);
+  tap tile = tick/untick (ban), tap chip = GREEN↔YELLOW route
+  (`groupQuestionRoutes`, manual never auto-overwritten). Timeline tab
+  (`group-unit-timeline.tsx` + `groupUnitTimeline`) = week rows of day pills:
+  teal Main = REAL sheet dates, amber dashed = SR-PREDICTED revision days;
+  tap a day = questions by concept, rings mark concept-sharing days;
+  "waiting" = intro unscheduled / revision days ran out. "+ unit" = UNIT
+  COMPRESSION (`compression-dialog.tsx`): intros + hardest ~20% stay green,
+  middle drill flips yellow, then re-plan.
+- `/algorithm` — Coverage = TWO LENSES (2026-07-17): GROUPS = the Cockpit
+  (cheap all-group rail `groupsTermCoverageSummary`; the tapped group pays for
+  `groupTermCoverage`), BANK = concept stock; book-gap bridges Groups→Bank.
+  Plus Blueprint, Path. `/algorithm/exam-calendar` — exam mode MANUAL
+  (`examModeActive` + alert cron); `/algorithm/scoring` — `difficultyTab.ts`.
 
 ## Supporting modules
 `profile.ts` scope/profile; `path.ts`/`tracks.ts`; `importance.ts`/
@@ -72,35 +69,35 @@ tracks-leaderboard.md. UNWIRED: `backfill.ts`; `config.ts`/`mastery.ts`/
 `memory.ts` direct-import (see legacy-map).
 
 ## Departments: group Main plan + Revision queues (2026-07-14)
-`groupPlan.ts` + pure `groupPlanCore.ts` (tested): a group session's Main block
-is ONE identical sheet planned at group level; bookmark = DERIVED union
-(groupSheets + members' generatedSheets), never stored. Skeleton = lesson plan
-to exam (unit/session, finish-vs-exam verdicts), CANCELLATION-AWARE (cancelled
-days skipped, plan reflows). crystallizeUpcoming writes groupSheets (new = next
-unseen ladder, textbook then capped past-paper tail, scanBookExhaustion cron;
-spiral = unseen past-unit Qs, weakest group-avg R first); session Sheets tab
-materializes per student via mainQuestionIdsOverride. Revision dept:
-sessionType="revision"; queues = group-claimed-but-unseen Qs (delegation +
-absence catch-up, ONE rule, cap 10) + ROUTED yellow Qs (groupQuestionRoutes,
-2026-07-18 — question-level delegation; out of Main demand/queues/coverage
-denominators, ban wins, seen wins); consolidation students get the personal
-planner. Tuning: mainQuestionsPerSession (3–15), resizePlanned, groupCarryOvers
-log (tail → "main" served FIRST next crystallize, or "revision" per-member
-queue; deletePlanned un-consumes; bookmark never un-seen). Book-gap honesty:
-zero-question units = "no-questions" never "done"; exercise deletes cascade to
-crops. STARTING POINT: groupPreTaughtUnits + setGroupStartingPoint = reversible
-track-prefix bookmark, no sheet/point/memory effects; planner paths skip those
-units. UI: /groups/[id]/plan + StartingPointButton.
+`groupPlan.ts` + pure `groupPlanCore.ts` (tested): Main block = ONE identical
+group-level sheet; bookmark = DERIVED union (groupSheets + members'
+generatedSheets), never stored; skeleton = lesson plan to exam,
+CANCELLATION-AWARE. crystallizeUpcoming writes groupSheets (unseen ladder,
+textbook then capped past-paper tail, scanBookExhaustion cron; spiral =
+unseen past-unit Qs, weakest group-avg R first); Sheets tab materializes per
+student via mainQuestionIdsOverride. Revision dept (sessionType="revision"):
+queues = group-claimed-but-unseen Qs (delegation + absence catch-up, ONE
+rule, cap 10) + ROUTED yellow Qs (groupQuestionRoutes — out of Main
+demand/coverage; ban wins, seen wins), SR-ORDERED 2026-07-19 (pure
+`convex/lib/revisionSR.ts`, tested): due = all tagged concepts introduced +
+REVISION_ROUTE_MIN_GAP_DAYS since last review, weakest R first, easy→hard
+tie-break; un-introduced HELD BACK (revision teachers drill, never teach),
+inside-gap = top-up only; the Timeline prediction runs the SAME functions →
+forecast = print. Consolidation students stay personal. Tuning:
+mainQuestionsPerSession (3–15), resizePlanned, groupCarryOvers (tail → next
+Main FIRST or per-member revision queue; deletePlanned un-consumes; bookmark
+never un-seen). Book-gap honesty: zero-question units = "no-questions" never
+"done"; exercise deletes cascade to crops. STARTING POINT: groupPreTaughtUnits
+= reversible track-prefix bookmark, no sheet/point/memory effects; UI
+/groups/[id]/plan + StartingPointButton.
 
 ## Per-student views
-- Coverage forecast advisor (2026-07-14): `coverageForecast.ts` + pure
-  `coverageForecastCore.ts` (tested) — per unit: pool, seen, 14d pace, capacity
-  to each term's exam → projected % + verdict, proportional-share; TERM-AWARE
-  (only units with an UPCOMING exam compete). UI: /students/[id]/progress +
-  /planner Forecast rollup (same core).
-- Track Progress (2026-07-10): `trackProgress.ts` (metro-line + strip); pure
-  `trackProgressCore.ts` MUST mirror planner pacing. Fixes: track units in pool
-  scope; completion credits ≤48h; getSavedSheet duplicate-row safe.
+- Coverage forecast advisor (2026-07-14): `coverageForecast.ts` + pure tested
+  core — per unit: pool, seen, 14d pace, capacity to each exam → projected %
+  + verdict; TERM-AWARE (only units with an UPCOMING exam compete). UI:
+  /students/[id]/progress + /planner Forecast rollup (same core).
+- Track Progress (2026-07-10): `trackProgress.ts`; pure `trackProgressCore.ts`
+  MUST mirror planner pacing; completion credits ≤48h.
 
 ## Rules for changing the engine
 Read BOTH plan files first; behaviour must match algorithm_plan.md blocks.
