@@ -286,11 +286,14 @@ export function QuestionTileGrid({
             <div
               role="button"
               tabIndex={0}
-              onClick={() => !locked && onToggle(k)}
+              // Locked taps still reach the handler — the builder answers
+              // with a toast instead of this grid silently eating the tap
+              // (founder bug 2026-07-19: "the tick is not working").
+              onClick={() => onToggle(k)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  if (!locked) onToggle(k);
+                  onToggle(k);
                 }
               }}
               className={cn(
@@ -308,38 +311,43 @@ export function QuestionTileGrid({
             >
               {/* Slim strip: tick + label + tags */}
               <div className="flex items-center gap-1 px-0.5 pb-1">
+                {/* The tick is a REAL button in every state (2026-07-19 —
+                    a disabled button swallowed taps with zero feedback):
+                    flippable → green↔yellow; unticked → tick; locked → the
+                    builder toasts. Big hit target + press-down feedback so
+                    a phone tap always visibly registers. */}
                 <button
                   type="button"
-                  disabled={!flippable}
                   onClick={(e) => {
-                    if (!flippable) return; // tile handles the tap
                     e.stopPropagation();
-                    onFlipRoute?.(k);
+                    if (flippable) onFlipRoute?.(k);
+                    else onToggle(k);
                   }}
                   aria-label={
                     flippable
                       ? route === 'revision'
                         ? 'Move to Main (green)'
                         : 'Move to Revision (yellow)'
-                      : undefined
+                      : locked
+                        ? 'Already taught (locked)'
+                        : on
+                          ? 'Untick question'
+                          : 'Tick question'
                   }
                   title={
                     flippable
                       ? route === 'revision'
                         ? 'Yellow = revision · tap to teach in Main'
                         : 'Green = Main · tap to send to Revision'
-                      : undefined
+                      : locked
+                        ? 'Already taught — locked'
+                        : undefined
                   }
-                  className={cn(
-                    'shrink-0 flex items-center justify-center',
-                    // Bigger invisible hit target around the small chip when
-                    // the chip is the green↔yellow switch (phone thumbs).
-                    flippable && 'p-1.5 -m-1.5',
-                  )}
+                  className="shrink-0 flex items-center justify-center p-2 -m-1.5 active:scale-90 transition-transform"
                 >
                   <span
                     className={cn(
-                      'w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors',
+                      'w-5 h-5 rounded-[5px] border flex items-center justify-center transition-colors',
                       on
                         ? route === 'revision'
                           ? 'bg-amber-400 border-amber-400 text-amber-950'
@@ -347,9 +355,10 @@ export function QuestionTileGrid({
                             ? 'bg-emerald-500 border-emerald-500 text-white'
                             : 'bg-primary border-primary text-primary-foreground'
                         : 'border-muted-foreground/40 bg-background',
+                      locked && 'opacity-60',
                     )}
                   >
-                    {on && <Check className="w-2.5 h-2.5" strokeWidth={3.5} />}
+                    {on && <Check className="w-3 h-3" strokeWidth={3.5} />}
                   </span>
                 </button>
                 <span className="text-[9px] font-semibold text-foreground truncate">

@@ -455,6 +455,20 @@ because Z.
   working" report: locked (taught) ticks now toast instead of silently
   swallowing taps, and the "no book entered" concept chip turned ROSE because
   amber read as "routed to revision".
+- **Planned claims never lock curation — `hardSeen` split** (2026-07-19,
+  round 3 of "tick not working" — THE root cause). `groupSeenSet` counts
+  groupSheets of ANY status (correct for the bookmark: pick queues must not
+  double-claim), but curation locked on that same set — so after "Run all
+  term sheets" EVERY question sat on a planned row → "taught" → every tick
+  silently dead. Fix: groupSeenSet returns `{seen, hardSeen}`; hardSeen =
+  materialized/delegated claims + member personal sheets + pre-taught units;
+  the Lesson Builder lock and the auto-split skip read hardSeen, everything
+  else keeps `seen`. Same claims-are-re-pickable class as the 2026-07-18
+  compression fix — when adding a new curation surface, lock on hardSeen.
+  Grid UX ruling: the tick chip is a REAL button in every state (disabled
+  buttons swallow taps on phones with zero feedback — never gate with
+  `disabled` there): flippable → green↔yellow, unticked → tick, locked →
+  toast; w-5 square, padded hit target, press-down scale feedback.
 - **One shared Lesson Builder** (2026-07-18) — the planner's group curation
   dialog was a worse clone of the session builder; replaced by group MODE of
   the same screen (`group-lesson-builder.tsx` + shared

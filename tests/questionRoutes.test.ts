@@ -272,6 +272,68 @@ describe('question routing (green/yellow)', () => {
     expect(queue).toEqual([qids[UNIT2][0], qids[UNIT1][1], qids[UNIT1][2]]);
   });
 
+  it('a fully planned term never locks curation — planned claims stay editable', async () => {
+    // THE founder "tick button not working" root cause (2026-07-19): the
+    // seen-set counts PLANNED (re-pickable) group claims, and curation
+    // locked every seen question — so after "Run all term sheets" every
+    // tick in the Lesson Builder silently ignored taps.
+    const t = convexTest(schema, modules);
+    const { groupId, qids } = await seed(t);
+    await asUser(t).mutation(
+      api.learningEngine.groupPlan.crystallizeUpcoming,
+      { groupId, daysAhead: 170 },
+    );
+    const curation = await asUser(t).query(
+      api.learningEngine.groupPlan.groupUnitCuration,
+      { groupId, unitId: UNIT1 },
+    );
+    expect(curation?.status).toBe('ok');
+    if (curation?.status !== 'ok') return;
+    const byId = new Map(curation.questions.map((q) => [q.questionId, q]));
+    // q1 sits on a planned sheet: claimed, but NOT taught → still editable.
+    expect(byId.get(qids[UNIT1][0])!.taught).toBe(false);
+    expect(byId.get(qids[UNIT1][0])!.planned).toBe(true);
+    // Overriding still works: send the hard tail to Revision by hand.
+    await asUser(t).mutation(api.learningEngine.groupPlan.setQuestionRoutes, {
+      groupId,
+      unitId: UNIT1,
+      routes: [{ questionId: qids[UNIT1][3], route: 'revision' }],
+    });
+    const after = await asUser(t).query(
+      api.learningEngine.groupPlan.groupUnitCuration,
+      { groupId, unitId: UNIT1 },
+    );
+    if (after?.status !== 'ok') throw new Error('curation failed');
+    expect(
+      after.questions.find((q) => q.questionId === qids[UNIT1][3])!.route,
+    ).toBe('revision');
+  });
+
+  it('a MATERIALIZED (taught) sheet does lock its questions', async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, qids } = await seed(t);
+    await asUser(t).mutation(
+      api.learningEngine.groupPlan.crystallizeUpcoming,
+      { groupId, daysAhead: 60 },
+    );
+    await t.run(async (ctx) => {
+      const first = (await ctx.db.query('groupSheets').collect()).sort(
+        (a, b) => a.date.localeCompare(b.date),
+      )[0];
+      await ctx.db.patch(first._id, { status: 'materialized' });
+    });
+    const curation = await asUser(t).query(
+      api.learningEngine.groupPlan.groupUnitCuration,
+      { groupId, unitId: UNIT1 },
+    );
+    if (curation?.status !== 'ok') throw new Error('curation failed');
+    const taughtIds = curation.questions
+      .filter((q) => q.taught)
+      .map((q) => q.questionId);
+    expect(taughtIds.length).toBeGreaterThan(0);
+    expect(taughtIds).toContain(qids[UNIT1][0]);
+  });
+
   it('compressionPreview: middle is already auto-routed, intro + hardest propose green', async () => {
     const t = convexTest(schema, modules);
     const { groupId, qids } = await seed(t);

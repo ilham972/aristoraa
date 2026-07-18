@@ -137,19 +137,31 @@ export async function resolveTrackForGroup(
 // groupSheets rows (any status: planned rows hold future claims) plus every
 // question on any current member's generatedSheets (legacy transition floor:
 // don't re-teach what the roster already did in per-student mode).
+// `hardSeen` is the LOCKED subset: materialized (taught) or delegated group
+// claims + member personal history. PLANNED rows are future, re-pickable
+// claims — they belong in the bookmark so pick queues never double-claim,
+// but they must NOT lock curation: a fully prebuilt term used to lock EVERY
+// tick in the Lesson Builder (founder bug 2026-07-19 — "the tick button is
+// not working" — same claims-are-re-pickable class as the 2026-07-18
+// compression fix).
 async function groupSeenSet(
   ctx: ReadCtx,
   groupId: Id<"groups">,
   students: Doc<"students">[],
-): Promise<Set<string>> {
+): Promise<{ seen: Set<string>; hardSeen: Set<string> }> {
   const seen = new Set<string>();
+  const hardSeen = new Set<string>();
   const gs = await ctx.db
     .query("groupSheets")
     .withIndex("by_group_date", (q) => q.eq("groupId", groupId))
     .collect();
   for (const row of gs) {
-    for (const qid of row.newQuestionIds) seen.add(qid as unknown as string);
-    for (const qid of row.spiralQuestionIds) seen.add(qid as unknown as string);
+    const hard = row.status === "materialized" || row.status === "delegated";
+    for (const qid of [...row.newQuestionIds, ...row.spiralQuestionIds]) {
+      const k = qid as unknown as string;
+      seen.add(k);
+      if (hard) hardSeen.add(k);
+    }
   }
   const perStudent = await Promise.all(
     students.map((s) =>
@@ -161,15 +173,19 @@ async function groupSeenSet(
   );
   for (const sheets of perStudent) {
     for (const sh of sheets) {
-      for (const qid of sh.warmupQuestionIds) seen.add(qid as unknown as string);
-      for (const qid of sh.mainQuestionIds) seen.add(qid as unknown as string);
-      for (const qid of sh.revisionQuestionIds ?? [])
-        seen.add(qid as unknown as string);
-      for (const qid of sh.examPrepQuestionIds)
-        seen.add(qid as unknown as string);
+      for (const qid of [
+        ...sh.warmupQuestionIds,
+        ...sh.mainQuestionIds,
+        ...(sh.revisionQuestionIds ?? []),
+        ...sh.examPrepQuestionIds,
+      ]) {
+        const k = qid as unknown as string;
+        seen.add(k);
+        hardSeen.add(k);
+      }
     }
   }
-  return seen;
+  return { seen, hardSeen };
 }
 
 // Per-unit ladders along the track: TEXTBOOK questions in teacher order
@@ -362,6 +378,10 @@ type GroupPlanState = {
   students: Doc<"students">[];
   track: Doc<"tracks">;
   seen: Set<string>;
+  // The LOCKED subset of `seen`: taught/delegated group claims + member
+  // personal history + pre-taught units. Planned claims are NOT here —
+  // they're re-pickable, so curation may still edit them.
+  hardSeen: Set<string>;
   ladders: UnitLadder[];
   sessions: Array<{ date: string; slotId: Id<"scheduleSlots"> }>;
   examDateByTerm: Record<number, string>;
@@ -410,7 +430,7 @@ async function loadGroupPlanState(
     GROUP_SKELETON_HORIZON_DAYS,
   );
   if (sessions.length === 0) return { status: "no-sessions" };
-  const seen = await groupSeenSet(ctx, groupId, students);
+  const { seen, hardSeen } = await groupSeenSet(ctx, groupId, students);
   const ladders = await buildUnitLadders(ctx, track.orderedUnitIds);
 
   // Pre-app starting point: fold every ladder question of a marked unit into
@@ -426,7 +446,10 @@ async function loadGroupPlanState(
   if (preTaughtUnitIds.size > 0) {
     for (const l of ladders) {
       if (preTaughtUnitIds.has(l.unitId)) {
-        for (const rung of l.ladder) seen.add(rung.qid);
+        for (const rung of l.ladder) {
+          seen.add(rung.qid);
+          hardSeen.add(rung.qid);
+        }
       }
     }
   }
@@ -515,7 +538,10 @@ async function loadGroupPlanState(
       }
       byConcept.forEach((leaves) => {
         autoMiddleSplit(leaves, REVISION_HARD_TAIL_SHARE).forEach((qid) => {
-          if (routeByQid.has(qid) || banned.has(qid)) return;
+          // hardSeen (taught) questions never derive yellow — their route is
+          // history; planned claims DO derive (re-plan re-picks around them).
+          if (routeByQid.has(qid) || banned.has(qid) || hardSeen.has(qid))
+            return;
           routedRevision.add(qid);
         });
       });
@@ -537,6 +563,7 @@ async function loadGroupPlanState(
       students,
       track,
       seen,
+      hardSeen,
       ladders,
       sessions,
       examDateByTerm,
@@ -2333,8 +2360,11 @@ export const groupUnitCuration = query({
     const preTaught = state.preTaughtUnitIds.has(args.unitId);
     const questions = ladder.ladder.map((r) => {
       const sheetStatus = statusByQid.get(r.qid) ?? null;
-      const taught =
-        sheetStatus === "materialized" || preTaught || state.seen.has(r.qid);
+      // Lock on HARD history only (taught/delegated claims, member personal
+      // sheets, pre-taught units). A PLANNED claim is re-pickable — on a
+      // fully prebuilt term the old `state.seen` check locked EVERY tick
+      // (founder bug 2026-07-19).
+      const taught = preTaught || state.hardSeen.has(r.qid);
       const routeRow = state.routeByQid.get(r.qid);
       return {
         questionId: r.qid as unknown as Id<"questionBank">,
