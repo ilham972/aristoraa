@@ -39,7 +39,9 @@ type QBox = {
   difficulty: number;
   pastPaper: boolean;
   section: 'new' | 'spiral' | null;
-  state: 'done' | 'planned' | 'unseen' | 'banned';
+  // 'revision' = the "yellow" route (question routing, 2026-07-18): out of
+  // Main demand, served through members' revision queues instead.
+  state: 'done' | 'planned' | 'unseen' | 'banned' | 'revision';
   sheetDate: string | null;
   sheetStatus: string | null;
 };
@@ -463,6 +465,8 @@ function UnitAccordion({
                           'bg-muted/60 border-border text-muted-foreground',
                         q.state === 'banned' &&
                           'bg-transparent border-dashed border-rose-500/40 text-rose-500/60 line-through',
+                        q.state === 'revision' &&
+                          'bg-amber-500/20 border-amber-500/50 text-amber-600 dark:text-amber-400',
                         isSel &&
                           'ring-2 ring-primary ring-offset-1 ring-offset-card',
                       )}
@@ -517,7 +521,9 @@ function UnitAccordion({
                       'Not picked yet — will be served by a future sheet.'}
                     {selected.state === 'banned' &&
                       'Excluded from the plan (unticked in the unit curation).'}
-                    {selected.state !== 'unseen' && selected.sheetDate && (
+                    {selected.state === 'revision' &&
+                      'Routed to Revision — served through the revision queue, not a Main sheet.'}
+                    {selected.state !== 'unseen' && selected.state !== 'revision' && selected.sheetDate && (
                       <>
                         {selected.state === 'done' ? 'Taught' : 'Planned'} on{' '}
                         <b className="text-foreground">
