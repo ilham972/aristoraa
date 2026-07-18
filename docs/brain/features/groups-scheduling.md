@@ -34,6 +34,10 @@ crystallized rows (delegate/delete), projection collapsed into unit SPANS
   icon opens the group's `EditGroupDialog` (weekly sessions), a trash deletes
   (confirm) — all branch-aware. Phantom groups (no members AND no session —
   abandoned `new_group` rows) hidden; cleanup `groups.deletePhantomGroups`.
+  ONE grade at a time — the whole-centre sweep is Insights → Roster
+  (2026-07-18): `groups.rosterAudit` + `components/algorithm/roster-tab.tsx`,
+  every group by grade + students/sessions counts, phantoms SHOWN, delete
+  per row. Live only, never the draft branch.
 - **Library view** — paper-class (cheap self-study) timetable, STUDENT-CENTRIC.
   Pill rail of all students on top (`paper-student-rail.tsx`); slot grid below
   (`library-grid.tsx`). Tap a pill = pick it up (glow) + highlight their week;

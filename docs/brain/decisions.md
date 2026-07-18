@@ -215,6 +215,24 @@ because Z.
   spiral is empty while the group is on unit 1 or after "earlier terms
   taught" marks everything seen.
 
+## Insights → Roster tab (2026-07-18)
+- **A second delete surface, deliberately** — deleting a group already existed
+  on /groups → Group view. Kept BOTH: that board is grade-scoped (roster
+  surgery, one grade in front of you), Roster is the whole-centre audit
+  (clean-house sweep). Different jobs; merging them would make the daily
+  board heavier for a job done twice a term.
+- **Named "Roster", not "Groups"** — the Coverage tab already has a Groups
+  LENS. Two things called Groups on one Insights screen is a trap.
+- **Phantoms SHOWN here** (hidden everywhere else) — a list claiming "all
+  groups" that hides abandoned `new_group` rows lies, and those rows exist
+  precisely because nothing ever surfaced them. Chose this over running
+  `deletePhantomGroups` blindly: the founder sees them and decides.
+- **Two signals only** (students + weekly sessions) — founder call. Rejected
+  last-activity date and revenue for now: both cost real work per group and
+  neither changes the delete decision the way "0 students, 0 sessions" does.
+- **One-at-a-time delete with a confirm**, not multi-select batch — deletion
+  is irreversible and there is no undo.
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.
