@@ -1529,6 +1529,64 @@ export const revenueInsights = query({
   },
 });
 
+// ── Roster audit (Insights → Roster) ────────────────────────────────────────
+// Every group in the centre in ONE list, keyed by grade, with the two signals
+// that decide "can this go?": how many students it holds and how many weekly
+// slots it owns. The organize board answers this per grade and hides phantoms;
+// this is the whole-centre sweep, so phantoms ARE included — nowhere else in
+// the app can the founder see them. Live data only: an audit shows what's real,
+// never the planning-mode draft branch.
+
+export const rosterAudit = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { groups: [] };
+
+    const [allGroups, allMembers, allSlots] = await Promise.all([
+      ctx.db.query("groups").collect(),
+      ctx.db.query("groupMembers").collect(),
+      ctx.db.query("scheduleSlots").collect(),
+    ]);
+
+    const memberCount = new Map<string, number>();
+    for (const m of allMembers) {
+      memberCount.set(m.groupId, (memberCount.get(m.groupId) ?? 0) + 1);
+    }
+    const slotCount = new Map<string, number>();
+    for (const s of allSlots) {
+      if (!s.groupId) continue;
+      slotCount.set(s.groupId, (slotCount.get(s.groupId) ?? 0) + 1);
+    }
+
+    const groups = allGroups.map((g) => {
+      const members = memberCount.get(g._id) ?? 0;
+      const sessions = slotCount.get(g._id) ?? 0;
+      return {
+        _id: g._id,
+        name: g.name,
+        grade: g.grade ?? null,
+        additionalGrades: g.additionalGrades ?? [],
+        members,
+        sessions,
+        // Same rule as isPhantomGroup, computed from the counts we already
+        // have instead of two more indexed reads per group.
+        isPhantom: g.autoName === true && members === 0 && sessions === 0,
+      };
+    });
+
+    // Grade asc (ungraded last), then name — the order the founder reads in.
+    groups.sort((a, b) => {
+      const ga = a.grade ?? 99;
+      const gb = b.grade ?? 99;
+      if (ga !== gb) return ga - gb;
+      return a.name.localeCompare(b.name);
+    });
+
+    return { groups };
+  },
+});
+
 // ── Phantom-group cleanup ───────────────────────────────────────────────────
 // The Week-view tap-to-create mints a `new_group` row before the user commits;
 // backing out leaves an abandoned row with no members and no slots. These are

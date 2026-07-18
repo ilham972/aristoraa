@@ -4,10 +4,11 @@ import { useMemo, useState, useCallback, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation } from 'convex/react';
 import {
-  Layers, BarChart3, ListOrdered,
+  Layers, BarChart3, ListOrdered, ClipboardList,
   RefreshCw, AlertTriangle, FileText,
 } from 'lucide-react';
 import { PathTab } from '@/components/algorithm/path-tab';
+import { RosterTab } from '@/components/algorithm/roster-tab';
 import { api } from '@/lib/convex';
 import type { Id } from '@/lib/convex';
 import { CURRICULUM_MODULES, getModuleById, findUnit } from '@/lib/curriculum-data';
@@ -24,7 +25,7 @@ import { toast } from 'sonner';
 const GRADES = [6, 7, 8, 9, 10, 11];
 const TERMS: Array<1 | 2 | 3> = [1, 2, 3];
 
-type TabId = 'coverage' | 'blueprint' | 'path';
+type TabId = 'coverage' | 'blueprint' | 'path' | 'roster';
 type LensId = 'groups' | 'bank';
 
 // The Coverage tab's two lenses. "Groups" leads: it's the day-to-day question
@@ -40,6 +41,9 @@ const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Layers }
   { id: 'coverage',  label: 'Coverage',  fullLabel: 'Coverage',       icon: Layers },
   { id: 'blueprint', label: 'Blueprint', fullLabel: 'Exam Blueprint', icon: BarChart3 },
   { id: 'path',      label: 'Path',      fullLabel: 'Teaching Path',  icon: ListOrdered },
+  // Roster, not "Groups" — the Coverage tab already has a Groups LENS, and two
+  // things called Groups on one screen is a trap. Whole-centre group audit.
+  { id: 'roster',    label: 'Roster',    fullLabel: 'Group Roster',   icon: ClipboardList },
 ];
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -692,7 +696,7 @@ function AlgorithmPageInner() {
   }, [router, searchParams]);
 
   const rawTab = searchParams.get('tab') ?? 'coverage';
-  const tab: TabId = (['coverage', 'blueprint', 'path'] as TabId[]).includes(rawTab as TabId)
+  const tab: TabId = (['coverage', 'blueprint', 'path', 'roster'] as TabId[]).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'coverage';
 
@@ -775,6 +779,7 @@ function AlgorithmPageInner() {
       {tab === 'path' && (
         <PathTab grade={grade} term={term} setGrade={setGrade} setTerm={setTerm} />
       )}
+      {tab === 'roster' && <RosterTab />}
     </div>
   );
 }
