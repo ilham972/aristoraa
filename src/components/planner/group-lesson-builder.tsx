@@ -142,8 +142,15 @@ export function GroupLessonBuilder({
     setInitialRoutes(new Map(routeInit));
   }
 
+  // History is locked — but never silently (founder bug report 2026-07-19:
+  // "the tick is not working" was a taught question swallowing taps).
+  const lockedToast = () =>
+    toast.info('Already taught — history is locked and can’t be changed.');
   const toggle = (qid: string) => {
-    if (stateByQid.get(qid)?.taught) return; // history is locked
+    if (stateByQid.get(qid)?.taught) {
+      lockedToast();
+      return;
+    }
     setTicked((cur) => {
       const next = new Set(cur);
       if (next.has(qid)) next.delete(qid);
@@ -152,7 +159,10 @@ export function GroupLessonBuilder({
     });
   };
   const flipRoute = (qid: string) => {
-    if (stateByQid.get(qid)?.taught) return;
+    if (stateByQid.get(qid)?.taught) {
+      lockedToast();
+      return;
+    }
     setRoutesState((cur) => {
       const next = new Map(cur);
       next.set(qid, cur.get(qid) === 'revision' ? 'main' : 'revision');
@@ -407,10 +417,12 @@ export function GroupLessonBuilder({
           })}
         </div>
         <div className="text-[9.5px] text-muted-foreground">
-          tap a question to tick · tap its{' '}
-          <b className="text-emerald-500">green</b>/
-          <b className="text-amber-500">yellow</b> tick to switch Main ↔
-          Revision
+          each concept&rsquo;s middle drill is auto-
+          <b className="text-amber-500">yellow</b> (Revision) — tap a tick to
+          override <b className="text-emerald-500">green</b> ↔{' '}
+          <b className="text-amber-500">yellow</b>, tap the question to
+          tick/untick · <b className="text-rose-500">red</b> concept = no book
+          entered yet
         </div>
       </div>
 

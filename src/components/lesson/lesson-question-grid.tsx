@@ -192,7 +192,10 @@ export function ConceptChip({
         active
           ? 'bg-primary/15 border-primary/50 text-primary font-semibold'
           : 'bg-muted/30 border-border/70 text-muted-foreground',
-        warn && !active && 'border-amber-500/50 text-amber-500',
+        // Rose, NOT amber: amber is the Revision route's color, and a
+        // "no book entered" warning wearing it read as "this concept is
+        // routed to revision" (founder confusion 2026-07-19).
+        warn && !active && 'border-rose-500/50 text-rose-500',
       )}
     >
       <span className="whitespace-normal break-words">{label}</span>

@@ -23,8 +23,15 @@ const UNIT1 = 'M1-G10-T1-0';
 const UNIT2 = 'M1-G10-T1-1';
 
 // Track with two units; unit 1 holds 4 questions (difficulty 1..4, one
-// concept), unit 2 holds 2. Group with one student and a Monday Main slot.
-async function seed(t: ReturnType<typeof convexTest>) {
+// concept), unit 2 holds 2. Group with one student, a Monday Main slot and
+// (by default) a Wednesday Revision slot — which switches ON the auto-split
+// default: unit 1's middle (q2, q3) derives yellow, intro q1 + hardest q4
+// stay green; unit 2 (2 questions) has no middle.
+async function seed(
+  t: ReturnType<typeof convexTest>,
+  opts: { revisionSlot?: boolean } = {},
+) {
+  const withRevision = opts.revisionSlot ?? true;
   return await t.run(async (ctx) => {
     const trackId = await ctx.db.insert('tracks', {
       name: 'On-level G10',
@@ -64,14 +71,16 @@ async function seed(t: ReturnType<typeof convexTest>) {
       roomId,
       groupId,
     });
-    const revSlotId = await ctx.db.insert('scheduleSlots', {
-      dayOfWeek: 3,
-      startTime: '15:00',
-      endTime: '16:00',
-      roomId,
-      groupId,
-      sessionType: 'revision',
-    });
+    const revSlotId = withRevision
+      ? await ctx.db.insert('scheduleSlots', {
+          dayOfWeek: 3,
+          startTime: '15:00',
+          endTime: '16:00',
+          roomId,
+          groupId,
+          sessionType: 'revision',
+        })
+      : null;
 
     const qids: Record<string, Id<'questionBank'>[]> = {};
     for (const [unitId, count] of [
@@ -150,17 +159,11 @@ const unit1Unseen = async (
 };
 
 describe('question routing (green/yellow)', () => {
-  it('a routed question leaves Main demand and is never crystallized', async () => {
+  it('auto-split: the middle derives yellow, leaves Main demand, never crystallizes', async () => {
     const t = convexTest(schema, modules);
     const { groupId, qids } = await seed(t);
-    expect(await unit1Unseen(t, groupId)).toBe(4);
-
-    await asUser(t).mutation(api.learningEngine.groupPlan.setQuestionRoutes, {
-      groupId,
-      unitId: UNIT1,
-      routes: [{ questionId: qids[UNIT1][1], route: 'revision' }],
-    });
-    expect(await unit1Unseen(t, groupId)).toBe(3);
+    // No tap, no compression: q2+q3 (the middle) are already Revision.
+    expect(await unit1Unseen(t, groupId)).toBe(2);
 
     await asUser(t).mutation(
       api.learningEngine.groupPlan.crystallizeUpcoming,
@@ -175,6 +178,40 @@ describe('question routing (green/yellow)', () => {
     });
     expect(onSheets.length).toBeGreaterThan(0);
     expect(onSheets).not.toContain(qids[UNIT1][1]);
+    expect(onSheets).not.toContain(qids[UNIT1][2]);
+    expect(onSheets).toContain(qids[UNIT1][0]);
+    expect(onSheets).toContain(qids[UNIT1][3]);
+  });
+
+  it('auto-split needs revision capacity: without it everything stays Main', async () => {
+    const t = convexTest(schema, modules);
+    const { groupId } = await seed(t, { revisionSlot: false });
+    expect(await unit1Unseen(t, groupId)).toBe(4);
+  });
+
+  it('a manual green tap overrides the auto yellow and sticks', async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, qids } = await seed(t);
+    await asUser(t).mutation(api.learningEngine.groupPlan.setQuestionRoutes, {
+      groupId,
+      unitId: UNIT1,
+      routes: [{ questionId: qids[UNIT1][1], route: 'main' }],
+    });
+    // q2 pinned green by hand → only q3 stays auto-yellow.
+    expect(await unit1Unseen(t, groupId)).toBe(3);
+    const curation = await asUser(t).query(
+      api.learningEngine.groupPlan.groupUnitCuration,
+      { groupId, unitId: UNIT1 },
+    );
+    expect(curation?.status).toBe('ok');
+    if (curation?.status !== 'ok') return;
+    const routeOf = new Map(
+      curation.questions.map((q) => [q.questionId, q.route]),
+    );
+    expect(routeOf.get(qids[UNIT1][0])).toBe('main');
+    expect(routeOf.get(qids[UNIT1][1])).toBe('main'); // manual pin
+    expect(routeOf.get(qids[UNIT1][2])).toBe('revision'); // auto middle
+    expect(routeOf.get(qids[UNIT1][3])).toBe('main'); // hard tail
   });
 
   it('a routed question reaches the queue only after its concept is introduced (SR gate)', async () => {
@@ -189,7 +226,7 @@ describe('question routing (green/yellow)', () => {
     // teacher drills, they don't teach — SR queue, 2026-07-19).
     const before = await asUser(t).query(
       api.learningEngine.groupPlan.revisionQueuesForSlotDate,
-      { slotId: revSlotId, dateStr: '2026-07-18' },
+      { slotId: revSlotId!, dateStr: '2026-07-18' },
     );
     expect(
       before!.queues[studentId as unknown as string].questionIds,
@@ -199,7 +236,7 @@ describe('question routing (green/yellow)', () => {
     await introduceConcept(t, studentId, UNIT1, 9);
     const after = await asUser(t).query(
       api.learningEngine.groupPlan.revisionQueuesForSlotDate,
-      { slotId: revSlotId, dateStr: '2026-07-18' },
+      { slotId: revSlotId!, dateStr: '2026-07-18' },
     );
     expect(
       after!.queues[studentId as unknown as string].questionIds,
@@ -229,13 +266,13 @@ describe('question routing (green/yellow)', () => {
     await introduceConcept(t, studentId, UNIT2, 9);
     const res = await asUser(t).query(
       api.learningEngine.groupPlan.revisionQueuesForSlotDate,
-      { slotId: revSlotId, dateStr: '2026-07-18' },
+      { slotId: revSlotId!, dateStr: '2026-07-18' },
     );
     const queue = res!.queues[studentId as unknown as string].questionIds;
     expect(queue).toEqual([qids[UNIT2][0], qids[UNIT1][1], qids[UNIT1][2]]);
   });
 
-  it('compressionPreview keeps concept intro + hardest green, flips the middle yellow', async () => {
+  it('compressionPreview: middle is already auto-routed, intro + hardest propose green', async () => {
     const t = convexTest(schema, modules);
     const { groupId, qids } = await seed(t);
     const preview = await asUser(t).query(
@@ -246,14 +283,16 @@ describe('question routing (green/yellow)', () => {
     if (preview?.status !== 'ok') return;
     expect(preview.currentUnitId).toBe(UNIT1);
     expect(preview.nextUnitId).toBe(UNIT2);
+    // q2+q3 derive yellow via the auto-split default → already out of the
+    // movable remainder; only intro + hard tail remain, both kept green.
+    expect(preview.alreadyRouted).toBe(2);
     const byId = new Map(
       preview.questions.map((q) => [q.questionId, q.propose]),
     );
-    // First of the concept (easiest) + hardest 20% (= 1 of 4) stay green.
     expect(byId.get(qids[UNIT1][0])).toBe('main');
     expect(byId.get(qids[UNIT1][3])).toBe('main');
-    expect(byId.get(qids[UNIT1][1])).toBe('revision');
-    expect(byId.get(qids[UNIT1][2])).toBe('revision');
+    expect(byId.has(qids[UNIT1][1])).toBe(false);
+    expect(byId.has(qids[UNIT1][2])).toBe(false);
   });
 
   it('compression still works when the whole term is already planned', async () => {
@@ -274,8 +313,10 @@ describe('question routing (green/yellow)', () => {
     if (preview?.status !== 'ok') return;
     expect(preview.currentUnitId).toBe(UNIT1);
     expect(preview.nextUnitId).toBe(UNIT2);
+    // Auto-routed middle (q2, q3) is out; the planned-but-re-pickable
+    // intro + hard tail stay movable.
     expect(preview.questions.map((q) => q.questionId).sort()).toEqual(
-      [...qids[UNIT1]].sort(),
+      [qids[UNIT1][0], qids[UNIT1][3]].sort(),
     );
   });
 

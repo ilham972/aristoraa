@@ -161,6 +161,10 @@ export const REVISION_QUEUE_CAP = 10;
 // Shared by the real revision queues AND the Timeline tab's prediction
 // (lib/revisionSR.ts) so what the founder sees is what prints.
 export const REVISION_ROUTE_MIN_GAP_DAYS = 3;
+// AUTO-SPLIT (2026-07-19): the share of a concept's question families kept
+// in Main as the hard tail when the middle drill defaults to Revision.
+// Mirrors compression's ~20% rule — the hard tail must be TAUGHT.
+export const REVISION_HARD_TAIL_SHARE = 0.2;
 // When a unit's TEXTBOOK ladder is finished, the group ladder continues into
 // past-paper questions tagged to the same unit's concepts — capped so a fat
 // past-paper pool can't stall the march to the next unit. The daily scan

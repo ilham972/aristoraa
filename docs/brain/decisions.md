@@ -438,6 +438,23 @@ because Z.
   easy→hard tie-break (founder's ask: sub-question ladders must survive
   inside revision too); inside-gap = capacity top-up; NEVER-introduced
   concepts held back — revision teachers drill, they don't teach.
+- **Yellow is the middle's DEFAULT — derived, never stored** (2026-07-19,
+  same day, founder: "each concept's middle and each question's sub-question
+  middle become yellow"). `autoMiddleSplit` (lib/revisionSR.ts): per concept,
+  families (stem sub-question groups) in ladder order — first family + the
+  hardest ~REVISION_HARD_TAIL_SHARE stay Main-track, middle families go fully
+  yellow, and Main-track families with 3+ subs lose their MIDDLE subs to
+  yellow too (first + last sub stay green). Derived inside loadGroupPlanState
+  (chose DERIVED over writing auto rows: no write trigger, new book entry
+  auto-covered, every consumer already applies ban-wins/seen-wins); a stored
+  route row — a manual tap or compression — always beats the derivation, and
+  the builder's save persists overrides as manual rows. GUARD: a group with
+  no revision capacity (no revision slots, no revision classes) gets NO
+  auto-split — its yellow could never be served, silently shrinking the plan.
+  Past-paper tail stays Main. Same-day UX fixes from the founder's "tick not
+  working" report: locked (taught) ticks now toast instead of silently
+  swallowing taps, and the "no book entered" concept chip turned ROSE because
+  amber read as "routed to revision".
 - **One shared Lesson Builder** (2026-07-18) — the planner's group curation
   dialog was a worse clone of the session builder; replaced by group MODE of
   the same screen (`group-lesson-builder.tsx` + shared

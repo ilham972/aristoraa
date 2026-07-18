@@ -4,8 +4,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  autoMiddleSplit,
   orderRoutedForRevision,
   predictRevisionDates,
+  type ConceptLeaf,
   type ConceptMemorySummary,
   type RoutedCandidate,
 } from '../convex/lib/revisionSR';
@@ -95,6 +97,56 @@ describe('orderRoutedForRevision', () => {
       3,
     );
     expect(out).toEqual(['legacy']);
+  });
+});
+
+describe('autoMiddleSplit', () => {
+  const leaf = (qid: string, familyKey: string | null = null): ConceptLeaf => ({
+    qid,
+    familyKey,
+  });
+
+  it('singleton questions: intro + hard tail stay green, middle goes yellow', () => {
+    const out = autoMiddleSplit(
+      [leaf('q1'), leaf('q2'), leaf('q3'), leaf('q4')],
+      0.2,
+    );
+    expect(out).toEqual(new Set(['q2', 'q3']));
+  });
+
+  it('a concept with fewer than 3 questions has no middle', () => {
+    expect(autoMiddleSplit([leaf('a'), leaf('b')], 0.2).size).toBe(0);
+  });
+
+  it('middle FAMILIES go fully yellow; kept families lose only their middle subs', () => {
+    // Families: F1 = 1.a/1.b/1.c (intro), F2 = 2 (middle single),
+    // F3 = 3.a/3.b (middle pair), F4 = 4.a/4.b/4.c (hard tail).
+    const out = autoMiddleSplit(
+      [
+        leaf('1a', 'ex|1'),
+        leaf('1b', 'ex|1'),
+        leaf('1c', 'ex|1'),
+        leaf('2', 'ex|2'),
+        leaf('3a', 'ex|3'),
+        leaf('3b', 'ex|3'),
+        leaf('4a', 'ex|4'),
+        leaf('4b', 'ex|4'),
+        leaf('4c', 'ex|4'),
+      ],
+      0.2,
+    );
+    // Intro family keeps first + last sub (1a, 1c), middle sub 1b yellow;
+    // middle families fully yellow (2, 3a, 3b); hard-tail family keeps
+    // 4a + 4c, its middle sub 4b yellow.
+    expect(out).toEqual(new Set(['1b', '2', '3a', '3b', '4b']));
+  });
+
+  it('one big multi-part question: only its middle subs go yellow', () => {
+    const out = autoMiddleSplit(
+      [leaf('a', 'ex|5'), leaf('b', 'ex|5'), leaf('c', 'ex|5'), leaf('d', 'ex|5')],
+      0.2,
+    );
+    expect(out).toEqual(new Set(['b', 'c']));
   });
 });
 

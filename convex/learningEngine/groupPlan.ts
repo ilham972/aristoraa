@@ -38,6 +38,7 @@ import {
   GROUP_PASTPAPER_TAIL_MAX,
   GROUP_SKELETON_HORIZON_DAYS,
   GROUP_SPIRAL_SHARE,
+  REVISION_HARD_TAIL_SHARE,
   REVISION_QUEUE_CAP,
   REVISION_ROUTE_MIN_GAP_DAYS,
 } from "./config";
@@ -46,8 +47,10 @@ import {
   type SkeletonUnitInput,
 } from "../lib/groupPlanCore";
 import {
+  autoMiddleSplit,
   orderRoutedForRevision,
   predictRevisionDates,
+  type ConceptLeaf,
   type ConceptMemorySummary,
   type RoutedCandidate,
 } from "../lib/revisionSR";
@@ -182,6 +185,9 @@ type UnitLadder = {
     difficulty: number;
     pickerOrder: number;
     pastPaper: boolean;
+    // Sub-question family: leaves sharing one stem ("5.a"/"5.b" → base "5",
+    // scoped to their exercise/paper). null = no label to group by.
+    familyKey: string | null;
   }>;
   conceptByQuestion: Map<string, string>;
 };
@@ -216,6 +222,7 @@ async function buildUnitLadders(
       difficulty: number;
       pickerOrder: number;
       pastPaper: boolean;
+      familyKey: string | null;
     };
     const book: Rung[] = [];
     const paper: Rung[] = [];
@@ -226,11 +233,18 @@ async function buildUnitLadders(
     qidList.forEach((k, i) => {
       const q = qDocs[i];
       if (!q) return;
+      const labelKey = q.linkedQuestionKey ?? q.questionNumberInPaper ?? null;
+      const base = labelKey ? labelKey.split(".")[0] : null;
+      const scope =
+        (q.linkedExerciseId as unknown as string | undefined) ??
+        (q.pastPaperId as unknown as string | undefined) ??
+        "";
       const rung: Rung = {
         qid: k,
         difficulty: q.difficulty ?? DEFAULT_QUESTION_DIFFICULTY,
         pickerOrder: q.pickerOrder ?? Number.MAX_SAFE_INTEGER,
         pastPaper: q.source === "past-paper",
+        familyKey: base ? `${scope}|${base}` : null,
       };
       (rung.pastPaper ? paper : book).push(rung);
     });
@@ -466,6 +480,47 @@ async function loadGroupPlanState(
   routeByQid.forEach((row, k) => {
     if (row.route === "revision" && !banned.has(k)) routedRevision.add(k);
   });
+
+  // AUTO-SPLIT DEFAULT (2026-07-19, founder): with no stored route, each
+  // concept's middle drill — and the middle sub-questions of every
+  // multi-part family — defaults to Revision (lib/revisionSR.ts
+  // autoMiddleSplit). DERIVED, never stored: a stored route row (manual tap
+  // or compression) always wins, new book entry is covered automatically,
+  // and consumers keep their ban-wins/seen-wins precedence. Groups with NO
+  // revision capacity skip the split — yellow that can never be served
+  // would silently drop questions from the plan. Textbook leaves only; the
+  // capped past-paper tail stays Main (exam practice is taught).
+  const groupSlots = await ctx.db
+    .query("scheduleSlots")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+  const hasRevisionCapacity =
+    groupSlots.some((s) => (s.sessionType ?? "main") === "revision") ||
+    (
+      await ctx.db
+        .query("revisionClasses")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .collect()
+    ).length > 0;
+  if (hasRevisionCapacity) {
+    for (const l of ladders) {
+      const byConcept = new Map<string, ConceptLeaf[]>();
+      for (const r of l.ladder) {
+        if (r.pastPaper) continue;
+        const cid = l.conceptByQuestion.get(r.qid);
+        if (!cid) continue;
+        const acc = byConcept.get(cid) ?? [];
+        acc.push({ qid: r.qid, familyKey: r.familyKey });
+        byConcept.set(cid, acc);
+      }
+      byConcept.forEach((leaves) => {
+        autoMiddleSplit(leaves, REVISION_HARD_TAIL_SHARE).forEach((qid) => {
+          if (routeByQid.has(qid) || banned.has(qid)) return;
+          routedRevision.add(qid);
+        });
+      });
+    }
+  }
 
   const mainCarry = (
     await ctx.db

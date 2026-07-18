@@ -2,7 +2,7 @@
 
 THE priority area (purpose.md): the algorithm guaranteeing "A result within
 predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
-`algorithm_plan.md`. Phases A–D shipped; validated via cumulative-exam holdouts.
+`algorithm_plan.md`. Phases A–D shipped (cumulative-exam holdout validated).
 
 ## The loop (per student, per session)
 1. **Memory model** (`memory.ts`) — FSRS-like per-concept S + D in
@@ -47,14 +47,13 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   (`group-lesson-builder.tsx`, SHARED grid via
   `components/lesson/lesson-question-grid.tsx`): Main + TIMELINE tabs
   (2026-07-19; Revision tab retired — Main shows ALL, yellow ticks inline);
-  tap tile = tick/untick (ban), tap chip = GREEN↔YELLOW route
-  (`groupQuestionRoutes`, manual never auto-overwritten). Timeline tab
+  tap tile = tick/untick (ban; locked = toast), tap chip = GREEN↔YELLOW
+  (manual never auto-overwritten); rose concept chip = no book. Timeline tab
   (`group-unit-timeline.tsx` + `groupUnitTimeline`) = week rows of day pills:
   teal Main = REAL sheet dates, amber dashed = SR-PREDICTED revision days;
-  tap a day = questions by concept, rings mark concept-sharing days;
-  "waiting" = intro unscheduled / revision days ran out. "+ unit" = UNIT
-  COMPRESSION (`compression-dialog.tsx`): intros + hardest ~20% stay green,
-  middle drill flips yellow, then re-plan.
+  tap a day = questions by concept, rings mark concept-sharing days. "+ unit"
+  = UNIT COMPRESSION (`compression-dialog.tsx`): start the next unit now,
+  then re-plan.
 - `/algorithm` — Coverage = TWO LENSES (2026-07-17): GROUPS = the Cockpit
   (cheap all-group rail `groupsTermCoverageSummary`; the tapped group pays for
   `groupTermCoverage`), BANK = concept stock; book-gap bridges Groups→Bank.
@@ -62,11 +61,10 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   (`examModeActive` + alert cron); `/algorithm/scoring` — `difficultyTab.ts`.
 
 ## Supporting modules
-`profile.ts` scope/profile; `path.ts`/`tracks.ts`; `importance.ts`/
-`derivedConcepts.ts` importance + tagging; `cropIntegrity.ts`; `pdf.ts`+
-`pdfHelpers.ts` (pdf-lib); `leagues.ts`/`map.ts`/`studentDashboard.ts` →
-tracks-leaderboard.md. UNWIRED: `backfill.ts`; `config.ts`/`mastery.ts`/
-`memory.ts` direct-import (see legacy-map).
+`profile.ts`; `path.ts`/`tracks.ts`; `importance.ts`/`derivedConcepts.ts`;
+`cropIntegrity.ts`; `pdf.ts`+`pdfHelpers.ts` (pdf-lib); `leagues.ts`/`map.ts`
+/`studentDashboard.ts` → tracks-leaderboard.md. UNWIRED: `backfill.ts`;
+`config.ts`/`mastery.ts`/`memory.ts` direct-import (see legacy-map).
 
 ## Departments: group Main plan + Revision queues (2026-07-14)
 `groupPlan.ts` + pure `groupPlanCore.ts` (tested): Main block = ONE identical
@@ -78,12 +76,17 @@ unseen past-unit Qs, weakest group-avg R first); Sheets tab materializes per
 student via mainQuestionIdsOverride. Revision dept (sessionType="revision"):
 queues = group-claimed-but-unseen Qs (delegation + absence catch-up, ONE
 rule, cap 10) + ROUTED yellow Qs (groupQuestionRoutes — out of Main
-demand/coverage; ban wins, seen wins), SR-ORDERED 2026-07-19 (pure
-`convex/lib/revisionSR.ts`, tested): due = all tagged concepts introduced +
-REVISION_ROUTE_MIN_GAP_DAYS since last review, weakest R first, easy→hard
-tie-break; un-introduced HELD BACK (revision teachers drill, never teach),
-inside-gap = top-up only; the Timeline prediction runs the SAME functions →
-forecast = print. Consolidation students stay personal. Tuning:
+demand/coverage; ban wins, seen wins). YELLOW IS THE MIDDLE'S DEFAULT
+(2026-07-19, `autoMiddleSplit` in pure `convex/lib/revisionSR.ts`, tested):
+DERIVED in loadGroupPlanState, never stored — per concept the intro + the
+hardest ~REVISION_HARD_TAIL_SHARE of families stay Main; middle families AND
+middle sub-questions of kept families go yellow; stored route rows (taps /
+compression) always win; no revision capacity → no split. Serving is
+SR-ORDERED (same lib): due = concepts introduced + REVISION_ROUTE_MIN_GAP_DAYS
+since last review, weakest R first, easy→hard; un-introduced HELD BACK
+(revision teachers drill, never teach), inside-gap = top-up only; the
+Timeline prediction runs the SAME functions → forecast = print.
+Consolidation students stay personal. Tuning:
 mainQuestionsPerSession (3–15), resizePlanned, groupCarryOvers (tail → next
 Main FIRST or per-member revision queue; deletePlanned un-consumes; bookmark
 never un-seen). Book-gap honesty: zero-question units = "no-questions" never
@@ -100,6 +103,5 @@ never un-seen). Book-gap honesty: zero-question units = "no-questions" never
   MUST mirror planner pacing; completion credits ≤48h.
 
 ## Rules for changing the engine
-Read BOTH plan files first; behaviour must match algorithm_plan.md blocks.
-Constants ONLY in config.ts; scorer stays module-blind (slots are D.3); keep
-every factor exposed. repeatCount is a TEMPORARY stopgap — don't deepen it.
+Read BOTH plan files first; match algorithm_plan.md blocks. Constants ONLY in
+config.ts; scorer stays module-blind; repeatCount = TEMPORARY, don't deepen.

@@ -99,6 +99,55 @@ export function orderRoutedForRevision(
   return ranked.map((x) => x.qid);
 }
 
+// ── Auto-split: the ambient middle-drill default (2026-07-19) ────────────
+// The founder's model, made the DEFAULT (no tapping, no "+ unit"): in every
+// concept the first question introduces, the middle drills, the hard tail
+// returns to Main — and the same shape repeats INSIDE a multi-part question
+// (family): first sub-question intro, middle subs drill, last sub returns.
+// Rule, over one concept's leaves in ladder (easy→hard) order:
+//   • group leaves into FAMILIES (sub-questions of one stem; singletons are
+//     their own family), in first-appearance order;
+//   • Main-track families = the FIRST family (the intro) + the hardest
+//     ~hardTailShare tail of families (taught, never delegated);
+//   • middle families → every leaf YELLOW;
+//   • Main-track families with 3+ leaves → their middle leaves YELLOW too
+//     (first + last sub stay green).
+// A concept with fewer than 3 leaves has no middle. Returns the YELLOW set;
+// callers must let stored routes (manual or auto rows), bans and seen win.
+export type ConceptLeaf = { qid: string; familyKey: string | null };
+
+export function autoMiddleSplit(
+  leaves: ConceptLeaf[],
+  hardTailShare: number,
+): Set<string> {
+  const yellow = new Set<string>();
+  if (leaves.length < 3) return yellow;
+  const fams: ConceptLeaf[][] = [];
+  const famIdx = new Map<string, number>();
+  for (const leaf of leaves) {
+    const existing =
+      leaf.familyKey !== null ? famIdx.get(leaf.familyKey) : undefined;
+    if (existing !== undefined) {
+      fams[existing].push(leaf);
+    } else {
+      if (leaf.familyKey !== null) famIdx.set(leaf.familyKey, fams.length);
+      fams.push([leaf]);
+    }
+  }
+  const mainTrack = new Set<number>([0]);
+  const tail = Math.ceil(fams.length * hardTailShare);
+  for (let i = Math.max(0, fams.length - tail); i < fams.length; i++)
+    mainTrack.add(i);
+  fams.forEach((fam, i) => {
+    if (!mainTrack.has(i)) {
+      for (const l of fam) yellow.add(l.qid);
+      return;
+    }
+    if (fam.length >= 3) for (const l of fam.slice(1, -1)) yellow.add(l.qid);
+  });
+  return yellow;
+}
+
 function addDaysYmd(ymd: string, n: number): string {
   const d = new Date(`${ymd}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + n);
