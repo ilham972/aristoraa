@@ -41,6 +41,7 @@ import {
   buildGroupSkeleton,
   type SkeletonUnitInput,
 } from "../lib/groupPlanCore";
+import { estimatePageBreaks } from "../lib/sheetLayout";
 
 type QueryCtx = GenericQueryCtx<DataModel>;
 type MutationCtx = GenericMutationCtx<DataModel>;
@@ -345,6 +346,14 @@ type GroupPlanState = {
   // the skeleton doesn't count them as demand — but they are NOT "seen":
   // coverage shows them as excluded, never as covered.
   banned: Set<string>;
+  // Question-level delegation (groupQuestionRoutes, 2026-07-18): "yellow"
+  // questions routed to the Revision department. Out of Main demand and the
+  // Main pick queues; served through members' revision queues instead.
+  // Seen wins over a route; banned wins over a route.
+  routedRevision: Set<string>;
+  // Full route rows by question id — writers need route+source resolution
+  // (manual rows are never overwritten by the algorithm).
+  routeByQid: Map<string, Doc<"groupQuestionRoutes">>;
   // Questions per Main session — the group's own override, else the default.
   mainSize: number;
   // Unconsumed "carry to next Main" leftovers (oldest first): the next
@@ -428,6 +437,20 @@ async function loadGroupPlanState(
     for (const qid of row.questionIds) banned.add(qid as unknown as string);
   }
 
+  // Question routes: one row per re-routed question; "revision" = yellow.
+  // A question that is both banned and routed stays banned (ban wins).
+  const routeByQid = new Map<string, Doc<"groupQuestionRoutes">>();
+  for (const row of await ctx.db
+    .query("groupQuestionRoutes")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect()) {
+    routeByQid.set(row.questionId as unknown as string, row);
+  }
+  const routedRevision = new Set<string>();
+  routeByQid.forEach((row, k) => {
+    if (row.route === "revision" && !banned.has(k)) routedRevision.add(k);
+  });
+
   const mainCarry = (
     await ctx.db
       .query("groupCarryOvers")
@@ -449,6 +472,8 @@ async function loadGroupPlanState(
       crystallized,
       preTaughtUnitIds,
       banned,
+      routedRevision,
+      routeByQid,
       mainSize,
       mainCarry,
     },
@@ -471,12 +496,19 @@ function skeletonInputs(state: GroupPlanState): {
   }
   // Banned (unticked) questions are out of the plan entirely: not demand,
   // not part of the unit's total. seen-but-banned still counts as covered.
+  // Routed-to-revision ("yellow") questions leave MAIN demand — that is the
+  // whole point of unit compression: the deadline math improves because the
+  // Revision department carries them instead.
   const units: SkeletonUnitInput[] = state.ladders.map((l) => ({
     unitId: l.unitId,
     term: termFromUnitId(l.unitId),
     unseenCount:
-      l.ladder.filter((q) => !state.seen.has(q.qid) && !state.banned.has(q.qid))
-        .length + (carryByUnit.get(l.unitId) ?? 0),
+      l.ladder.filter(
+        (q) =>
+          !state.seen.has(q.qid) &&
+          !state.banned.has(q.qid) &&
+          !state.routedRevision.has(q.qid),
+      ).length + (carryByUnit.get(l.unitId) ?? 0),
     totalCount:
       l.ladder.filter((q) => state.seen.has(q.qid) || !state.banned.has(q.qid))
         .length + (carryByUnit.get(l.unitId) ?? 0),
@@ -638,7 +670,12 @@ async function buildPickQueues(
   for (let i = 0; i < Math.min(currentUnitIdx, state.ladders.length); i++) {
     const l = state.ladders[i];
     l.ladder.forEach((q, idx) => {
-      if (state.seen.has(q.qid) || state.banned.has(q.qid)) return;
+      if (
+        state.seen.has(q.qid) ||
+        state.banned.has(q.qid) ||
+        state.routedRevision.has(q.qid)
+      )
+        return;
       const concept = l.conceptByQuestion.get(q.qid);
       spiralPool.push({
         qid: q.qid,
@@ -653,7 +690,11 @@ async function buildPickQueues(
   for (let i = currentUnitIdx; i < state.ladders.length; i++) {
     const l = state.ladders[i];
     for (const q of l.ladder) {
-      if (!state.seen.has(q.qid) && !state.banned.has(q.qid))
+      if (
+        !state.seen.has(q.qid) &&
+        !state.banned.has(q.qid) &&
+        !state.routedRevision.has(q.qid)
+      )
         newQueue.push({ qid: q.qid, unitId: l.unitId });
     }
   }
@@ -1378,6 +1419,38 @@ async function revisionQueueForStudent(
       out.push(qid);
     }
   }
+
+  // Routed-to-revision ("yellow") questions — question-level delegation from
+  // unit compression / the group Lesson Builder. Due as soon as they're
+  // routed; banned questions stay excluded; track-unit order then the order
+  // they were routed in.
+  for (const m of memberships) {
+    const bannedSet = new Set<string>();
+    for (const b of await ctx.db
+      .query("groupUnitBans")
+      .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
+      .collect()) {
+      for (const qid of b.questionIds) bannedSet.add(qid as unknown as string);
+    }
+    const routes = (
+      await ctx.db
+        .query("groupQuestionRoutes")
+        .withIndex("by_group", (q) => q.eq("groupId", m.groupId))
+        .collect()
+    )
+      .filter((r) => r.route === "revision")
+      .sort(
+        (a, b) =>
+          a.unitId.localeCompare(b.unitId) || a.createdAt - b.createdAt,
+      );
+    for (const r of routes) {
+      if (out.length >= cap) return { questionIds: out, carryRowIds };
+      const k = r.questionId as unknown as string;
+      if (seen.has(k) || inQueue.has(k) || bannedSet.has(k)) continue;
+      seen.add(k);
+      out.push(r.questionId);
+    }
+  }
   return { questionIds: out, carryRowIds };
 }
 
@@ -1470,7 +1543,10 @@ export const scanBookExhaustion = internalMutation({
       let unseenPaper = 0;
       for (const l of state.ladders) {
         const unseen = l.ladder.filter(
-          (q) => !state.seen.has(q.qid) && !state.banned.has(q.qid),
+          (q) =>
+            !state.seen.has(q.qid) &&
+            !state.banned.has(q.qid) &&
+            !state.routedRevision.has(q.qid),
         );
         if (unseen.length === 0) continue;
         current = l;
@@ -1844,7 +1920,12 @@ export const groupTermCoverage = query({
           const q = qDocs[i];
           const k = r.qid;
           const prov = sheetByQid.get(k);
-          let questionState: "done" | "planned" | "unseen" | "banned";
+          let questionState:
+            | "done"
+            | "planned"
+            | "unseen"
+            | "banned"
+            | "revision";
           let sheetDate: string | null = null;
           let sheetStatus: string | null = null;
           if (prov) {
@@ -1859,6 +1940,9 @@ export const groupTermCoverage = query({
           } else if (state.banned.has(k)) {
             // Unticked in the unit-curation dialog: excluded from the plan.
             questionState = "banned";
+          } else if (state.routedRevision.has(k)) {
+            // "Yellow": routed to the Revision department's queues.
+            questionState = "revision";
           } else {
             questionState = "unseen";
           }
@@ -1880,6 +1964,9 @@ export const groupTermCoverage = query({
         const bannedCount = questions.filter(
           (q) => q.state === "banned",
         ).length;
+        const routedCount = questions.filter(
+          (q) => q.state === "revision",
+        ).length;
         return {
           unitId: l.unitId,
           term: resolvedTerm,
@@ -1887,8 +1974,13 @@ export const groupTermCoverage = query({
           doneCount,
           plannedCount,
           bannedCount,
+          routedCount,
           unseenCount:
-            questions.length - doneCount - plannedCount - bannedCount,
+            questions.length -
+            doneCount -
+            plannedCount -
+            bannedCount -
+            routedCount,
           hasBook: questions.length > 0,
           preTaught,
           studentsDone: Array.from(doneByUnit.get(l.unitId) ?? []),
@@ -2014,9 +2106,14 @@ export const groupsTermCoverageSummary = query({
             } else if (preTaught || state.seen.has(rung.qid)) {
               doneCount++;
               plannableTotal++;
-            } else if (state.banned.has(rung.qid)) {
-              // Excluded from the plan — never counted as covered, and it
-              // leaves the denominator so 100% stays reachable.
+            } else if (
+              state.banned.has(rung.qid) ||
+              state.routedRevision.has(rung.qid)
+            ) {
+              // Banned = excluded; routed = the Revision department's load.
+              // Both leave the MAIN denominator so 100% stays reachable —
+              // a routed question re-enters as "done" once a revision sheet
+              // actually serves it (it lands in the group seen-set).
             } else {
               plannableTotal++;
             }
@@ -2125,14 +2222,263 @@ export const groupUnitCuration = query({
       const sheetStatus = statusByQid.get(r.qid) ?? null;
       const taught =
         sheetStatus === "materialized" || preTaught || state.seen.has(r.qid);
+      const routeRow = state.routeByQid.get(r.qid);
       return {
         questionId: r.qid as unknown as Id<"questionBank">,
         taught, // locked in the dialog — can't ban what's already done
         planned: !taught && sheetStatus !== null,
         banned: state.banned.has(r.qid),
+        // Green/yellow: effective route (no row = green Main default).
+        route: (state.routedRevision.has(r.qid) ? "revision" : "main") as
+          | "main"
+          | "revision",
+        routeSource: routeRow?.source ?? null,
       };
     });
     return { status: "ok" as const, questions };
+  },
+});
+
+// ── Question routing + unit compression (sessions redesign, 2026-07-18) ───
+
+// Upsert MANUAL route rows — founder taps on the green/yellow tick chip.
+// Manual rows are never overwritten by the algorithm; re-routing the same
+// question replaces its row (manual wins over auto on write too).
+export const setQuestionRoutes = mutation({
+  args: {
+    groupId: v.id("groups"),
+    unitId: v.string(),
+    routes: v.array(
+      v.object({
+        questionId: v.id("questionBank"),
+        route: v.union(v.literal("main"), v.literal("revision")),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const now = Date.now();
+    let written = 0;
+    for (const r of args.routes) {
+      const existing = await ctx.db
+        .query("groupQuestionRoutes")
+        .withIndex("by_group_question", (q) =>
+          q.eq("groupId", args.groupId).eq("questionId", r.questionId),
+        )
+        .collect();
+      if (existing.length > 0) {
+        await ctx.db.patch(existing[0]._id, {
+          route: r.route,
+          source: "manual",
+          createdAt: now,
+          ...(teacherId ? { createdByTeacherId: teacherId } : {}),
+        });
+        for (const dup of existing.slice(1)) await ctx.db.delete(dup._id);
+      } else {
+        await ctx.db.insert("groupQuestionRoutes", {
+          groupId: args.groupId,
+          unitId: args.unitId,
+          questionId: r.questionId,
+          route: r.route,
+          source: "manual",
+          createdAt: now,
+          ...(teacherId ? { createdByTeacherId: teacherId } : {}),
+        });
+      }
+      written += 1;
+    }
+    return { status: "ok" as const, written };
+  },
+});
+
+// The "+ unit" proposal: compress the CURRENT unit so the next one can start
+// now. Smart default split of the current unit's untaught remainder —
+//   keep GREEN (Main): the first remaining question of each concept (the
+//   teaching intro) + the hardest ~20% of the remainder (founder rule: the
+//   hard tail must be TAUGHT, revision teachers can't carry it);
+//   flip YELLOW (Revision): the middle drill work.
+// Pure proposal — nothing is written until applyCompression.
+export const compressionPreview = query({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const todayYmd = ymdFromMs(Date.now());
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const { currentUnitIdx } = skeletonInputs(state);
+    if (currentUnitIdx >= state.ladders.length)
+      return { status: "nothing-to-teach" as const };
+    const current = state.ladders[currentUnitIdx];
+    // Next unit that actually has book entered — an empty ladder can't start.
+    const next = state.ladders
+      .slice(currentUnitIdx + 1)
+      .find((l) => l.ladder.length > 0);
+    if (!next) return { status: "no-next-unit" as const };
+
+    const remainder = current.ladder.filter(
+      (q) =>
+        !state.seen.has(q.qid) &&
+        !state.banned.has(q.qid) &&
+        !state.routedRevision.has(q.qid),
+    );
+    if (remainder.length === 0)
+      return { status: "nothing-to-compress" as const };
+
+    // Keep set: first remaining question per concept + hardest ~20%.
+    const keep = new Set<string>();
+    const seenConcepts = new Set<string>();
+    for (const q of remainder) {
+      const concept = current.conceptByQuestion.get(q.qid);
+      if (concept && !seenConcepts.has(concept)) {
+        seenConcepts.add(concept);
+        keep.add(q.qid);
+      }
+    }
+    const hardCount = Math.ceil(remainder.length * 0.2);
+    const byDifficultyDesc = [...remainder].sort(
+      (a, b) => b.difficulty - a.difficulty,
+    );
+    for (const q of byDifficultyDesc.slice(0, hardCount)) keep.add(q.qid);
+
+    const qDocs = await Promise.all(
+      remainder.map((q) =>
+        ctx.db.get(q.qid as unknown as Id<"questionBank">),
+      ),
+    );
+    const questions = remainder.map((q, i) => ({
+      questionId: q.qid as unknown as Id<"questionBank">,
+      label:
+        qDocs[i]?.questionNumberInPaper ?? qDocs[i]?.linkedQuestionKey ?? null,
+      difficulty: q.difficulty,
+      propose: (keep.has(q.qid) ? "main" : "revision") as "main" | "revision",
+    }));
+    return {
+      status: "ok" as const,
+      currentUnitId: current.unitId,
+      nextUnitId: next.unitId,
+      alreadyRouted: current.ladder.filter((q) =>
+        state.routedRevision.has(q.qid),
+      ).length,
+      questions,
+    };
+  },
+});
+
+// Write the confirmed compression split. Auto rows never overwrite manual
+// rows; founder flips at confirm time arrive as manual lists. The caller
+// follows up with deleteFuturePlanned + crystallizeUpcoming so the timeline
+// reflects the compression immediately.
+export const applyCompression = mutation({
+  args: {
+    groupId: v.id("groups"),
+    unitId: v.string(),
+    autoRevisionIds: v.array(v.id("questionBank")),
+    manualMainIds: v.array(v.id("questionBank")),
+    manualRevisionIds: v.array(v.id("questionBank")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const now = Date.now();
+
+    const upsert = async (
+      questionId: Id<"questionBank">,
+      route: "main" | "revision",
+      source: "manual" | "auto",
+    ) => {
+      const existing = await ctx.db
+        .query("groupQuestionRoutes")
+        .withIndex("by_group_question", (q) =>
+          q.eq("groupId", args.groupId).eq("questionId", questionId),
+        )
+        .collect();
+      if (existing.length > 0) {
+        // Manual rows are founder decisions — auto never touches them.
+        if (source === "auto" && existing[0].source === "manual") return 0;
+        await ctx.db.patch(existing[0]._id, {
+          route,
+          source,
+          createdAt: now,
+          ...(teacherId ? { createdByTeacherId: teacherId } : {}),
+        });
+        for (const dup of existing.slice(1)) await ctx.db.delete(dup._id);
+        return 1;
+      }
+      await ctx.db.insert("groupQuestionRoutes", {
+        groupId: args.groupId,
+        unitId: args.unitId,
+        questionId,
+        route,
+        source,
+        createdAt: now,
+        ...(teacherId ? { createdByTeacherId: teacherId } : {}),
+      });
+      return 1;
+    };
+
+    let written = 0;
+    for (const qid of args.autoRevisionIds)
+      written += await upsert(qid, "revision", "auto");
+    for (const qid of args.manualRevisionIds)
+      written += await upsert(qid, "revision", "manual");
+    for (const qid of args.manualMainIds)
+      written += await upsert(qid, "main", "manual");
+    return { status: "ok" as const, written };
+  },
+});
+
+// Session → A4 pages: which questions land on which printed page. Exact
+// when the last print-preview render stamped pdfPageAssignments on the row;
+// otherwise estimated from crop sizes via the shared layout math.
+export const groupSheetPages = query({
+  args: { groupSheetId: v.id("groupSheets") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const row = await ctx.db.get(args.groupSheetId);
+    if (!row) return null;
+
+    const printOrder = [...row.newQuestionIds, ...row.spiralQuestionIds];
+    let assignments: Array<{ questionId: Id<"questionBank">; page: number }>;
+    let exact = false;
+    if (row.pdfPageAssignments && row.pdfPageAssignments.length > 0) {
+      assignments = row.pdfPageAssignments;
+      exact = true;
+    } else {
+      const qDocs = await Promise.all(printOrder.map((qid) => ctx.db.get(qid)));
+      const layout = qDocs.map((q) => ({
+        cropBox: q?.cropBox ? { w: q.cropBox.w, h: q.cropBox.h } : null,
+        overrideSize: q?.overrideRender
+          ? {
+              widthMm: q.overrideRender.widthMm,
+              heightMm: q.overrideRender.heightMm,
+            }
+          : null,
+      }));
+      const pages = estimatePageBreaks(layout);
+      assignments = printOrder.map((qid, i) => ({
+        questionId: qid,
+        page: pages[i],
+      }));
+    }
+
+    const byPage = new Map<number, Id<"questionBank">[]>();
+    for (const a of assignments) {
+      const list = byPage.get(a.page) ?? [];
+      list.push(a.questionId);
+      byPage.set(a.page, list);
+    }
+    return {
+      exact,
+      pages: Array.from(byPage.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([page, questionIds]) => ({ page, questionIds })),
+    };
   },
 });
 

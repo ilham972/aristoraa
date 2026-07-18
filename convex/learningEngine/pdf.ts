@@ -633,6 +633,9 @@ async function buildPDF(
   pageCount: number;
   missing: MissingImageItem[];
   rendered: { warmup: number; main: number; revision: number; examPrep: number };
+  // Which printed A4 page each MAIN question landed on (1-based) — the
+  // planner's per-page highlight stores this on the group sheet row.
+  mainPages: Array<{ questionId: Id<"questionBank">; page: number }>;
 }> {
   // Crop-integrity gate: refuse to render when any picked Q has a blocking
   // issue (stem-only with no sub-parts cropped, sub-question with no stem,
@@ -842,6 +845,7 @@ async function buildPDF(
       drawQuestion(renderer, q, n, img, stems);
     }
   }
+  const mainPages: Array<{ questionId: Id<"questionBank">; page: number }> = [];
   if (main.length > 0) {
     drawSectionBanner(
       renderer,
@@ -850,6 +854,9 @@ async function buildPDF(
     for (const { q, img, stems } of main) {
       n += 1;
       drawQuestion(renderer, q, n, img, stems);
+      // ensureSpace ran before the block drew, so the renderer's current
+      // page index IS the page this whole question sits on.
+      mainPages.push({ questionId: q.questionId, page: renderer.pageIndex });
     }
   }
   if (revision.length > 0) {
@@ -878,6 +885,7 @@ async function buildPDF(
       revision: revision.length,
       examPrep: exam.length,
     },
+    mainPages,
   };
 }
 
@@ -1415,12 +1423,12 @@ export const renderGroupSheetPDF = action({
     );
     if (!data) throw new Error("Group sheet not found");
 
-    const { bytes, pageCount } = await buildPDF(data, "skip");
+    const { bytes, pageCount, mainPages } = await buildPDF(data, "skip");
     const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
     const storageId = await ctx.storage.store(blob);
     await ctx.runMutation(
       internal.learningEngine.pdfHelpers.setGroupSheetPreviewPdf,
-      { groupSheetId: args.groupSheetId, storageId },
+      { groupSheetId: args.groupSheetId, storageId, pageAssignments: mainPages },
     );
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Preview stored but URL unavailable");

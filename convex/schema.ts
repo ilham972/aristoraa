@@ -925,6 +925,13 @@ export default defineSchema({
     // Cached print-preview PDF (planner Sheets tab, 2026-07-17). Re-rendering
     // replaces the blob; the row keeps at most one.
     pdfPreviewStorageId: v.optional(v.id("_storage")),
+    // Exact question→A4-page mapping captured by the LAST print-preview
+    // render (sessions redesign, 2026-07-18). The Sheets tab's per-page
+    // highlight uses this when present; otherwise it estimates from crop
+    // sizes. Dies with the row on re-pick, so it can't go stale.
+    pdfPageAssignments: v.optional(
+      v.array(v.object({ questionId: v.id("questionBank"), page: v.number() })),
+    ),
   })
     .index("by_group_date", ["groupId", "date"])
     .index("by_slot_date", ["slotId", "date"]),
@@ -957,6 +964,27 @@ export default defineSchema({
     updatedAt: v.number(),
     updatedByTeacherId: v.optional(v.id("teachers")),
   }).index("by_group", ["groupId"]),
+
+  // Question routing (sessions redesign, 2026-07-18): question-level
+  // delegation per group. route="revision" = "yellow" — the question leaves
+  // the Main teaching path and reaches members through their revision
+  // queues; route="main" = "green" pin — must be TAUGHT (overrides an auto
+  // yellow). No row = green by default. source="manual" rows are founder
+  // decisions the algorithm NEVER overwrites; source="auto" rows come from
+  // unit compression ("+ unit") and may be rewritten by a later compression.
+  // One row per (group, question); banned (unticked) questions win over any
+  // route. Seen questions ignore routes entirely (taught is taught).
+  groupQuestionRoutes: defineTable({
+    groupId: v.id("groups"),
+    unitId: v.string(),
+    questionId: v.id("questionBank"),
+    route: v.union(v.literal("main"), v.literal("revision")),
+    source: v.union(v.literal("manual"), v.literal("auto")),
+    createdAt: v.number(),
+    createdByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_group_question", ["groupId", "questionId"]),
 
   // Revision-class timetable (2026-07-17): DAY-based, no times — "who comes
   // in for revision on which weekday". A row is one attendee on one day:

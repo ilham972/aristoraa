@@ -382,6 +382,11 @@ export const setGroupSheetPreviewPdf = internalMutation({
   args: {
     groupSheetId: v.id("groupSheets"),
     storageId: v.id("_storage"),
+    // Exact question→page mapping from the render — the planner's per-page
+    // highlight prefers this over the crop-size estimate.
+    pageAssignments: v.optional(
+      v.array(v.object({ questionId: v.id("questionBank"), page: v.number() })),
+    ),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.groupSheetId);
@@ -395,6 +400,9 @@ export const setGroupSheetPreviewPdf = internalMutation({
     }
     await ctx.db.patch(args.groupSheetId, {
       pdfPreviewStorageId: args.storageId,
+      ...(args.pageAssignments
+        ? { pdfPageAssignments: args.pageAssignments }
+        : {}),
     });
     return { ok: true as const };
   },

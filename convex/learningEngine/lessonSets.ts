@@ -288,7 +288,11 @@ export const reorderConceptQuestions = mutation({
     for (let i = 0; i < n; i++) {
       const q = await ctx.db.get(args.orderedQuestionIds[i]);
       if (!q) continue; // deleted mid-drag — skip, positions stay monotonic
-      const difficulty = Math.min(5, Math.floor((i * 5) / n) + 1);
+      // Decimal spread 1.0→5.0 across the arranged order (2026-07-18): the
+      // displayed number finally matches the founder's drag order instead of
+      // squashing into whole bands where neighbours looked identical.
+      const difficulty =
+        n === 1 ? 3 : Math.round((1 + (4 * i) / (n - 1)) * 10) / 10;
       await ctx.db.patch(q._id, { pickerOrder: i, difficulty });
       updated += 1;
     }
