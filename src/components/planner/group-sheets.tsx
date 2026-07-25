@@ -29,6 +29,7 @@ import {
   ExternalLink,
   FileText,
   Flag,
+  Layers,
   Loader2,
   Minus,
   MoveRight,
@@ -46,6 +47,7 @@ import { cn } from '@/lib/utils';
 import { useCachedQuery } from '@/hooks/use-cached-query';
 import { CropThumbnail } from '@/components/algorithm/sheet-preview';
 import { useUnitName, type PlannerGroupRow } from './group-plan-card';
+import { InterleaveBoard } from './interleave-board';
 import { shortLabel } from './group-coverage';
 import { CompressionDialog } from './compression-dialog';
 import { GroupLessonBuilder } from './group-lesson-builder';
@@ -293,6 +295,9 @@ export function GroupSheets({ grade }: { grade: number }) {
   const [builderUnitId, setBuilderUnitId] = useState<string | null>(null);
   // "+ unit" — unit-compression confirm sheet.
   const [compressOpen, setCompressOpen] = useState(false);
+  // Interleaving section (Phase B) — open by default while the founder is
+  // learning the new engine; collapsing it restores the pre-B sheet view.
+  const [weaveOpen, setWeaveOpen] = useState(true);
   // Day picker: assign a planned sheet to a revision class this week.
   const [assignSheet, setAssignSheet] = useState<{
     id: Id<'groupSheets'>;
@@ -699,6 +704,44 @@ export function GroupSheets({ grade }: { grade: number }) {
             <span className="font-semibold">{unitName(bookGap.nextEmpty)}</span>
             .
           </div>
+        </div>
+      )}
+
+      {/* ── The weave: the interleaving engine, made visible (2026-07-26) ─
+          Phase B moved Main-session picking from "finish one unit, then the
+          next" to an interleaved walk over an OPEN SET of units. That is a
+          big change to make invisible, so it gets its own inline section
+          here rather than another page: the founder tunes the levers, sees
+          which units each session teaches and WHY, and plans single
+          sessions by hand. Collapsible — the day-to-day view below is still
+          the sheets themselves. */}
+      {groupId && (
+        <div className="mb-4">
+          <button
+            type="button"
+            onClick={() => setWeaveOpen((v) => !v)}
+            className="w-full flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5 text-left"
+          >
+            <Layers className="w-4 h-4 text-primary shrink-0" />
+            <span className="text-[11px] font-bold uppercase tracking-wide">
+              Interleaving
+            </span>
+            <span className="text-[10px] text-muted-foreground truncate">
+              how units spread across the term
+            </span>
+            <span className="h-px flex-1 bg-border" />
+            <ChevronDown
+              className={cn(
+                'w-4 h-4 shrink-0 text-muted-foreground transition-transform',
+                weaveOpen && 'rotate-180',
+              )}
+            />
+          </button>
+          {weaveOpen && (
+            <div className="mt-2">
+              <InterleaveBoard groupId={groupId} />
+            </div>
+          )}
         </div>
       )}
 

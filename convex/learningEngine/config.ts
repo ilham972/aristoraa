@@ -165,6 +165,35 @@ export const REVISION_ROUTE_MIN_GAP_DAYS = 3;
 // in Main as the hard tail when the middle drill defaults to Revision.
 // Mirrors compression's ~20% rule — the hard tail must be TAUGHT.
 export const REVISION_HARD_TAIL_SHARE = 0.2;
+// ─── Phase B: the interleaving teaching engine (2026-07-26) ───────────────
+// Founder's model (see lib/interleaveCore.ts): GREEN is taught new in Main in
+// book order, YELLOW drills in Revision, BLUE returns to Main only AFTER its
+// concept's yellow was drilled. Units interleave instead of marching.
+//
+// Share of a Main sheet reserved for RETURNS — filled with due BLUE first,
+// then the old spiral pool as a top-up. Supersedes GROUP_SPIRAL_SHARE as the
+// composition lever (the spiral survives underneath as the fallback). Slots
+// that returns cannot fill are handed back to green, so sheets never print
+// short in the first weeks of a term when no blue is due yet.
+export const GROUP_RETURN_SHARE = 0.35;
+// How many units one Main session introduces green from. The founder teaches
+// 2–3 units per class; 2 is the default and it is overridable per session.
+export const GROUP_UNITS_PER_SESSION = 2;
+// How many units may be "in progress" at once. A unit opens only when an
+// earlier one's green runs out, and always in track order — the sequence is
+// respected, only the seams overlap. 3 keeps the plan holdable in the head.
+export const GROUP_OPEN_UNITS_CAP = 3;
+// BLUE return timing. A blue question becomes due this many days after the
+// LAST yellow of its concept is drilled in a revision class…
+export const BLUE_GAP_AFTER_YELLOW_DAYS = 3;
+// …or, for a concept that has no yellow at all, this many days after its
+// green intro. Roughly the same total distance either way, so blue timing
+// feels consistent whether or not a concept got delegated.
+export const BLUE_GAP_NO_YELLOW_DAYS = 7;
+// A unit whose term exam falls inside this window jumps the staleness queue:
+// the exam always beats elegant interleaving.
+export const UNIT_DEADLINE_URGENT_DAYS = 21;
+
 // When a unit's TEXTBOOK ladder is finished, the group ladder continues into
 // past-paper questions tagged to the same unit's concepts — capped so a fat
 // past-paper pool can't stall the march to the next unit. The daily scan

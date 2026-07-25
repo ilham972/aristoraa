@@ -32,16 +32,29 @@ import {
 } from "./derivedConcepts";
 import { masteryFromState } from "./mastery";
 import {
+  BLUE_GAP_AFTER_YELLOW_DAYS,
+  BLUE_GAP_NO_YELLOW_DAYS,
   DEFAULT_QUESTION_DIFFICULTY,
   GROUP_CRYSTALLIZE_AHEAD_DAYS,
   GROUP_MAIN_QUESTIONS_DEFAULT,
+  GROUP_OPEN_UNITS_CAP,
   GROUP_PASTPAPER_TAIL_MAX,
+  GROUP_RETURN_SHARE,
   GROUP_SKELETON_HORIZON_DAYS,
-  GROUP_SPIRAL_SHARE,
+  GROUP_UNITS_PER_SESSION,
   REVISION_HARD_TAIL_SHARE,
   REVISION_QUEUE_CAP,
   REVISION_ROUTE_MIN_GAP_DAYS,
+  UNIT_DEADLINE_URGENT_DAYS,
 } from "./config";
+import {
+  buildInterleavedPlan,
+  type BlueQ,
+  type InterleavePlan,
+  type PlanUnit,
+  type SessionOverride,
+  type YellowQ,
+} from "../lib/interleaveCore";
 import {
   buildGroupSkeleton,
   type SkeletonUnitInput,
@@ -385,6 +398,7 @@ async function groupAvgRByConcept(
 // ── Shared planning walk (query + crystallize use the same math) ──────────
 
 type GroupPlanState = {
+  groupId: Id<"groups">;
   students: Doc<"students">[];
   track: Doc<"tracks">;
   seen: Set<string>;
@@ -416,6 +430,14 @@ type GroupPlanState = {
   routeByQid: Map<string, Doc<"groupQuestionRoutes">>;
   // Questions per Main session — the group's own override, else the default.
   mainSize: number;
+  // Interleaving levers (Phase B): the group's own values, else config.ts.
+  levers: { unitsPerSession: number; openCap: number; returnShare: number };
+  // Per-date founder overrides (groupSessionPlans) — beat the levers for one
+  // session only. Read by the pure planner so board = crystallize = print.
+  sessionPlans: Map<string, SessionOverride>;
+  // Weekdays the group has REVISION capacity on (flipped slots + revision
+  // classes), 1=Mon..7=Sun. Blue timing depends on when yellow gets drilled.
+  revisionDows: Set<number>;
   // Unconsumed "carry to next Main" leftovers (oldest first): the next
   // crystallize serves these BEFORE the ladder, then stamps them consumed.
   mainCarry: Doc<"groupCarryOvers">[];
@@ -593,9 +615,49 @@ async function loadGroupPlanState(
     .filter((r) => r.target === "main" && r.consumedAt === undefined)
     .sort((a, b) => a.createdAt - b.createdAt);
 
+  // ── Interleaving levers + per-session overrides (Phase B) ──────────────
+  const levers = {
+    unitsPerSession: Math.max(
+      1,
+      Math.round(group?.interleaveUnitsPerSession ?? GROUP_UNITS_PER_SESSION),
+    ),
+    openCap: Math.max(
+      1,
+      Math.round(group?.interleaveOpenCap ?? GROUP_OPEN_UNITS_CAP),
+    ),
+    returnShare: Math.min(
+      0.9,
+      Math.max(0, group?.interleaveReturnShare ?? GROUP_RETURN_SHARE),
+    ),
+  };
+  const sessionPlans = new Map<string, SessionOverride>();
+  for (const row of await ctx.db
+    .query("groupSessionPlans")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect()) {
+    sessionPlans.set(row.date, {
+      unitsPerSession: row.unitsPerSession,
+      greenCount: row.greenCount,
+      returnCount: row.returnCount,
+      unitIds: row.unitIds,
+    });
+  }
+
+  // Revision weekdays: flipped slots + day-only revision classes (the same
+  // union groupSlotDays and the Timeline prediction serve).
+  const revisionDows = new Set<number>();
+  for (const s of groupSlots)
+    if ((s.sessionType ?? "main") === "revision") revisionDows.add(s.dayOfWeek);
+  for (const r of await ctx.db
+    .query("revisionClasses")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect())
+    revisionDows.add(r.dayOfWeek);
+
   return {
     status: "ok",
     state: {
+      groupId,
       students,
       track,
       seen,
@@ -609,6 +671,9 @@ async function loadGroupPlanState(
       routedRevision,
       routeByQid,
       mainSize,
+      levers,
+      sessionPlans,
+      revisionDows,
       mainCarry,
     },
   };
@@ -670,7 +735,7 @@ export const groupLessonPlan = query({
       sessionDates: state.sessions.map((s) => s.date),
       units,
       mainQuestionsPerSession: state.mainSize,
-      spiralShare: GROUP_SPIRAL_SHARE,
+      spiralShare: state.levers.returnShare,
       examDateByTerm: state.examDateByTerm,
       anyPastUnitStarted: currentUnitIdx > 0,
     });
@@ -708,7 +773,10 @@ export const groupLessonPlan = query({
       const mainSize = state.mainSize;
       const spiralCount =
         currentUnitIdx > 0
-          ? Math.min(mainSize - 1, Math.round(mainSize * GROUP_SPIRAL_SHARE))
+          ? Math.min(
+              mainSize - 1,
+              Math.round(mainSize * state.levers.returnShare),
+            )
           : 0;
       const newPerSession = Math.max(1, mainSize - spiralCount);
       const sessionsLeft = state.sessions.filter(
@@ -784,66 +852,254 @@ export const groupLessonPlan = query({
 
 // ── Crystallize: write question-level rows for the rolling window ─────────
 
-// Shared pick sources for crystallize + resize. Spiral pool = unseen
-// questions from units BEFORE the current one, weakest group-average memory
-// first. New queue = carry-over leftovers FIRST (already seen — printed once
-// but not done — so the ladder walk can't re-pick them), then the unseen
-// ladder from the current unit onward, in track order.
-async function buildPickQueues(
+// ── The interleaving planner (Phase B, 2026-07-26) ────────────────────────
+//
+// Replaces the old flat "walk the whole current unit, then the next" queue.
+// The pure math lives in lib/interleaveCore.ts; this function's only job is
+// to gather the group's real state into that function's input:
+//   GREEN  — unseen, unbanned, un-routed ladder questions that are NOT blue.
+//            Taken in book order; the teacher already thinned them by hand in
+//            the Curate tab, so the engine only decides where to STOP.
+//   BLUE   — sessionRole "blue". Never taught in a unit's first pass; it
+//            becomes due only after its concept's yellow was drilled.
+//   YELLOW — routedRevision. Not a Main pick at all; it's here so the planner
+//            can predict WHEN it gets drilled, which is what dates the blue.
+//   SPIRAL — the pre-Phase-B pool (unseen stragglers from closed units,
+//            weakest group memory first). Survives as the returns top-up so a
+//            sheet is never short before any blue is due.
+//
+// Every caller (crystallize, resize, add-sheet, the board query) runs THIS,
+// so what the founder previews is exactly what prints.
+type InterleaveRun = {
+  plan: InterleavePlan;
+  carryItems: Array<{ qid: string; unitId: string }>;
+  unitById: Map<string, PlanUnit>;
+  blueById: Map<string, BlueQ>;
+  /** Whole-term counts for the planner UI's banners. */
+  totals: { green: number; blue: number; yellow: number; spiral: number };
+};
+
+async function runInterleavePlan(
   ctx: ReadCtx,
   state: GroupPlanState,
   currentUnitIdx: number,
   now: number,
-): Promise<{
-  spiralPool: Array<{ qid: string; r: number; idx: number }>;
-  newQueue: Array<{ qid: string; unitId: string }>;
-  carryItems: Array<{ qid: string; unitId: string }>;
-}> {
+  sessionDates: string[],
+  opts?: { mainSize?: number },
+): Promise<InterleaveRun> {
+  const todayYmd = ymdFromMs(now);
   const avgR = await groupAvgRByConcept(ctx, state.students, now);
+
+  const conceptByQid = new Map<string, string>();
+  for (const l of state.ladders)
+    l.conceptByQuestion.forEach((cid, qid) => conceptByQid.set(qid, cid));
+
+  const isBlue = (rung: UnitLadder["ladder"][number]) =>
+    rung.sessionRole === "blue";
+  const usable = (qid: string) =>
+    !state.seen.has(qid) && !state.banned.has(qid);
+
+  // ── Units with green remaining, in track order ────────────────────────
+  const units: PlanUnit[] = [];
+  const blues: BlueQ[] = [];
+  const yellows: YellowQ[] = [];
   const spiralPool: Array<{ qid: string; r: number; idx: number }> = [];
-  for (let i = 0; i < Math.min(currentUnitIdx, state.ladders.length); i++) {
-    const l = state.ladders[i];
-    l.ladder.forEach((q, idx) => {
-      if (
-        state.seen.has(q.qid) ||
-        state.banned.has(q.qid) ||
-        state.routedRevision.has(q.qid)
-      )
+
+  state.ladders.forEach((l, i) => {
+    const green: string[] = [];
+    const conceptIds = new Set<string>();
+    l.ladder.forEach((rung, idx) => {
+      const cid = l.conceptByQuestion.get(rung.qid);
+      if (cid) conceptIds.add(cid);
+      const bookIdx = i * 10_000 + idx;
+      if (state.routedRevision.has(rung.qid)) {
+        if (usable(rung.qid))
+          yellows.push({
+            qid: rung.qid,
+            conceptIds: cid ? [cid] : [],
+            difficulty: rung.difficulty,
+            bookIdx,
+          });
         return;
-      const concept = l.conceptByQuestion.get(q.qid);
-      spiralPool.push({
-        qid: q.qid,
-        r: concept ? (avgR.get(concept) ?? 0) : 0,
-        idx: i * 10_000 + idx,
-      });
+      }
+      if (!usable(rung.qid)) return;
+      if (isBlue(rung)) {
+        blues.push({
+          qid: rung.qid,
+          unitId: l.unitId,
+          conceptIds: cid ? [cid] : [],
+          difficulty: rung.difficulty,
+          bookIdx,
+        });
+        return;
+      }
+      // Closed units' leftovers are the spiral safety net, not new teaching.
+      if (i < currentUnitIdx) {
+        spiralPool.push({
+          qid: rung.qid,
+          r: cid ? (avgR.get(cid) ?? 0) : 0,
+          idx: bookIdx,
+        });
+        return;
+      }
+      green.push(rung.qid);
     });
-  }
+    if (green.length === 0) return;
+    let sum = 0;
+    let n = 0;
+    conceptIds.forEach((cid) => {
+      sum += avgR.get(cid) ?? 0;
+      n += 1;
+    });
+    units.push({
+      unitId: l.unitId,
+      order: i,
+      green,
+      examDate:
+        termFromUnitId(l.unitId) !== null
+          ? (state.examDateByTerm[termFromUnitId(l.unitId)!] ?? null)
+          : null,
+      avgR: n > 0 ? sum / n : 0,
+    });
+  });
   spiralPool.sort((a, b) => a.r - b.r || a.idx - b.idx);
 
-  const newQueue: Array<{ qid: string; unitId: string }> = [];
-  for (let i = currentUnitIdx; i < state.ladders.length; i++) {
-    const l = state.ladders[i];
-    for (const q of l.ladder) {
-      if (
-        !state.seen.has(q.qid) &&
-        !state.banned.has(q.qid) &&
-        !state.routedRevision.has(q.qid)
-      )
-        newQueue.push({ qid: q.qid, unitId: l.unitId });
-    }
-  }
+  // Carry-overs: already seen (printed once, not finished) so the green walk
+  // can't re-pick them — they ride at the front of every sheet instead.
   const carryItems: Array<{ qid: string; unitId: string }> = [];
-  const queuedIds = new Set(newQueue.map((i) => i.qid));
+  const claimed = new Set<string>();
   for (const row of state.mainCarry) {
     for (const qid of row.questionIds) {
       const k = qid as unknown as string;
-      if (queuedIds.has(k)) continue;
-      queuedIds.add(k);
+      if (claimed.has(k)) continue;
+      claimed.add(k);
       carryItems.push({ qid: k, unitId: row.unitId });
     }
   }
-  newQueue.unshift(...carryItems);
-  return { spiralPool, newQueue, carryItems };
+
+  // Revision days across the horizon — where yellow gets drilled, which is
+  // what dates every blue return.
+  const revisionDates: string[] = [];
+  if (state.revisionDows.size > 0) {
+    for (let i = 0; i <= GROUP_SKELETON_HORIZON_DAYS; i++) {
+      const d = addDaysYmd(todayYmd, i);
+      if (state.revisionDows.has(dowFromYmd(d))) revisionDates.push(d);
+    }
+  }
+
+  const { introducedConcepts, lastGreenByUnit } = await planHistory(
+    ctx,
+    state,
+    todayYmd,
+    conceptByQid,
+  );
+
+  const plan = buildInterleavedPlan({
+    todayYmd,
+    sessionDates,
+    revisionDates,
+    units,
+    conceptByQid,
+    blues,
+    yellows,
+    spiral: spiralPool.map((s) => s.qid),
+    carry: carryItems.map((c) => c.qid),
+    introducedConcepts,
+    lastGreenByUnit,
+    mainSize: Math.max(1, Math.round(opts?.mainSize ?? state.mainSize)),
+    returnShare: state.levers.returnShare,
+    unitsPerSession: state.levers.unitsPerSession,
+    openCap: state.levers.openCap,
+    blueGapAfterYellow: BLUE_GAP_AFTER_YELLOW_DAYS,
+    blueGapNoYellow: BLUE_GAP_NO_YELLOW_DAYS,
+    revisionMinGapDays: REVISION_ROUTE_MIN_GAP_DAYS,
+    revisionCapPerDay: REVISION_QUEUE_CAP,
+    deadlineUrgentDays: UNIT_DEADLINE_URGENT_DAYS,
+    overrides: state.sessionPlans,
+  });
+
+  return {
+    plan,
+    carryItems,
+    unitById: new Map(units.map((u) => [u.unitId, u])),
+    blueById: new Map(blues.map((b) => [b.qid, b])),
+    totals: {
+      green: units.reduce((a, u) => a + u.green.length, 0),
+      blue: blues.length,
+      yellow: yellows.length,
+      spiral: spiralPool.length,
+    },
+  };
+}
+
+// Real history feeding the plan: when each concept was first introduced, and
+// when each unit last received green. Planned (future) rows count — that is
+// the point: the forecast has to see its own decisions.
+async function planHistory(
+  ctx: ReadCtx,
+  state: GroupPlanState,
+  todayYmd: string,
+  conceptByQid: Map<string, string>,
+): Promise<{
+  introducedConcepts: Map<string, string>;
+  lastGreenByUnit: Map<string, string>;
+}> {
+  const introducedConcepts = new Map<string, string>();
+  const lastGreenByUnit = new Map<string, string>();
+  const unitOfQid = new Map<string, string>();
+  for (const l of state.ladders)
+    for (const rung of l.ladder) unitOfQid.set(rung.qid, l.unitId);
+
+  const rows = (
+    await ctx.db
+      .query("groupSheets")
+      .withIndex("by_group_date", (q) => q.eq("groupId", state.groupId))
+      .collect()
+  ).sort((a, b) => a.date.localeCompare(b.date));
+
+  for (const row of rows) {
+    for (const qid of row.newQuestionIds) {
+      const k = qid as unknown as string;
+      const cid = conceptByQid.get(k);
+      if (cid) {
+        const cur = introducedConcepts.get(cid);
+        if (!cur || row.date < cur) introducedConcepts.set(cid, row.date);
+      }
+      const unitId = unitOfQid.get(k);
+      if (unitId) {
+        const cur = lastGreenByUnit.get(unitId);
+        if (!cur || row.date > cur) lastGreenByUnit.set(unitId, row.date);
+      }
+    }
+    for (const qid of row.spiralQuestionIds) {
+      const cid = conceptByQid.get(qid as unknown as string);
+      if (!cid) continue;
+      const cur = introducedConcepts.get(cid);
+      if (!cur || row.date < cur) introducedConcepts.set(cid, row.date);
+    }
+  }
+  // A concept the roster met only through personal history (no group sheet)
+  // counts as introduced TODAY — earlier than any future planned intro.
+  for (const l of state.ladders) {
+    for (const rung of l.ladder) {
+      if (!state.seen.has(rung.qid)) continue;
+      const cid = l.conceptByQuestion.get(rung.qid);
+      if (!cid) continue;
+      const cur = introducedConcepts.get(cid);
+      if (!cur || todayYmd < cur) introducedConcepts.set(cid, todayYmd);
+    }
+  }
+  return { introducedConcepts, lastGreenByUnit };
+}
+
+/** Flatten one planned session into the two stored arrays + metadata. */
+function sessionToRow(s: InterleavePlan["sessions"][number]) {
+  return {
+    newQuestionIds: [...s.carryPicks, ...s.greenPicks] as unknown as Id<"questionBank">[],
+    spiralQuestionIds: [...s.bluePicks, ...s.spiralPicks] as unknown as Id<"questionBank">[],
+    blueQuestionIds: s.bluePicks as unknown as Id<"questionBank">[],
+    unitIds: s.unitIds,
+  };
 }
 
 
@@ -901,53 +1157,35 @@ async function crystallizeCore(
         unplannedSessions: 0,
       };
 
-    const { spiralPool, newQueue, carryItems } = await buildPickQueues(
+    // ONE interleaved plan over every un-planned session in the window: the
+    // walk has to see the whole horizon at once, because a unit's staleness
+    // on session 5 depends on what sessions 1–4 taught.
+    const run = await runInterleavePlan(
       ctx,
       state,
       currentUnitIdx,
       now,
+      targets.map((t) => t.date),
     );
-    let spiralCursor = 0;
-    let newCursor = 0;
+    const slotByDate = new Map(targets.map((t) => [t.date, t.slotId]));
 
-    const mainSize = state.mainSize;
     let written = 0;
-    let spiralActive = currentUnitIdx > 0;
-    for (const s of targets) {
-      if (newCursor >= newQueue.length && spiralCursor >= spiralPool.length)
+    let carryPlaced = 0;
+    for (const s of run.plan.sessions) {
+      const row = sessionToRow(s);
+      if (row.newQuestionIds.length === 0 && row.spiralQuestionIds.length === 0)
         break; // book fully consumed
-      const spiralCount = spiralActive
-        ? Math.min(mainSize - 1, Math.round(mainSize * GROUP_SPIRAL_SHARE))
-        : 0;
-      const newCount = mainSize - spiralCount;
-
-      const newPicks: Id<"questionBank">[] = [];
-      let primaryUnitId: string | null = null;
-      let lastUnitId: string | null = null;
-      while (newPicks.length < newCount && newCursor < newQueue.length) {
-        const item = newQueue[newCursor++];
-        newPicks.push(item.qid as unknown as Id<"questionBank">);
-        if (primaryUnitId === null) primaryUnitId = item.unitId;
-        if (lastUnitId !== null && lastUnitId !== item.unitId) {
-          spiralActive = true; // crossed a unit boundary mid-window
-        }
-        lastUnitId = item.unitId;
-      }
-      const spiralPicks: Id<"questionBank">[] = [];
-      while (spiralPicks.length < spiralCount && spiralCursor < spiralPool.length) {
-        spiralPicks.push(
-          spiralPool[spiralCursor++].qid as unknown as Id<"questionBank">,
-        );
-      }
-      if (newPicks.length === 0 && spiralPicks.length === 0) break;
-
+      carryPlaced += s.carryPicks.length;
       await ctx.db.insert("groupSheets", {
         groupId,
-        slotId: s.slotId,
+        slotId: slotByDate.get(s.date),
         date: s.date,
-        unitId: primaryUnitId ?? state.ladders[currentUnitIdx]?.unitId ?? "",
-        newQuestionIds: newPicks,
-        spiralQuestionIds: spiralPicks,
+        unitId:
+          s.unitIds[0] ?? state.ladders[currentUnitIdx]?.unitId ?? "",
+        newQuestionIds: row.newQuestionIds,
+        spiralQuestionIds: row.spiralQuestionIds,
+        unitIds: row.unitIds,
+        blueQuestionIds: row.blueQuestionIds,
         status: "planned",
         createdAt: now,
         createdByTeacherId: teacherId ?? undefined,
@@ -956,11 +1194,11 @@ async function crystallizeCore(
     }
 
     // Consume the carry rows whose questions just landed on sheets. Carry
-    // items sit at the FRONT of the queue, so the first `newCursor` items
-    // cover them in row order; a partially-placed row keeps its unplaced
-    // remainder for the next crystallize.
-    if (written > 0 && carryItems.length > 0) {
-      const placed = Math.min(newCursor, carryItems.length);
+    // items ride at the FRONT of every sheet, so the first `carryPlaced`
+    // items cover them in row order; a partially-placed row keeps its
+    // unplaced remainder for the next crystallize.
+    if (written > 0 && run.carryItems.length > 0) {
+      const placed = Math.min(carryPlaced, run.carryItems.length);
       let covered = 0;
       for (const row of state.mainCarry) {
         if (covered >= placed) break;
@@ -978,11 +1216,13 @@ async function crystallizeCore(
     // The founder must know when the run stopped because the QUESTION BANK
     // ran dry (book entry hasn't reached the later units) rather than
     // because the term is fully planned — the old toast lied "whole term
-    // planned" in exactly that case (2026-07-15 bug).
+    // planned" in exactly that case (2026-07-15 bug). Blue that is merely
+    // WAITING on its yellow is not exhaustion: there is material, it just
+    // isn't due yet.
     const exhausted =
       written < targets.length &&
-      newCursor >= newQueue.length &&
-      spiralCursor >= spiralPool.length;
+      run.plan.greenLeftover === 0 &&
+      run.plan.blueWaiting.length === 0;
     return {
       status: "ok" as const,
       written,
@@ -1101,6 +1341,318 @@ export const setGroupMainQuestions = mutation({
   },
 });
 
+// ── Interleaving controls (Phase B, 2026-07-26) ───────────────────────────
+
+// Group-level interleaving levers. Every one is optional; passing null clears
+// it back to the config.ts default. Changing a lever does NOT rewrite planned
+// sheets on its own — the founder runs "Re-plan" (atomic) to apply it, so a
+// stray tap can never silently reshuffle a term.
+export const setGroupInterleaveLevers = mutation({
+  args: {
+    groupId: v.id("groups"),
+    unitsPerSession: v.optional(v.union(v.number(), v.null())),
+    openCap: v.optional(v.union(v.number(), v.null())),
+    returnShare: v.optional(v.union(v.number(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const group = await ctx.db.get(args.groupId);
+    if (!group) throw new Error("Group not found");
+    const patch: Record<string, number | undefined> = {};
+    if (args.unitsPerSession !== undefined)
+      patch.interleaveUnitsPerSession =
+        args.unitsPerSession === null
+          ? undefined
+          : Math.min(6, Math.max(1, Math.round(args.unitsPerSession)));
+    if (args.openCap !== undefined)
+      patch.interleaveOpenCap =
+        args.openCap === null
+          ? undefined
+          : Math.min(8, Math.max(1, Math.round(args.openCap)));
+    if (args.returnShare !== undefined)
+      patch.interleaveReturnShare =
+        args.returnShare === null
+          ? undefined
+          : Math.min(0.9, Math.max(0, args.returnShare));
+    await ctx.db.patch(args.groupId, patch);
+    return { ok: true };
+  },
+});
+
+// Per-session override — the founder's "before the class" plan for ONE date.
+// Fields left undefined fall back to the group lever; passing null clears a
+// single field. When every field ends up empty the row is deleted, so the
+// date returns to the fully automatic plan.
+export const setSessionPlanOverride = mutation({
+  args: {
+    groupId: v.id("groups"),
+    date: v.string(),
+    unitsPerSession: v.optional(v.union(v.number(), v.null())),
+    greenCount: v.optional(v.union(v.number(), v.null())),
+    returnCount: v.optional(v.union(v.number(), v.null())),
+    unitIds: v.optional(v.union(v.array(v.string()), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const teacherId = await resolveTeacherId(ctx);
+    const existing = (
+      await ctx.db
+        .query("groupSessionPlans")
+        .withIndex("by_group_date", (q) =>
+          q.eq("groupId", args.groupId).eq("date", args.date),
+        )
+        .collect()
+    )[0];
+
+    const pick = <T>(
+      incoming: T | null | undefined,
+      current: T | undefined,
+    ): T | undefined =>
+      incoming === undefined ? current : incoming === null ? undefined : incoming;
+
+    const next = {
+      unitsPerSession: pick(
+        args.unitsPerSession === undefined || args.unitsPerSession === null
+          ? args.unitsPerSession
+          : Math.min(6, Math.max(1, Math.round(args.unitsPerSession))),
+        existing?.unitsPerSession,
+      ),
+      greenCount: pick(
+        args.greenCount === undefined || args.greenCount === null
+          ? args.greenCount
+          : Math.max(0, Math.round(args.greenCount)),
+        existing?.greenCount,
+      ),
+      returnCount: pick(
+        args.returnCount === undefined || args.returnCount === null
+          ? args.returnCount
+          : Math.max(0, Math.round(args.returnCount)),
+        existing?.returnCount,
+      ),
+      unitIds: pick(
+        args.unitIds === undefined || args.unitIds === null
+          ? args.unitIds
+          : args.unitIds.length === 0
+            ? null
+            : args.unitIds,
+        existing?.unitIds,
+      ),
+    };
+
+    const empty =
+      next.unitsPerSession === undefined &&
+      next.greenCount === undefined &&
+      next.returnCount === undefined &&
+      (next.unitIds === undefined || next.unitIds.length === 0);
+
+    if (empty) {
+      if (existing) await ctx.db.delete(existing._id);
+      return { cleared: true };
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...next,
+        updatedAt: Date.now(),
+        updatedByTeacherId: teacherId ?? undefined,
+      });
+    } else {
+      await ctx.db.insert("groupSessionPlans", {
+        groupId: args.groupId,
+        date: args.date,
+        ...next,
+        updatedAt: Date.now(),
+        updatedByTeacherId: teacherId ?? undefined,
+      });
+    }
+    return { cleared: false };
+  },
+});
+
+// THE glass box (founder, 2026-07-26: "the algorithm becomes a black box, I
+// can't tune it"). One query that returns the whole interleaved term as the
+// planner UI needs it: which units are open, which session teaches which
+// units and WHY, how much green/blue/spiral each sheet holds, and where blue
+// is waiting on its yellow. Runs the SAME pure planner as crystallize, so
+// what this board draws is exactly what will print.
+export const groupInterleaveBoard = query({
+  args: { groupId: v.id("groups"), weeks: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const now = Date.now();
+    const todayYmd = ymdFromMs(now);
+    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
+    if (loaded.status !== "ok") return { status: loaded.status };
+    const state = loaded.state;
+    const { currentUnitIdx } = skeletonInputs(state);
+
+    const horizonDays = Math.min(
+      GROUP_SKELETON_HORIZON_DAYS,
+      Math.max(7, Math.round((args.weeks ?? 10) * 7)),
+    );
+    const lastYmd = addDaysYmd(todayYmd, horizonDays);
+
+    // Already-planned rows are the truth for their own dates; the planner
+    // fills the REST. Showing both in one rail is the whole point: the
+    // founder sees the committed part and the projection as one picture.
+    const plannedByDate = new Map(
+      state.crystallized
+        .filter((c) => c.date <= lastYmd)
+        .map((c) => [c.date, c]),
+    );
+    const horizonSessions = state.sessions.filter((s) => s.date <= lastYmd);
+    const openDates = horizonSessions
+      .filter((s) => !plannedByDate.has(s.date))
+      .map((s) => s.date);
+
+    const run = await runInterleavePlan(
+      ctx,
+      state,
+      currentUnitIdx,
+      now,
+      openDates,
+    );
+    const projByDate = new Map(run.plan.sessions.map((s) => [s.date, s]));
+
+    // Unit metadata for the board's rows.
+    const unitStats = state.ladders.map((l, i) => {
+      let green = 0;
+      let blue = 0;
+      let yellow = 0;
+      let done = 0;
+      let total = 0;
+      for (const rung of l.ladder) {
+        if (state.banned.has(rung.qid)) continue;
+        total += 1;
+        if (state.seen.has(rung.qid)) {
+          done += 1;
+          continue;
+        }
+        if (state.routedRevision.has(rung.qid)) yellow += 1;
+        else if (rung.sessionRole === "blue") blue += 1;
+        else green += 1;
+      }
+      const term = termFromUnitId(l.unitId);
+      return {
+        unitId: l.unitId,
+        order: i,
+        term,
+        examDate: term !== null ? (state.examDateByTerm[term] ?? null) : null,
+        greenLeft: green,
+        blueLeft: blue,
+        yellowLeft: yellow,
+        done,
+        total,
+        avgR: run.unitById.get(l.unitId)?.avgR ?? null,
+        preTaught: state.preTaughtUnitIds.has(l.unitId),
+      };
+    });
+
+    const unitOfQid = new Map<string, string>();
+    for (const l of state.ladders)
+      for (const rung of l.ladder) unitOfQid.set(rung.qid, l.unitId);
+
+    const sessions = horizonSessions.map((s) => {
+      const committed = plannedByDate.get(s.date);
+      if (committed) {
+        const blueIds = new Set(
+          (committed.blueQuestionIds ?? []).map((q) => q as unknown as string),
+        );
+        const unitIds =
+          committed.unitIds ??
+          Array.from(
+            new Set(
+              committed.newQuestionIds
+                .map((q) => unitOfQid.get(q as unknown as string))
+                .filter((u): u is string => u !== undefined),
+            ),
+          );
+        return {
+          date: s.date,
+          source: "planned" as const,
+          sheetId: committed._id,
+          status: committed.status,
+          unitIds,
+          choices: unitIds.map((unitId) => ({
+            unitId,
+            reason: "stale" as const,
+            daysSinceGreen: null as number | null,
+            greenCount: committed.newQuestionIds.filter(
+              (q) => unitOfQid.get(q as unknown as string) === unitId,
+            ).length,
+          })),
+          greenCount: committed.newQuestionIds.length,
+          blueCount: blueIds.size,
+          spiralCount: committed.spiralQuestionIds.length - blueIds.size,
+          carryCount: 0,
+          blueBacklog: 0,
+          openUnitIds: [] as string[],
+        };
+      }
+      const p = projByDate.get(s.date);
+      return {
+        date: s.date,
+        source: "projected" as const,
+        sheetId: null,
+        status: null as string | null,
+        unitIds: p?.unitIds ?? [],
+        choices:
+          p?.choices.map((c) => ({
+            unitId: c.unitId,
+            reason: c.reason,
+            daysSinceGreen: c.daysSinceGreen,
+            greenCount: c.greenCount,
+          })) ?? [],
+        greenCount: p?.greenPicks.length ?? 0,
+        blueCount: p?.bluePicks.length ?? 0,
+        spiralCount: p?.spiralPicks.length ?? 0,
+        carryCount: p?.carryPicks.length ?? 0,
+        blueBacklog: p?.blueBacklog ?? 0,
+        openUnitIds: p?.openUnitIds ?? [],
+      };
+    });
+
+    // Blue held back because its yellow hasn't been drilled — the honest
+    // counterpart to the coverage number. Grouped by unit for the UI.
+    const waitingByUnit = new Map<string, number>();
+    for (const qid of run.plan.blueWaiting) {
+      const u = run.blueById.get(qid)?.unitId ?? unitOfQid.get(qid);
+      if (!u) continue;
+      waitingByUnit.set(u, (waitingByUnit.get(u) ?? 0) + 1);
+    }
+
+    return {
+      status: "ok" as const,
+      todayYmd,
+      trackName: state.track.name,
+      mainSize: state.mainSize,
+      levers: state.levers,
+      defaults: {
+        unitsPerSession: GROUP_UNITS_PER_SESSION,
+        openCap: GROUP_OPEN_UNITS_CAP,
+        returnShare: GROUP_RETURN_SHARE,
+      },
+      blueGapAfterYellow: BLUE_GAP_AFTER_YELLOW_DAYS,
+      blueGapNoYellow: BLUE_GAP_NO_YELLOW_DAYS,
+      hasRevisionCapacity: state.revisionDows.size > 0,
+      units: unitStats,
+      sessions,
+      overrides: Array.from(state.sessionPlans.entries()).map(([date, o]) => ({
+        date,
+        ...o,
+      })),
+      totals: run.totals,
+      greenLeftover: run.plan.greenLeftover,
+      blueWaiting: Array.from(waitingByUnit.entries()).map(
+        ([unitId, count]) => ({ unitId, count }),
+      ),
+      blueWaitingTotal: run.plan.blueWaiting.length,
+    };
+  },
+});
+
 // Group starting point (2026-07-15): mark every track unit up to and
 // including `throughUnitId` as "taught before the app", clearing any marks
 // beyond it — one tap sets where a cold-started group actually begins.
@@ -1189,48 +1741,36 @@ export const resizePlanned = mutation({
     if (loaded.status !== "ok") return { status: loaded.status };
     const state = loaded.state;
     const { currentUnitIdx } = skeletonInputs(state);
-    const { spiralPool, newQueue, carryItems } = await buildPickQueues(
-      ctx,
-      state,
-      currentUnitIdx,
-      now,
-    );
-
-    const spiralCount =
-      currentUnitIdx > 0
-        ? Math.min(size - 1, Math.round(size * GROUP_SPIRAL_SHARE))
-        : 0;
-    const newCount = size - spiralCount;
-    const newPicks: Id<"questionBank">[] = [];
-    let primaryUnitId: string | null = null;
-    let newCursor = 0;
-    while (newPicks.length < newCount && newCursor < newQueue.length) {
-      const item = newQueue[newCursor++];
-      newPicks.push(item.qid as unknown as Id<"questionBank">);
-      if (primaryUnitId === null) primaryUnitId = item.unitId;
-    }
-    const spiralPicks: Id<"questionBank">[] = [];
-    let spiralCursor = 0;
-    while (spiralPicks.length < spiralCount && spiralCursor < spiralPool.length) {
-      spiralPicks.push(spiralPool[spiralCursor++].qid as unknown as Id<"questionBank">);
-    }
-    if (newPicks.length === 0 && spiralPicks.length === 0) {
+    const run = await runInterleavePlan(ctx, state, currentUnitIdx, now, [
+      row.date,
+    ], { mainSize: size });
+    const planned = run.plan.sessions[0];
+    if (
+      !planned ||
+      (planned.carryPicks.length === 0 &&
+        planned.greenPicks.length === 0 &&
+        planned.bluePicks.length === 0 &&
+        planned.spiralPicks.length === 0)
+    ) {
       return { status: "ok" as const, resized: false };
     }
+    const built = sessionToRow(planned);
     await ctx.db.insert("groupSheets", {
       groupId: row.groupId,
       slotId: row.slotId,
       date: row.date,
-      unitId: primaryUnitId ?? row.unitId,
-      newQuestionIds: newPicks,
-      spiralQuestionIds: spiralPicks,
+      unitId: planned.unitIds[0] ?? row.unitId,
+      newQuestionIds: built.newQuestionIds,
+      spiralQuestionIds: built.spiralQuestionIds,
+      unitIds: built.unitIds,
+      blueQuestionIds: built.blueQuestionIds,
       status: "planned",
       createdAt: now,
       createdByTeacherId: teacherId ?? undefined,
     });
     // Consume the carry rows just re-absorbed (same accounting as crystallize).
-    if (carryItems.length > 0) {
-      const placed = Math.min(newCursor, carryItems.length);
+    if (run.carryItems.length > 0) {
+      const placed = Math.min(planned.carryPicks.length, run.carryItems.length);
       let covered = 0;
       for (const c of state.mainCarry) {
         if (covered >= placed) break;
@@ -1295,54 +1835,36 @@ export const addPlannedSheet = mutation({
     if (loaded.status !== "ok") return { status: loaded.status };
     const state = loaded.state;
     const { currentUnitIdx } = skeletonInputs(state);
-    const { spiralPool, newQueue, carryItems } = await buildPickQueues(
-      ctx,
-      state,
-      currentUnitIdx,
-      now,
-    );
-
-    const size = state.mainSize;
-    const spiralCount =
-      currentUnitIdx > 0
-        ? Math.min(size - 1, Math.round(size * GROUP_SPIRAL_SHARE))
-        : 0;
-    const newCount = size - spiralCount;
-    const newPicks: Id<"questionBank">[] = [];
-    let primaryUnitId: string | null = null;
-    let newCursor = 0;
-    while (newPicks.length < newCount && newCursor < newQueue.length) {
-      const item = newQueue[newCursor++];
-      newPicks.push(item.qid as unknown as Id<"questionBank">);
-      if (primaryUnitId === null) primaryUnitId = item.unitId;
-    }
-    const spiralPicks: Id<"questionBank">[] = [];
-    let spiralCursor = 0;
-    while (
-      spiralPicks.length < spiralCount &&
-      spiralCursor < spiralPool.length
-    ) {
-      spiralPicks.push(
-        spiralPool[spiralCursor++].qid as unknown as Id<"questionBank">,
-      );
-    }
-    if (newPicks.length === 0 && spiralPicks.length === 0)
+    const run = await runInterleavePlan(ctx, state, currentUnitIdx, now, [
+      args.date,
+    ]);
+    const planned = run.plan.sessions[0];
+    const built = planned ? sessionToRow(planned) : null;
+    if (
+      !planned ||
+      !built ||
+      (built.newQuestionIds.length === 0 &&
+        built.spiralQuestionIds.length === 0)
+    )
       return { status: "exhausted" as const };
 
     await ctx.db.insert("groupSheets", {
       groupId: args.groupId,
       slotId,
       date: args.date,
-      unitId: primaryUnitId ?? state.ladders[currentUnitIdx]?.unitId ?? "",
-      newQuestionIds: newPicks,
-      spiralQuestionIds: spiralPicks,
+      unitId:
+        planned.unitIds[0] ?? state.ladders[currentUnitIdx]?.unitId ?? "",
+      newQuestionIds: built.newQuestionIds,
+      spiralQuestionIds: built.spiralQuestionIds,
+      unitIds: built.unitIds,
+      blueQuestionIds: built.blueQuestionIds,
       status: "planned",
       createdAt: now,
       createdByTeacherId: teacherId ?? undefined,
     });
     // Consume the carry rows just absorbed (same accounting as crystallize).
-    if (carryItems.length > 0) {
-      const placed = Math.min(newCursor, carryItems.length);
+    if (run.carryItems.length > 0) {
+      const placed = Math.min(planned.carryPicks.length, run.carryItems.length);
       let covered = 0;
       for (const c of state.mainCarry) {
         if (covered >= placed) break;
@@ -1358,7 +1880,8 @@ export const addPlannedSheet = mutation({
     }
     return {
       status: "ok" as const,
-      written: newPicks.length + spiralPicks.length,
+      written:
+        built.newQuestionIds.length + built.spiralQuestionIds.length,
     };
   },
 });
@@ -1808,7 +2331,7 @@ export const groupTermCalendar = query({
       sessionDates: state.sessions.map((s) => s.date),
       units,
       mainQuestionsPerSession: state.mainSize,
-      spiralShare: GROUP_SPIRAL_SHARE,
+      spiralShare: state.levers.returnShare,
       examDateByTerm: state.examDateByTerm,
       anyPastUnitStarted: currentUnitIdx > 0,
     });

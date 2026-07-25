@@ -168,6 +168,16 @@ export default defineSchema({
     // per group session. Unset ⇒ GROUP_MAIN_QUESTIONS_DEFAULT. The planner
     // lever for "this group can take more/less per class".
     mainQuestionsPerSession: v.optional(v.number()),
+    // ── Interleaving levers (Phase B, 2026-07-26) ────────────────────────
+    // Group-level defaults for the interleaving engine; unset ⇒ the config.ts
+    // constants. Per-session overrides live in groupSessionPlans and beat
+    // these for one date only.
+    //   unitsPerSession — how many units a Main session teaches green from
+    //   openUnitsCap    — how many units may be in progress at once
+    //   returnShare     — share of the sheet reserved for BLUE + spiral (0..1)
+    interleaveUnitsPerSession: v.optional(v.number()),
+    interleaveOpenCap: v.optional(v.number()),
+    interleaveReturnShare: v.optional(v.number()),
     targetMarksMin: v.optional(v.number()),
     targetMarksMax: v.optional(v.number()),
     // Explicit colour palette index, set when the user taps the dialog's colour
@@ -931,9 +941,20 @@ export default defineSchema({
     slotId: v.optional(v.id("scheduleSlots")),
     date: v.string(),                                 // YYYY-MM-DD session date
     unitId: v.string(),                               // primary (first) unit
-    newQuestionIds: v.array(v.id("questionBank")),    // current-unit ladder picks
-    spiralQuestionIds: v.array(v.id("questionBank")), // past-unit review picks
+    newQuestionIds: v.array(v.id("questionBank")),    // carry-overs + GREEN picks
+    spiralQuestionIds: v.array(v.id("questionBank")), // the RETURNS block
     status: v.string(),
+    // ── Interleaving engine (Phase B, 2026-07-26) ────────────────────────
+    // The two arrays above keep their old meaning so pdf.ts, materialize,
+    // scoring and carry-over accounting are untouched. These optional fields
+    // describe the COMPOSITION for the planner UI:
+    //   unitIds  — every unit contributing green, in sheet order (a session
+    //              now teaches 2–3 units; `unitId` stays the first of them).
+    //   blueQuestionIds — the BLUE subset of spiralQuestionIds, listed first
+    //              inside it. The remainder is old-style spiral top-up.
+    // Absent on rows written before Phase B; readers must tolerate that.
+    unitIds: v.optional(v.array(v.string())),
+    blueQuestionIds: v.optional(v.array(v.id("questionBank"))),
     createdAt: v.number(),
     createdByTeacherId: v.optional(v.id("teachers")),
     materializedAt: v.optional(v.number()),
@@ -951,6 +972,28 @@ export default defineSchema({
   })
     .index("by_group_date", ["groupId", "date"])
     .index("by_slot_date", ["slotId", "date"]),
+
+  // Per-session plan overrides (interleaving engine, Phase B, 2026-07-26).
+  // The founder's "before the class" lever: for ONE date, say how many units
+  // to teach, how much green to cover (the truncate point), how many returns
+  // to reserve, and optionally WHICH units to teach (pinned — beats the
+  // staleness ranking). Every field is optional: an unset field falls back to
+  // the group lever, then to config.ts. Deleting the row restores the
+  // automatic plan. Read by the pure planner, so the board preview, the
+  // crystallizer and the printed sheet always agree.
+  // One row per (group, date).
+  groupSessionPlans: defineTable({
+    groupId: v.id("groups"),
+    date: v.string(), // YYYY-MM-DD
+    unitsPerSession: v.optional(v.number()),
+    greenCount: v.optional(v.number()),
+    returnCount: v.optional(v.number()),
+    unitIds: v.optional(v.array(v.string())), // pinned units
+    updatedAt: v.number(),
+    updatedByTeacherId: v.optional(v.id("teachers")),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_group_date", ["groupId", "date"]),
 
   // Group starting point (2026-07-15): units the group covered BEFORE the
   // app existed — cold-started groups otherwise restart the term walk at

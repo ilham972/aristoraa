@@ -504,7 +504,48 @@ because Z.
   still wins for its one group; no-revision-capacity guard still keeps yellow
   in Main. PHASE A only — blue currently behaves as Main (taught, not yet
   spaced); the interleaving engine (thin per-concept green, blue spaced back
-  after yellow, multi-unit sessions, skip-tail-with-gap) is Phase B, not built.
+  after yellow, multi-unit sessions, skip-tail-with-gap) is Phase B, SHIPPED
+  2026-07-26 — see next entry.
+- **PHASE B: the interleaving engine** (2026-07-26, `lib/interleaveCore.ts`,
+  pure+tested) — Main picking stopped being "finish this unit, then the next".
+  Founder's five rulings, each rejecting my proposed default where noted:
+  (1) GREEN IS NOT THINNED BY THE ALGORITHM — I proposed "first 2 leaves per
+  concept"; founder said the Curate tab already thinned it, so the engine
+  takes the WHOLE green run in book order and only decides where to STOP.
+  Multi-unit sessions therefore emerge naturally when green runs dry mid-sheet.
+  (2) BLUE ANCHORS ON YELLOW, not on the intro: due = last yellow of its
+  concept drilled + `BLUE_GAP_AFTER_YELLOW_DAYS` (3); a concept with no yellow
+  falls back to intro + `BLUE_GAP_NO_YELLOW_DAYS` (7). If the yellow never
+  gets a revision day the blue WAITS FOREVER — founder explicitly accepted
+  this ("yellow is more important than blue"). Self-correcting: blue can never
+  overtake yellow.
+  (3) BLUE INHERITS THE SPIRAL'S BUDGET — one "returns" share
+  (`GROUP_RETURN_SHARE` 0.35) filled blue-first, old spiral pool as top-up.
+  Overflowing blue QUEUES (oldest-due first) rather than eating green, so new
+  teaching never stalls; the backlog is surfaced, not hidden. Return slots
+  nothing can fill are handed back to green — sheets never print short.
+  (4) UNIT-LEVEL SPACED REPETITION, not "continue the same 2 units" — founder
+  rejected my truncate-by-target rule: "if I start another unit I can teach
+  all units parallel, otherwise early units finish very early so students
+  forget them; why can't we use spaced repetition for this also". So: an OPEN
+  SET of at most `GROUP_OPEN_UNITS_CAP` (3) units, a unit opens only when an
+  earlier one's green runs out (track order preserved, seams overlap), and
+  each session teaches `GROUP_UNITS_PER_SESSION` (2) of them ranked by
+  staleness → weakest group-avg R → track order. Deadline override: a unit
+  whose exam is inside `UNIT_DEADLINE_URGENT_DAYS` (21) jumps the queue.
+  Accepted trade-off: 3 units at 70% instead of 2 at 100% + 1 untouched —
+  right for exams that sample every unit.
+  (5) NO PLAN DOC, NO SEPARATE PAGE. Founder: "the algorithm becomes a black
+  box, I can't tune it and can't upgrade it in future" → the engine ships WITH
+  its glass box, the "Interleaving" section in the planner Sheets tab
+  (`interleave-board.tsx` + `groupInterleaveBoard`): unit×session WEAVE grid
+  (visible interleaving, visible cold gaps), per-session why-chips (rested Nd
+  / exam close / first time / pinned), group levers, and per-date overrides
+  (`groupSessionPlans`: unitsPerSession, greenCount = the truncate point,
+  returnCount, pinned unitIds) that beat the ranking and survive re-planning.
+  Board, crystallize, resize and add-sheet ALL call the same pure planner →
+  preview = print. `groupSheets.unitIds` + `blueQuestionIds` are additive; the
+  two legacy arrays keep their meaning so pdf/scoring/carry-over are untouched.
 - **One shared Lesson Builder** (2026-07-18) — the planner's group curation
   dialog was a worse clone of the session builder; replaced by group MODE of
   the same screen (`group-lesson-builder.tsx` + shared

@@ -30,6 +30,8 @@ anytime. Effort S/M/L · Impact 1–5 · sorted by impact.
 | 10 | **Cleanup phase from legacy-map.md** (~3k+ dead lines + 5 dead deps). Cheap insurance against future confusion; do after #3 retires the transition rows. | codebase health | Scale-readiness | S | 2 |
 | 11 | **Finish planning-mode wiring.** Week grid, EditGroupDialog, and the Group/organize board are all branch-aware now (2026-06-19). REMAINING: per-slot teacher editing in the draft, and a draft-vs-live diff preview before Merge. | scheduling | Teacher efficiency | S | 2 |
 
+| 12 | **Tune the interleaving engine from real data** (Phase B shipped 2026-07-26). The five constants (GROUP_OPEN_UNITS_CAP, GROUP_UNITS_PER_SESSION, GROUP_RETURN_SHARE, BLUE_GAP_AFTER_YELLOW_DAYS, BLUE_GAP_NO_YELLOW_DAYS) were chosen by reasoning, not evidence. Once a term has run, compare exam results and blue-backlog size across groups with different levers. Also worth watching: whether the "blue waits forever if its yellow is never drilled" rule starves real questions in practice — the board counts them, so the data will be there. | learning engine | Mission: A within predicted time | M | 3 |
+
 ## Standing guidance for ranking
 The learning engine is the priority compass (purpose.md): engine ideas
 outrank everything at equal impact. Brand-trust features (parent-facing

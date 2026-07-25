@@ -55,6 +55,7 @@ import type * as lib_consolidationCore from "../lib/consolidationCore.js";
 import type * as lib_coverageForecastCore from "../lib/coverageForecastCore.js";
 import type * as lib_draftReconcile from "../lib/draftReconcile.js";
 import type * as lib_groupPlanCore from "../lib/groupPlanCore.js";
+import type * as lib_interleaveCore from "../lib/interleaveCore.js";
 import type * as lib_naming from "../lib/naming.js";
 import type * as lib_offDays from "../lib/offDays.js";
 import type * as lib_paperClasses from "../lib/paperClasses.js";
@@ -171,6 +172,7 @@ declare const fullApi: ApiFromModules<{
   "lib/coverageForecastCore": typeof lib_coverageForecastCore;
   "lib/draftReconcile": typeof lib_draftReconcile;
   "lib/groupPlanCore": typeof lib_groupPlanCore;
+  "lib/interleaveCore": typeof lib_interleaveCore;
   "lib/naming": typeof lib_naming;
   "lib/offDays": typeof lib_offDays;
   "lib/paperClasses": typeof lib_paperClasses;
