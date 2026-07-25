@@ -34,9 +34,9 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
 ## /settings + crop tools
 - `/settings` — app config (`convex/settings.ts`), textbook/past-paper
   management (textbooks, pastPapers modules). Tabs: General, Content, Book,
-  Tags, Data Entry. (Curriculum tab UI removed 2026-07-15 — superseded by the
-  Book tab; `exercises` backend data untouched. Standalone `/curriculum`
-  route still exists.)
+  Details, Tags, Data Entry. (Curriculum tab UI removed 2026-07-15 —
+  superseded by the Book tab; `exercises` backend data untouched. Standalone
+  `/curriculum` route still exists.)
 - Top-level "Book" tab (2026-07-13): replaces the Exercises + Page Nos
   Data-Entry layers (`book-tab.tsx` hosts `book-entry-view.tsx`) — whole
   uploaded book scrolls inline (small thumbnails via
@@ -49,6 +49,18 @@ itself is the manual `examModeActive` switch (see learning-engine.md).
   units that ALREADY have exercises (not just new ones): Save reconciles via
   `exercises.setReview` — adds/removes the `N.0` review row (untoggle also
   deletes its scoring entries). (2026-07-13 fix)
+- Top-level "Details" (Studio) tab (2026-07-25): one-screen rebuild of the
+  Data Entry → Details layer (`details-studio-tab.tsx` + `studio-crop-view.tsx`
+  + `studio-entry-bar.tsx`). Unit pills → exercise/theory pills → viewer →
+  sticky thumb-reach bar. Browse mode = unit pages inline (pinch-zoom,
+  current-page badge) with From/To marked off the on-screen page, tap-grid
+  question count, Parts drawer (reuses `SubQuestionInline`), theory rows
+  added/renamed/deleted in place. Crop mode hosts the per-exercise fast-crop
+  flow INLINE (same PageCropOverlay / CropPillHeader / ZoomedPageView, same
+  1:1 (exercise,key) upsert) with the key pills moved to the bottom bar;
+  drawing auto-advances key → key, then exercise → exercise, then unit → unit.
+  ADDITIVE: the old Data Entry tab + `/settings/crop` route stay live until
+  the founder retires them. `exercises.addConcept` now returns the new id.
 - `/settings/crop/[unitId]` + `/settings/past-paper-crop/[paperId]` — the
   question-cropping workbenches that feed the question bank (the engine's
   raw material). Crop validation: `learningEngine/cropIntegrity.ts`.

@@ -233,6 +233,27 @@ because Z.
 - **One-at-a-time delete with a confirm**, not multi-select batch — deletion
   is irreversible and there is no undo.
 
+## Details Studio tab (2026-07-25)
+- **Built as a NEW tab, old one untouched** — founder's explicit call: the old
+  Data Entry → Details layer and `/settings/crop` route stay live until the
+  studio proves itself on a real phone session. Shared components only; no
+  forked copies of PageCropOverlay / CropPillHeader / SubQuestionInline.
+- **Cropping is the centre of gravity, not an afterthought** — the first
+  design draft treated Details as a metadata form with a crop button. Wrong:
+  cropping is the slowest, highest-volume job. Crop mode lives INSIDE the tab
+  so a full exercise never costs a route hop.
+- **Key pills moved to the BOTTOM** — the crop route puts them in a sticky
+  top header; on a phone that is the hardest place to reach while the other
+  hand holds the book. Same component, thumb-reach position.
+- **Auto-advance chains three levels** (key → exercise → unit), mirroring the
+  Book tab's save-and-advance. Nothing is "saved" explicitly in crop mode:
+  drawing IS the save (1:1 (exercise,key) upsert, unchanged).
+- **`exercises.addConcept` now returns the inserted id** — additive backend
+  change so a new theory row gets its page range in the same step. Existing
+  callers ignore the return.
+- **Question-count grid goes to 40** (Book tab's exercise picker stops at 30):
+  exercises routinely carry more questions than a unit carries exercises.
+
 ## Standing constraints (decided, still binding)
 - **Stem/leaf**: planner picks LEAF sub-questions only; stems glued at
   render; noStem flag for instruction-less leaves.
