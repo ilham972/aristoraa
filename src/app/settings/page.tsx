@@ -6,11 +6,12 @@ import { GeneralTab } from '@/components/settings/general-tab';
 import { ContentTab } from '@/components/settings/content-tab';
 import { BookTab } from '@/components/settings/book-tab';
 import { DataEntryTab } from '@/components/settings/data-entry-tab';
+import { DetailsStudioTab } from '@/components/settings/details-studio-tab';
 import { TagsTab } from '@/components/settings/tags-tab';
 
-type Tab = 'general' | 'content' | 'book' | 'tags' | 'data-entry';
+type Tab = 'general' | 'content' | 'book' | 'details' | 'tags' | 'data-entry';
 
-const TAB_KEYS: Tab[] = ['general', 'content', 'book', 'tags', 'data-entry'];
+const TAB_KEYS: Tab[] = ['general', 'content', 'book', 'details', 'tags', 'data-entry'];
 const SS_KEY = 'settings.activeTab';
 
 function readPersistedTab(): Tab {
@@ -23,6 +24,7 @@ const ALL_TABS: { key: Tab; label: string; adminOnly: boolean }[] = [
   { key: 'general', label: 'General', adminOnly: false },
   { key: 'content', label: 'Content', adminOnly: true },
   { key: 'book', label: 'Book', adminOnly: true },
+  { key: 'details', label: 'Details', adminOnly: true },
   { key: 'tags', label: 'Tags', adminOnly: true },
   { key: 'data-entry', label: 'Data Entry', adminOnly: true },
 ];
@@ -79,6 +81,7 @@ export default function SettingsPage() {
       {activeTab === 'general' && <GeneralTab isAdmin={isAdmin || !teacher} />}
       {activeTab === 'content' && <ContentTab />}
       {activeTab === 'book' && <BookTab />}
+      {activeTab === 'details' && <DetailsStudioTab />}
       {activeTab === 'tags' && <TagsTab />}
       {activeTab === 'data-entry' && <DataEntryTab />}
     </div>

@@ -152,7 +152,10 @@ export const addConcept = mutation({
       }
     }
 
-    await ctx.db.insert("exercises", {
+    // Returns the new row's id so callers can immediately set its page range
+    // (the Details Studio tab does this in one step). Existing callers that
+    // ignore the return value are unaffected.
+    return await ctx.db.insert("exercises", {
       unitId: args.unitId,
       name: args.name,
       questionCount: 0,
