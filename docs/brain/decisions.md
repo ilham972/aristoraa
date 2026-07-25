@@ -490,6 +490,21 @@ because Z.
   buttons swallow taps on phones with zero feedback — never gate with
   `disabled` there): flippable → green↔yellow, unticked → tick, locked →
   toast; w-5 square, padded hit target, press-down scale feedback.
+- **GLOBAL 3-color curation — the Curate tab** (2026-07-25) — founder wants
+  green/yellow/blue decided ONCE per question for every group (not per-group
+  like `groupQuestionRoutes`), because conceptual/middle/hard is a property
+  of the QUESTION, like difficulty (already global). Stored on questionBank:
+  `sessionRole` (green=Main-new / yellow=Revision session / blue=Main-hard-
+  spaced) + `excludedFromPlan`. New `/planner` "Curate" tab (`global-curate.
+  tsx`): grade→unit→concept grid, tap tick cycles the 3 colors, long-press
+  excludes (cancels on move so a scroll never excludes), inline drag =
+  difficulty, AUTO-SAVE (global design, no draft/Save button). Engine
+  (`loadGroupPlanState`): global role OVERRIDES the derived autoMiddleSplit
+  (a globally-colored question is skipped by the split); per-group manual row
+  still wins for its one group; no-revision-capacity guard still keeps yellow
+  in Main. PHASE A only — blue currently behaves as Main (taught, not yet
+  spaced); the interleaving engine (thin per-concept green, blue spaced back
+  after yellow, multi-unit sessions, skip-tail-with-gap) is Phase B, not built.
 - **One shared Lesson Builder** (2026-07-18) — the planner's group curation
   dialog was a worse clone of the session builder; replaced by group MODE of
   the same screen (`group-lesson-builder.tsx` + shared

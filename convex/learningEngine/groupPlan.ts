@@ -204,6 +204,9 @@ type UnitLadder = {
     // Sub-question family: leaves sharing one stem ("5.a"/"5.b" → base "5",
     // scoped to their exercise/paper). null = no label to group by.
     familyKey: string | null;
+    // GLOBAL curation (Curate tab): teacher's color for all groups, or null.
+    sessionRole: "green" | "yellow" | "blue" | null;
+    excludedFromPlan: boolean;
   }>;
   conceptByQuestion: Map<string, string>;
 };
@@ -239,6 +242,11 @@ async function buildUnitLadders(
       pickerOrder: number;
       pastPaper: boolean;
       familyKey: string | null;
+      // GLOBAL curation (Curate tab): the color the teacher set for this
+      // question across all groups. null = no global decision (fall back to
+      // the derived autoMiddleSplit).
+      sessionRole: "green" | "yellow" | "blue" | null;
+      excludedFromPlan: boolean;
     };
     const book: Rung[] = [];
     const paper: Rung[] = [];
@@ -261,6 +269,8 @@ async function buildUnitLadders(
         pickerOrder: q.pickerOrder ?? Number.MAX_SAFE_INTEGER,
         pastPaper: q.source === "past-paper",
         familyKey: base ? `${scope}|${base}` : null,
+        sessionRole: q.sessionRole ?? null,
+        excludedFromPlan: q.excludedFromPlan ?? false,
       };
       (rung.pastPaper ? paper : book).push(rung);
     });
@@ -489,6 +499,16 @@ async function loadGroupPlanState(
     .collect()) {
     for (const qid of row.questionIds) banned.add(qid as unknown as string);
   }
+  // GLOBAL exclude (Curate tab, 2026-07-25): a question the teacher dropped
+  // for EVERY group. Same effect as a per-group ban, applied from the
+  // question's own flag. Seen still wins (history is history).
+  const globalRoleByQid = new Map<string, "green" | "yellow" | "blue">();
+  for (const l of ladders) {
+    for (const rung of l.ladder) {
+      if (rung.excludedFromPlan) banned.add(rung.qid);
+      if (rung.sessionRole) globalRoleByQid.set(rung.qid, rung.sessionRole);
+    }
+  }
 
   // Question routes: one row per re-routed question; "revision" = yellow.
   // A question that is both banned and routed stays banned (ban wins).
@@ -526,10 +546,26 @@ async function loadGroupPlanState(
         .collect()
     ).length > 0;
   if (hasRevisionCapacity) {
+    // GLOBAL yellow (Curate tab) first: the teacher's explicit color routes
+    // to Revision for every group. A per-group manual row still wins for its
+    // one group; banned/hardSeen never re-route.
+    globalRoleByQid.forEach((role, k) => {
+      if (
+        role === "yellow" &&
+        !banned.has(k) &&
+        !routeByQid.has(k) &&
+        !hardSeen.has(k)
+      )
+        routedRevision.add(k);
+    });
     for (const l of ladders) {
       const byConcept = new Map<string, ConceptLeaf[]>();
       for (const r of l.ladder) {
         if (r.pastPaper) continue;
+        // A globally-colored question is the teacher's explicit decision —
+        // the derived autoMiddleSplit must not second-guess it. green/blue
+        // stay Main, yellow was routed just above.
+        if (r.sessionRole) continue;
         const cid = l.conceptByQuestion.get(r.qid);
         if (!cid) continue;
         const acc = byConcept.get(cid) ?? [];

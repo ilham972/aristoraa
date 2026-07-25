@@ -605,6 +605,22 @@ export default defineSchema({
       widthMm: v.number(),
       heightMm: v.number(),
     })),
+    // GLOBAL teaching role (Curate tab, 2026-07-25) — one decision per
+    // question, shared by every group teaching this unit (unlike the
+    // per-group groupQuestionRoutes). "green" = conceptual, taught new in
+    // Main; "yellow" = middle, handed to the Revision session; "blue" =
+    // hard, kept in Main but spaced to come back after the concept's yellow
+    // has been revised. Undefined = no global decision → each group falls
+    // back to the derived autoMiddleSplit. Set from the Curate tab; a
+    // per-group manual route row still wins for that one group.
+    sessionRole: v.optional(
+      v.union(v.literal("green"), v.literal("yellow"), v.literal("blue")),
+    ),
+    // GLOBAL exclude (Curate tab): drop this question from every group's
+    // plan (like a per-group ban, but for all groups at once). Kept separate
+    // from sessionRole so a colored question can be excluded and restored to
+    // its old color. Undefined/false = included.
+    excludedFromPlan: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_source", ["source"])

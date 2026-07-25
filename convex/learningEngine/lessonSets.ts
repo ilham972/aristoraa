@@ -127,6 +127,9 @@ export const listUnitQuestions = query({
         pickerOrder: number | null;
         expectedTimeMin: number | null;
         label: string | null; // "3.a" / "1A.1" — whatever identity exists
+        // GLOBAL curation state (Curate tab, 2026-07-25).
+        sessionRole: "green" | "yellow" | "blue" | null;
+        excludedFromPlan: boolean;
         cropBox: { x: number; y: number; w: number; h: number } | null;
         pageImageUrl: string | null;
         pageImageUrlSmall: string | null;
@@ -170,6 +173,8 @@ export const listUnitQuestions = query({
           pickerOrder: q.pickerOrder ?? null,
           expectedTimeMin: q.expectedTimeMin ?? null,
           label: q.questionNumberInPaper ?? q.linkedQuestionKey ?? null,
+          sessionRole: q.sessionRole ?? null,
+          excludedFromPlan: q.excludedFromPlan ?? false,
           cropBox: q.cropBox ?? null,
           pageImageUrl: urls.full,
           pageImageUrlSmall: urls.small,
@@ -297,5 +302,43 @@ export const reorderConceptQuestions = mutation({
       updated += 1;
     }
     return { ok: true as const, updated };
+  },
+});
+
+// ── Global curation (Curate tab, 2026-07-25) ──────────────────────────────
+// One color decision per question, shared by EVERY group teaching the unit.
+// green = conceptual (Main, taught new); yellow = middle (Revision session);
+// blue = hard (Main, spaced to return after the concept's yellow). Auto-saved
+// on every tap — this is the global lesson design, so there is no draft.
+export const setQuestionRole = mutation({
+  args: {
+    questionId: v.id("questionBank"),
+    role: v.union(v.literal("green"), v.literal("yellow"), v.literal("blue")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const q = await ctx.db.get(args.questionId);
+    if (!q) throw new Error("Question not found");
+    // Setting a color also un-excludes: the teacher is choosing to teach it.
+    await ctx.db.patch(args.questionId, {
+      sessionRole: args.role,
+      excludedFromPlan: false,
+    });
+    return { ok: true as const };
+  },
+});
+
+// Long-press / ✕ on a tile: drop it from (or restore it to) every group's
+// plan. Excluding keeps the stored color so restoring returns it as it was.
+export const setQuestionExcluded = mutation({
+  args: { questionId: v.id("questionBank"), excluded: v.boolean() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const q = await ctx.db.get(args.questionId);
+    if (!q) throw new Error("Question not found");
+    await ctx.db.patch(args.questionId, { excludedFromPlan: args.excluded });
+    return { ok: true as const };
   },
 });

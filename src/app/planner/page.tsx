@@ -20,6 +20,7 @@ import {
   CalendarRange,
   FileText,
   LayoutGrid,
+  Palette,
   Route,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -29,13 +30,22 @@ import { TermBoard } from '@/components/planner/term-board';
 import { GradeForecast } from '@/components/planner/grade-forecast';
 import { TermCalendar } from '@/components/planner/term-calendar';
 import { GroupSheets } from '@/components/planner/group-sheets';
+import { GlobalCurate } from '@/components/planner/global-curate';
 
-type TabId = 'term' | 'calendar' | 'sheets' | 'forecast' | 'tracks' | 'exams';
+type TabId =
+  | 'term'
+  | 'calendar'
+  | 'sheets'
+  | 'curate'
+  | 'forecast'
+  | 'tracks'
+  | 'exams';
 
 const TABS: { id: TabId; label: string; fullLabel: string; icon: typeof Route }[] = [
   { id: 'term', label: 'Term', fullLabel: 'Term Planner', icon: CalendarRange },
   { id: 'calendar', label: 'Calendar', fullLabel: 'Scheme Calendar', icon: LayoutGrid },
   { id: 'sheets', label: 'Sheets', fullLabel: 'Term Sheets', icon: FileText },
+  { id: 'curate', label: 'Curate', fullLabel: 'Question Curation', icon: Palette },
   { id: 'forecast', label: 'Forecast', fullLabel: 'Coverage Forecast', icon: BookOpenCheck },
   { id: 'tracks', label: 'Tracks', fullLabel: 'Learning Tracks', icon: Route },
   { id: 'exams', label: 'Exams', fullLabel: 'Exam Calendar', icon: CalendarDays },
@@ -49,7 +59,15 @@ function PlannerPageInner() {
 
   const rawTab = searchParams.get('tab') ?? 'term';
   const tab: TabId = (
-    ['term', 'calendar', 'sheets', 'forecast', 'tracks', 'exams'] as TabId[]
+    [
+      'term',
+      'calendar',
+      'sheets',
+      'curate',
+      'forecast',
+      'tracks',
+      'exams',
+    ] as TabId[]
   ).includes(rawTab as TabId)
     ? (rawTab as TabId)
     : 'term';
@@ -104,8 +122,11 @@ function PlannerPageInner() {
         ))}
       </div>
 
-      {/* Calendar + Sheets + Forecast share the Term tab's grade selection */}
-      {(tab === 'forecast' || tab === 'calendar' || tab === 'sheets') && (
+      {/* Calendar + Sheets + Curate + Forecast share the grade selection */}
+      {(tab === 'forecast' ||
+        tab === 'calendar' ||
+        tab === 'sheets' ||
+        tab === 'curate') && (
         <div className="flex gap-1 p-1 bg-muted rounded-xl overflow-x-auto mb-3">
           {GRADES.map((g) => (
             <button
@@ -127,6 +148,7 @@ function PlannerPageInner() {
       {tab === 'term' && <TermBoard grade={grade} setGrade={(g) => setParams({ g })} />}
       {tab === 'calendar' && <TermCalendar grade={grade} />}
       {tab === 'sheets' && <GroupSheets grade={grade} />}
+      {tab === 'curate' && <GlobalCurate grade={grade} />}
       {tab === 'forecast' && <GradeForecast grade={grade} />}
       {tab === 'tracks' && <TracksTab />}
       {tab === 'exams' && <ExamCalendarTab />}

@@ -35,29 +35,24 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   runway cards + crystallize one/all. Calendar: per-group day-grid to exam
   (unit/state, Revision slots, cancelled days, levers). Forecast: grade rollup.
   Tracks + Exams (from /algorithm; grade×term grid + Quick entry).
-- Sheets tab = the CONTROL ROOM (2026-07-16; sessions redesign 2026-07-18):
-  "Run all term sheets" (crystallize, 180d cap) + "Re-plan" = ATOMIC
-  `replanTerm` (2026-07-25, all 4 surfaces; never revert to the
-  deleteFuturePlanned+crystallize pair — it lost sheets on failure);
-  bank-dry banner; Coverage % strip + TERM CHIPS (covTerm FOLLOWS the tapped
-  week/session; chips jump the timeline — never remove). Timeline =
-  metro-line master/detail (rules in decisions.md): week ring-station rail +
-  sticky SESSION-CENTRIC card — session chips (PDF preview + ↻ assign to
-  revision with 3-week look-ahead; rose = after exam; NO "+ session"),
-  unit chips + "+ unit", physical A4 sheets (2 printed pages = 1 paper;
-  `groupSheetPages`, estimator convex/lib/sheetLayout.ts MUST match pdf.ts),
-  book-order grid, 7+7 day strip (by-date lookups prefer the LIVE sheet —
-  a delegated row can share its date). Unit name → GROUP LESSON BUILDER
-  (`group-lesson-builder.tsx`, SHARED grid via
-  `components/lesson/lesson-question-grid.tsx`): Main + TIMELINE tabs
-  (2026-07-19; Revision tab retired — Main shows ALL, yellow ticks inline);
-  tap tile = tick/untick (ban; locked = toast), tap chip = GREEN↔YELLOW
-  (manual never auto-overwritten); rose concept chip = no book. Timeline tab
-  (`group-unit-timeline.tsx` + `groupUnitTimeline`) = week rows of day pills:
-  teal Main = REAL sheet dates, amber dashed = SR-PREDICTED revision days;
-  tap a day = questions by concept, rings mark concept-sharing days. "+ unit"
-  = UNIT COMPRESSION (`compression-dialog.tsx`): start the next unit now,
-  then re-plan.
+- Sheets tab = the CONTROL ROOM (2026-07-16; redesign 2026-07-18): "Run all
+  term sheets" (crystallize, 180d) + "Re-plan" = ATOMIC `replanTerm`
+  (2026-07-25, all 4 surfaces; never revert to the delete+crystallize pair —
+  it lost sheets on failure); bank-dry banner; Coverage % + TERM CHIPS
+  (covTerm FOLLOWS the tapped week/session). Timeline = metro master/detail
+  (decisions.md): week ring rail + sticky SESSION-CENTRIC card (chips with
+  PDF preview + ↻ assign-to-revision 3-week look-ahead, rose = after exam;
+  "+ unit" compression; A4 pills via `groupSheetPages`, estimator
+  convex/lib/sheetLayout.ts MUST match pdf.ts; 7+7 day strip prefers the LIVE
+  sheet). Unit name → GROUP LESSON BUILDER (`group-lesson-builder.tsx`, shared
+  grid `components/lesson/lesson-question-grid.tsx`): Main + Timeline tabs
+  (`group-unit-timeline.tsx`); tap tile=tick, tap chip=GREEN↔YELLOW.
+- Curate tab (`global-curate.tsx`, 2026-07-25) — GLOBAL 3-color curation:
+  grade→unit→concept grid; `questionBank.sessionRole` green/yellow/blue +
+  `excludedFromPlan`, ONE decision per question for all groups (tap=cycle,
+  long-press=exclude, drag=difficulty, auto-save). loadGroupPlanState: global
+  role overrides autoMiddleSplit (see decisions.md). Phase A: blue behaves as
+  Main; interleaving engine = Phase B (not built).
 - `/algorithm` — Coverage = TWO LENSES (2026-07-17): GROUPS = the Cockpit
   (cheap all-group rail `groupsTermCoverageSummary`; the tapped group pays for
   `groupTermCoverage`), BANK = concept stock; book-gap bridges Groups→Bank.
