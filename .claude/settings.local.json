@@ -204,7 +204,8 @@
       "Read(//c/Users/Ilham/aaa projects/math-tracker/docs/brain/**)",
       "PowerShell(npx convex dev --once 2>&1 | Select-Object -Last 4)",
       "PowerShell(npx convex dev --once 2>&1 | Select-Object -Last 1; npx convex deploy -y 2>&1 | Select-Object -Last 1)",
-      "PowerShell(\\(Get-Content \"docs\\\\brain\\\\features\\\\learning-engine.md\" | Measure-Object -Line\\).Lines)"
+      "PowerShell(\\(Get-Content \"docs\\\\brain\\\\features\\\\learning-engine.md\" | Measure-Object -Line\\).Lines)",
+      "PowerShell(\\(Get-Content \"docs\\\\brain\\\\features\\\\learning-engine.md\" | Measure-Object -Line\\).Lines; \\(Get-Content \"docs\\\\brain\\\\decisions.md\" | Measure-Object -Line\\).Lines)"
     ]
   }
 }

@@ -76,12 +76,7 @@ export function GroupLessonBuilder({
   const setRoutes = useMutation(
     api.learningEngine.groupPlan.setQuestionRoutes,
   );
-  const deleteFuturePlanned = useMutation(
-    api.learningEngine.groupPlan.deleteFuturePlanned,
-  );
-  const crystallize = useMutation(
-    api.learningEngine.groupPlan.crystallizeUpcoming,
-  );
+  const replanTermMut = useMutation(api.learningEngine.groupPlan.replanTerm);
 
   const [tab, setTab] = useState<'main' | 'timeline'>('main');
   const [conceptFilter, setConceptFilter] = useState<string | 'all'>('all');
@@ -246,12 +241,9 @@ export function GroupLessonBuilder({
         }));
       if (changedRoutes.length > 0)
         await setRoutes({ groupId, unitId, routes: changedRoutes });
-      const del = await deleteFuturePlanned({ groupId });
-      const res = await crystallize({ groupId, daysAhead: 180 });
+      const res = await replanTermMut({ groupId, daysAhead: 180 });
       toast.success(
-        `Saved — ${banned.length} excluded, ${yellowCount} in Revision. Re-planned ${del.deleted}→${
-          res.status === 'ok' ? res.written : 0
-        } sheets.`,
+        `Saved — ${banned.length} excluded, ${yellowCount} in Revision. Re-planned ${res.deleted}→${res.written} sheets.`,
       );
       onClose();
     } catch (e) {

@@ -50,7 +50,7 @@ import { shortLabel } from './group-coverage';
 import { CompressionDialog } from './compression-dialog';
 import { GroupLessonBuilder } from './group-lesson-builder';
 import { UnitArrangeDialog } from './unit-arrange-dialog';
-import { fmtWeekdayDate } from './verdict';
+import { fmtWeekdayDate, planStatusMessage } from './verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   planned: {
@@ -94,6 +94,14 @@ function addDaysYmd(ymd: string, n: number): string {
   const d = new Date(`${ymd}T00:00:00`);
   d.setDate(d.getDate() + n);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Term parsed from a unit id (M1-G10-T2-005 → 2). Mirror of the backend's
+// termFromUnitId — lets the coverage term FOLLOW the tapped week/session, so
+// old-term weeks stop showing blank question grids (2026-07-25 fix).
+function termOfUnit(unitId: string): number | null {
+  const m = /^M\d+-G\d+-T(\d+)-\d+$/.exec(unitId);
+  return m ? Number(m[1]) : null;
 }
 
 const DOW_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -258,9 +266,7 @@ export function GroupSheets({ grade }: { grade: number }) {
   const crystallize = useMutation(
     api.learningEngine.groupPlan.crystallizeUpcoming,
   );
-  const deleteFuturePlanned = useMutation(
-    api.learningEngine.groupPlan.deleteFuturePlanned,
-  );
+  const replanTermMut = useMutation(api.learningEngine.groupPlan.replanTerm);
   const moveGroupSheetMut = useMutation(
     api.learningEngine.groupPlan.moveGroupSheet,
   );
@@ -299,9 +305,26 @@ export function GroupSheets({ grade }: { grade: number }) {
   const previewIdx = previewId ? list.findIndex((s) => s.id === previewId) : -1;
   const sheetByDate = useMemo(() => {
     const m = new Map<string, SheetRow>();
-    for (const s of list) m.set(s.date, s);
+    // Two rows CAN share a date (a planned sheet assigned onto a day whose
+    // old sheet was delegated) — the live one must win every by-date lookup
+    // (day strip, assign-dialog hint), or it becomes untappable.
+    for (const s of list) {
+      const prev = m.get(s.date);
+      if (!prev || (prev.status === 'delegated' && s.status !== 'delegated'))
+        m.set(s.date, s);
+    }
     return m;
   }, [list]);
+  // The term chips are an override, but the tapped week/session is the newer
+  // intent — selecting a session from another term re-aims coverage at THAT
+  // term (otherwise its question grids render blank). Reset on group switch.
+  useEffect(() => {
+    setCovTerm(null);
+  }, [groupId]);
+  const followTermOf = (unitId: string) => {
+    const t = termOfUnit(unitId);
+    if (t !== null) setCovTerm(t);
+  };
   // A4 pages of the SELECTED session — exact after a print-preview render,
   // estimated from crop sizes before one. One physical A4 sheet of paper =
   // 2 printed pages (front + back), so pages are folded in twos.
@@ -323,6 +346,11 @@ export function GroupSheets({ grade }: { grade: number }) {
     return Array.from(bySheet.entries())
       .sort((a, b) => a[0] - b[0])
       .map(([n, ids]) => ({ n, ids: new Set(ids), count: ids.length }));
+  }, [sheetPages]);
+  // A resize / re-plan changes the page split — a kept A4 selection would
+  // ring stale question ids (grid all dimmed, nothing ringed).
+  useEffect(() => {
+    setSelSheetIds(null);
   }, [sheetPages]);
   const mainDays = useMemo(() => new Set(slotDays?.mainDays ?? []), [slotDays]);
   const revisionDays = useMemo(
@@ -512,7 +540,7 @@ export function GroupSheets({ grade }: { grade: number }) {
     setBusy('run');
     try {
       const res = await crystallize({ groupId, daysAhead: 180 });
-      if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
+      if (res.status !== 'ok') toast.error(planStatusMessage(res.status));
       else if (res.exhausted)
         toast.warning(
           `Built ${res.written} sheets, then the question bank ran dry — ${res.unplannedSessions} sessions have nothing left to plan. Enter more of the book to continue.`,
@@ -533,6 +561,30 @@ export function GroupSheets({ grade }: { grade: number }) {
     }
   };
 
+  // The actual re-plan (one atomic backend call: nothing is dropped unless
+  // the rebuild succeeds). Shared by the Re-plan button and the "Skip day"
+  // follow-up toast, so the confirm dialog lives only on the button.
+  const doReplan = async () => {
+    if (!groupId) return;
+    setBusy('replan');
+    try {
+      const res = await replanTermMut({ groupId, daysAhead: 180 });
+      if (res.exhausted)
+        toast.warning(
+          `Re-planned ${res.deleted}→${res.written} sheets, then the question bank ran dry — ${res.unplannedSessions} sessions have nothing left to plan. Enter more of the book to continue.`,
+          { duration: 8000 },
+        );
+      else
+        toast.success(
+          `Re-planned: ${res.deleted} sheets dropped, ${res.written} rebuilt from the current order.`,
+        );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const replan = async () => {
     if (!groupId) return;
     if (
@@ -541,18 +593,7 @@ export function GroupSheets({ grade }: { grade: number }) {
       )
     )
       return;
-    setBusy('replan');
-    try {
-      const del = await deleteFuturePlanned({ groupId });
-      const res = await crystallize({ groupId, daysAhead: 180 });
-      toast.success(
-        `Re-planned: ${del.deleted} sheets dropped, ${res.status === 'ok' ? res.written : 0} rebuilt from the current order.`,
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed');
-    } finally {
-      setBusy(null);
-    }
+    await doReplan();
   };
 
   if (groups !== undefined && gradeGroups.length === 0) {
@@ -696,7 +737,15 @@ export function GroupSheets({ grade }: { grade: number }) {
                   key={t}
                   onClick={() => {
                     setCovTerm(t);
-                    setSelectedWeek(null);
+                    // Jump the timeline to the first week teaching this term
+                    // so the grids below match the chip.
+                    const wk = weeks.find((w) =>
+                      w.sheets.some((s) => termOfUnit(s.unitId) === t),
+                    );
+                    setSelectedWeek(wk ? wk.weekStart : null);
+                    setSelDate(null);
+                    setSelUnitId(null);
+                    setSelSheetIds(null);
                   }}
                   className={cn(
                     'w-7 h-7 rounded-lg border text-[11px] font-bold',
@@ -771,6 +820,8 @@ export function GroupSheets({ grade }: { grade: number }) {
                             setSelDate(null);
                             setSelUnitId(null);
                             setSelSheetIds(null);
+                            if (w.sheets.length > 0)
+                              followTermOf(w.sheets[0].unitId);
                           }}
                           className={cn(
                             'w-full flex items-center gap-2 rounded-lg py-0.5 sm:px-1.5 text-left',
@@ -834,6 +885,12 @@ export function GroupSheets({ grade }: { grade: number }) {
                   const total = w.newTotal + w.reviewTotal;
                   const weekAfterExam =
                     exam !== null && w.weekStart > exam.date;
+                  // Exam mid-week: the week itself is fine but some of its
+                  // sessions land after the exam day — call those out too.
+                  const afterExamCount =
+                    exam === null || weekAfterExam
+                      ? 0
+                      : w.sheets.filter((s) => s.date > exam.date).length;
                   const prog = weekProgress.get(w.weekStart);
                   return (
                     <div
@@ -851,6 +908,12 @@ export function GroupSheets({ grade }: { grade: number }) {
                           {weekAfterExam && (
                             <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
                               after exam
+                            </span>
+                          )}
+                          {afterExamCount > 0 && (
+                            <span className="px-1 py-px rounded bg-rose-500/15 text-rose-500 text-[7.5px] font-bold leading-tight">
+                              {afterExamCount} session
+                              {afterExamCount === 1 ? '' : 's'} after exam
                             </span>
                           )}
                           <span className="h-px flex-1 bg-border" />
@@ -907,6 +970,11 @@ export function GroupSheets({ grade }: { grade: number }) {
                             const chip =
                               STATUS_CHIP[s.status] ?? STATUS_CHIP.planned;
                             const sel = selDate === s.date;
+                            // Day-granular, not week-granular: a Thursday
+                            // session after a Wednesday exam must show red
+                            // even though its week starts before the exam.
+                            const pastExam =
+                              exam !== null && s.date > exam.date;
                             return (
                               <div
                                 key={s.id as unknown as string}
@@ -914,7 +982,9 @@ export function GroupSheets({ grade }: { grade: number }) {
                                   'shrink-0 inline-flex items-stretch rounded-lg border bg-card overflow-hidden',
                                   sel
                                     ? 'border-primary/70 ring-1 ring-primary/30'
-                                    : 'border-border',
+                                    : pastExam
+                                      ? 'border-rose-500/50'
+                                      : 'border-border',
                                 )}
                               >
                                 <button
@@ -925,16 +995,26 @@ export function GroupSheets({ grade }: { grade: number }) {
                                       setSelDate(s.date);
                                       setSelUnitId(null);
                                       setSelSheetIds(null);
+                                      followTermOf(s.unitId);
                                     }
                                   }}
                                   title={
                                     sel
                                       ? 'Open the question drawer'
-                                      : 'Select this session'
+                                      : pastExam
+                                        ? 'Select this session (falls AFTER the exam)'
+                                        : 'Select this session'
                                   }
                                   className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 text-[10px]"
                                 >
-                                  <span className="font-bold text-foreground">
+                                  <span
+                                    className={cn(
+                                      'font-bold',
+                                      pastExam
+                                        ? 'text-rose-500'
+                                        : 'text-foreground',
+                                    )}
+                                  >
                                     {d.weekday} {d.day}
                                   </span>
                                   <span className="text-muted-foreground tabular-nums">
@@ -1076,9 +1156,8 @@ export function GroupSheets({ grade }: { grade: number }) {
                         )}
                         {coverage !== undefined && !activeUnit && (
                           <div className="text-[10px] text-muted-foreground italic">
-                            Question grid appears once this session&rsquo;s
-                            units have book entered (and you&rsquo;re viewing
-                            their term in Coverage).
+                            No question grid yet — this session&rsquo;s units
+                            have no book entered.
                           </div>
                         )}
                         {activeUnit && (
@@ -1189,6 +1268,7 @@ export function GroupSheets({ grade }: { grade: number }) {
                                   setSelDate(sh.date);
                                   setSelUnitId(null);
                                   setSelSheetIds(null);
+                                  followTermOf(sh.unitId);
                                 }}
                                 disabled={!sh}
                                 className={cn(
@@ -1225,6 +1305,7 @@ export function GroupSheets({ grade }: { grade: number }) {
                                     setSelDate(sh.date);
                                     setSelUnitId(null);
                                     setSelSheetIds(null);
+                                    followTermOf(sh.unitId);
                                   }}
                                   className={cn(
                                     'h-6 rounded-md border text-[8.5px] font-bold flex items-center justify-center tabular-nums bg-amber-500/20 text-amber-600 dark:text-amber-400',
@@ -1305,6 +1386,18 @@ export function GroupSheets({ grade }: { grade: number }) {
                 setPreviewId(null);
                 setArrangeUnitId(unitId);
               }}
+              onSkipped={() =>
+                toast.success(
+                  'Day skipped and its sheet removed — the rest of the term has not moved yet.',
+                  {
+                    duration: 10000,
+                    action: {
+                      label: 'Re-plan term',
+                      onClick: () => void doReplan(),
+                    },
+                  },
+                )
+              }
             />
           );
         })()}
@@ -1331,17 +1424,33 @@ export function GroupSheets({ grade }: { grade: number }) {
           hint={`${(() => {
             const sh = sheetByDate.get(assignSheet.date);
             return sh ? `${sh.newCount + sh.spiralCount} questions · ` : '';
-          })()}the session's sheet moves onto the revision day you pick.`}
-          options={Array.from(revisionDays)
-            .sort((a, b) => a - b)
-            .map((dow) => addDaysYmd(assignSheet.weekStart, dow - 1))
-            .filter((date) => {
-              if (date < today || date === assignSheet.date) return false;
-              const occ = sheetByDate.get(date);
-              return !occ || occ.status === 'delegated';
-            })
-            .map((date) => ({ date, rev: true }))}
-          emptyText="No free revision class this week — add this group to a day on the Revision tab (home page) first."
+          })()}the session's sheet moves onto the revision day you pick (this week or the next two).`}
+          options={(() => {
+            // Upcoming revision days across THREE weeks, not just the
+            // sheet's own — the old one-week window went empty the moment
+            // this week's revision day had passed (founder bug 2026-07-25).
+            const startWeek =
+              assignSheet.weekStart >= weekStartYmd(today)
+                ? assignSheet.weekStart
+                : weekStartYmd(today);
+            const dows = Array.from(revisionDays).sort((a, b) => a - b);
+            const out: Array<{ date: string; rev: boolean }> = [];
+            for (let wk = 0; wk < 3; wk++) {
+              for (const dow of dows) {
+                const date = addDaysYmd(startWeek, wk * 7 + dow - 1);
+                if (date < today || date === assignSheet.date) continue;
+                const occ = sheetByDate.get(date);
+                if (occ && occ.status !== 'delegated') continue;
+                out.push({ date, rev: true });
+              }
+            }
+            return out;
+          })()}
+          emptyText={
+            revisionDays.size === 0
+              ? 'This group has no revision class on the timetable yet — book it into a revision day on the home page first.'
+              : 'Every revision day in the next 3 weeks is already past or taken.'
+          }
           onPick={async (date) => {
             try {
               await moveGroupSheetMut({
@@ -1383,9 +1492,8 @@ export function GroupSheets({ grade }: { grade: number }) {
   );
 }
 
-// Small bottom-sheet day picker shared by "assign to revision class" and
-// "add an extra sheet": one tap per free day, amber-tagged when the day is
-// revision capacity.
+// Small bottom-sheet day picker for "assign to revision class": one tap per
+// free day, amber-tagged when the day is revision capacity.
 function DayPickerDialog({
   title,
   hint,
@@ -1571,6 +1679,7 @@ function SheetPreviewDrawer({
   onNext,
   onClose,
   onArrange,
+  onSkipped,
 }: {
   sheetId: Id<'groupSheets'>;
   groupId: Id<'groups'>;
@@ -1582,6 +1691,7 @@ function SheetPreviewDrawer({
   onNext: () => void;
   onClose: () => void;
   onArrange: (unitId: string) => void;
+  onSkipped: () => void;
 }) {
   const sheet = useQuery(api.learningEngine.groupPlan.groupSheetPreview, {
     groupSheetId: sheetId,
@@ -1802,6 +1912,7 @@ function SheetPreviewDrawer({
                       groupIds: [groupId],
                     });
                     await deletePlanned({ groupSheetId: sheetId });
+                    onSkipped();
                   });
                 }}
                 disabled={busy}

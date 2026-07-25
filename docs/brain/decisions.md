@@ -475,6 +475,16 @@ because Z.
   `components/lesson/lesson-question-grid.tsx`); `group-unit-builder.tsx`
   deleted. Arrange now writes DECIMAL difficulty 1.0→5.0 across the dragged
   order (was whole bands 1–5 that made neighbours look identical).
+- **Re-plan is ONE mutation** (2026-07-25) — `replanTerm` replaces the
+  deleteFuturePlanned→crystallizeUpcoming pair everywhere (Sheets tab,
+  coverage cockpit, Lesson Builder save, compression). The pair could commit
+  the delete and then fail the rebuild → the tail of the term silently gone.
+  Convex mutations are transactional, so one mutation = all-or-nothing.
+  Never reintroduce the two-call flow. Same day: coverage term FOLLOWS the
+  tapped week/session (old-term weeks showed blank grids and blamed missing
+  book entry); ↻ assign-to-revision looks ahead 3 weeks (one-week window
+  died when the week's revision day had passed); plan-status codes go
+  through `planStatusMessage` (founder saw raw "no-track").
 - **Deferred, not abandoned**: student tablet app + concept videos
   (new_change.md), W.6 homework PDF, W.7 predicted-vs-actual reports, W.8 fee
   reminders, weekly-card image variant.

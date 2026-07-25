@@ -17,7 +17,7 @@ import { useCachedQuery } from '@/hooks/use-cached-query';
 import { ALL_CURRICULUM_UNITS } from '@/lib/track-progress-args';
 import { UnitRunway } from './unit-runway';
 import { StartingPointButton } from './starting-point-dialog';
-import { fmtShortDate, fmtWeekdayDate } from './verdict';
+import { fmtShortDate, fmtWeekdayDate, planStatusMessage } from './verdict';
 
 export type PlannerGroupRow = {
   groupId: Id<'groups'>;
@@ -157,7 +157,8 @@ export function GroupPlanCard({ row }: { row: PlannerGroupRow }) {
                 setBusy(true);
                 try {
                   const res = await crystallize({ groupId: row.groupId });
-                  if (res.status !== 'ok') toast.error(`${row.name}: ${res.status}`);
+                  if (res.status !== 'ok')
+                    toast.error(`${row.name}: ${planStatusMessage(res.status)}`);
                   else if (res.written === 0)
                     toast.info(`${row.name}: window already planned.`);
                   else toast.success(`${row.name}: ${res.written} sheet${res.written === 1 ? '' : 's'} crystallized`);

@@ -36,14 +36,18 @@ predicted time". Plans (root, NEVER delete): `learning_engine_plan.md` +
   (unit/state, Revision slots, cancelled days, levers). Forecast: grade rollup.
   Tracks + Exams (from /algorithm; grade×term grid + Quick entry).
 - Sheets tab = the CONTROL ROOM (2026-07-16; sessions redesign 2026-07-18):
-  "Run all term sheets" (crystallize, 180d cap) + "Re-plan"; bank-dry banner;
-  Coverage % strip + TERM CHIPS (set covTerm for the week grids — never
-  remove). Timeline = metro-line master/detail (rules in decisions.md): week
-  ring-station rail + sticky SESSION-CENTRIC card — session chips (PDF
-  preview + ↻ assign; NO "+ session", capacity comes from the Revision
-  timetable), unit chips + "+ unit", physical A4 sheets (2 printed pages =
-  1 paper; `groupSheetPages`, estimator convex/lib/sheetLayout.ts MUST match
-  pdf.ts), book-order grid, 7+7 day strip. Unit name → GROUP LESSON BUILDER
+  "Run all term sheets" (crystallize, 180d cap) + "Re-plan" = ATOMIC
+  `replanTerm` (2026-07-25, all 4 surfaces; never revert to the
+  deleteFuturePlanned+crystallize pair — it lost sheets on failure);
+  bank-dry banner; Coverage % strip + TERM CHIPS (covTerm FOLLOWS the tapped
+  week/session; chips jump the timeline — never remove). Timeline =
+  metro-line master/detail (rules in decisions.md): week ring-station rail +
+  sticky SESSION-CENTRIC card — session chips (PDF preview + ↻ assign to
+  revision with 3-week look-ahead; rose = after exam; NO "+ session"),
+  unit chips + "+ unit", physical A4 sheets (2 printed pages = 1 paper;
+  `groupSheetPages`, estimator convex/lib/sheetLayout.ts MUST match pdf.ts),
+  book-order grid, 7+7 day strip (by-date lookups prefer the LIVE sheet —
+  a delegated row can share its date). Unit name → GROUP LESSON BUILDER
   (`group-lesson-builder.tsx`, SHARED grid via
   `components/lesson/lesson-question-grid.tsx`): Main + TIMELINE tabs
   (2026-07-19; Revision tab retired — Main shows ALL, yellow ticks inline);

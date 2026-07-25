@@ -106,12 +106,7 @@ export function GroupCoverage({
   const setStartingPoint = useMutation(
     api.learningEngine.groupPlan.setGroupStartingPoint,
   );
-  const deleteFuturePlanned = useMutation(
-    api.learningEngine.groupPlan.deleteFuturePlanned,
-  );
-  const crystallize = useMutation(
-    api.learningEngine.groupPlan.crystallizeUpcoming,
-  );
+  const replanTermMut = useMutation(api.learningEngine.groupPlan.replanTerm);
   const [markingPrior, setMarkingPrior] = useState(false);
   const [replanning, setReplanning] = useState(false);
   const unitName = useUnitName();
@@ -153,8 +148,9 @@ export function GroupCoverage({
     }
   };
 
-  // Same pair the Sheets tab runs: drop every future still-planned row, then
-  // rebuild it from the current book order. Taught + delegated are untouched.
+  // Same atomic call the Sheets tab runs: drop every future still-planned
+  // row AND rebuild from the current book order in one transaction (a failed
+  // rebuild no longer loses the dropped sheets). Taught + delegated untouched.
   const replan = async () => {
     if (
       !window.confirm(
@@ -164,11 +160,16 @@ export function GroupCoverage({
       return;
     setReplanning(true);
     try {
-      const del = await deleteFuturePlanned({ groupId });
-      const res = await crystallize({ groupId, daysAhead: 180 });
-      toast.success(
-        `Re-planned: ${del.deleted} sheets dropped, ${res.status === 'ok' ? res.written : 0} rebuilt from the current order.`,
-      );
+      const res = await replanTermMut({ groupId, daysAhead: 180 });
+      if (res.exhausted)
+        toast.warning(
+          `Re-planned ${res.deleted}→${res.written} sheets, then the question bank ran dry — enter more of the book to plan the remaining sessions.`,
+          { duration: 8000 },
+        );
+      else
+        toast.success(
+          `Re-planned: ${res.deleted} sheets dropped, ${res.written} rebuilt from the current order.`,
+        );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed');
     } finally {

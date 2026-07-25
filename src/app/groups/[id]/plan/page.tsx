@@ -31,7 +31,11 @@ import { cn } from '@/lib/utils';
 import { ALL_CURRICULUM_UNITS } from '@/lib/track-progress-args';
 import { UnitRunway } from '@/components/planner/unit-runway';
 import { StartingPointButton } from '@/components/planner/starting-point-dialog';
-import { VERDICT_CHIP, fmtWeekdayDate } from '@/components/planner/verdict';
+import {
+  VERDICT_CHIP,
+  fmtWeekdayDate,
+  planStatusMessage,
+} from '@/components/planner/verdict';
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   planned: {
@@ -176,7 +180,8 @@ export default function GroupPlanPage({
                   setBusy(true);
                   try {
                     const res = await crystallize({ groupId });
-                    if (res.status !== 'ok') toast.error(`Cannot plan: ${res.status}`);
+                    if (res.status !== 'ok')
+                      toast.error(planStatusMessage(res.status));
                     else if (res.written === 0)
                       toast.info('Nothing to crystallize — the window is already planned.');
                     else

@@ -819,6 +819,15 @@ export const crystallizeUpcoming = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    return crystallizeCore(ctx, args.groupId, args.daysAhead);
+  },
+});
+
+async function crystallizeCore(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  daysAhead?: number,
+) {
     const teacherId = await resolveTeacherId(ctx);
     const now = Date.now();
     const todayYmd = ymdFromMs(now);
@@ -827,13 +836,19 @@ export const crystallizeUpcoming = mutation({
     // re-pickable until materialized, so difficulty re-orders never strand
     // them — "Re-plan future" refreshes the lot).
     const horizon = Math.min(
-      Math.max(1, Math.round(args.daysAhead ?? GROUP_CRYSTALLIZE_AHEAD_DAYS)),
+      Math.max(1, Math.round(daysAhead ?? GROUP_CRYSTALLIZE_AHEAD_DAYS)),
       GROUP_SKELETON_HORIZON_DAYS,
     );
     const lastYmd = ymdFromMs(now + horizon * MS_PER_DAY);
 
-    const loaded = await loadGroupPlanState(ctx, args.groupId, todayYmd);
-    if (loaded.status !== "ok") return { status: loaded.status, written: 0 };
+    const loaded = await loadGroupPlanState(ctx, groupId, todayYmd);
+    if (loaded.status !== "ok")
+      return {
+        status: loaded.status,
+        written: 0,
+        exhausted: false,
+        unplannedSessions: 0,
+      };
     const state = loaded.state;
     const { currentUnitIdx } = skeletonInputs(state);
 
@@ -891,7 +906,7 @@ export const crystallizeUpcoming = mutation({
       if (newPicks.length === 0 && spiralPicks.length === 0) break;
 
       await ctx.db.insert("groupSheets", {
-        groupId: args.groupId,
+        groupId,
         slotId: s.slotId,
         date: s.date,
         unitId: primaryUnitId ?? state.ladders[currentUnitIdx]?.unitId ?? "",
@@ -938,8 +953,7 @@ export const crystallizeUpcoming = mutation({
       exhausted,
       unplannedSessions: targets.length - written,
     };
-  },
-});
+}
 
 // ── Session-time lookups + lifecycle ──────────────────────────────────────
 
@@ -3073,42 +3087,73 @@ export const deleteFuturePlanned = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const todayYmd = ymdFromMs(Date.now());
-    const rows = (
-      await ctx.db
-        .query("groupSheets")
-        .withIndex("by_group_date", (q) =>
-          q.eq("groupId", args.groupId).gte("date", todayYmd),
-        )
-        .collect()
-    ).filter((r) => r.status === "planned");
-    if (rows.length === 0) return { deleted: 0 };
+    return deleteFuturePlannedCore(ctx, args.groupId);
+  },
+});
 
-    const freedIds = new Set<string>();
-    for (const r of rows) {
-      for (const q of [...r.newQuestionIds, ...r.spiralQuestionIds]) {
-        freedIds.add(q as unknown as string);
-      }
-      if (r.pdfPreviewStorageId) {
-        try {
-          await ctx.storage.delete(r.pdfPreviewStorageId);
-        } catch {
-          // ignore — preview blob already gone
-        }
-      }
-      await ctx.db.delete(r._id);
+async function deleteFuturePlannedCore(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+) {
+  const todayYmd = ymdFromMs(Date.now());
+  const rows = (
+    await ctx.db
+      .query("groupSheets")
+      .withIndex("by_group_date", (q) =>
+        q.eq("groupId", groupId).gte("date", todayYmd),
+      )
+      .collect()
+  ).filter((r) => r.status === "planned");
+  if (rows.length === 0) return { deleted: 0 };
+
+  const freedIds = new Set<string>();
+  for (const r of rows) {
+    for (const q of [...r.newQuestionIds, ...r.spiralQuestionIds]) {
+      freedIds.add(q as unknown as string);
     }
-    const carries = await ctx.db
-      .query("groupCarryOvers")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .collect();
-    for (const c of carries) {
-      if (c.target !== "main" || c.consumedAt === undefined) continue;
-      if (c.questionIds.every((q) => freedIds.has(q as unknown as string))) {
-        await ctx.db.patch(c._id, { consumedAt: undefined });
+    if (r.pdfPreviewStorageId) {
+      try {
+        await ctx.storage.delete(r.pdfPreviewStorageId);
+      } catch {
+        // ignore — preview blob already gone
       }
     }
-    return { deleted: rows.length };
+    await ctx.db.delete(r._id);
+  }
+  const carries = await ctx.db
+    .query("groupCarryOvers")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+  for (const c of carries) {
+    if (c.target !== "main" || c.consumedAt === undefined) continue;
+    if (c.questionIds.every((q) => freedIds.has(q as unknown as string))) {
+      await ctx.db.patch(c._id, { consumedAt: undefined });
+    }
+  }
+  return { deleted: rows.length };
+}
+
+// Atomic "Re-plan the term": drop every future still-planned row AND rebuild
+// from the current book order in ONE transaction. The old flow was two
+// separate mutations — if the rebuild failed after the delete committed, the
+// tail of the term was silently gone (found 2026-07-25). A Convex mutation
+// is all-or-nothing, so a failed rebuild now rolls the delete back too.
+export const replanTerm = mutation({
+  args: { groupId: v.id("groups"), daysAhead: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const del = await deleteFuturePlannedCore(ctx, args.groupId);
+    const res = await crystallizeCore(ctx, args.groupId, args.daysAhead);
+    if (res.status !== "ok")
+      throw new Error(
+        res.status === "no-members"
+          ? "This group has no students yet — add members first."
+          : res.status === "no-track"
+            ? "This group has no learning track yet — assign one in the Tracks tab."
+            : "This group has no weekly sessions on the timetable yet.",
+      );
+    return { ...res, deleted: del.deleted };
   },
 });
 

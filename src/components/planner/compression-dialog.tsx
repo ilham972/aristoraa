@@ -37,12 +37,7 @@ export function CompressionDialog({
   const applyCompression = useMutation(
     api.learningEngine.groupPlan.applyCompression,
   );
-  const deleteFuturePlanned = useMutation(
-    api.learningEngine.groupPlan.deleteFuturePlanned,
-  );
-  const crystallize = useMutation(
-    api.learningEngine.groupPlan.crystallizeUpcoming,
-  );
+  const replanTermMut = useMutation(api.learningEngine.groupPlan.replanTerm);
 
   // Founder overrides on top of the proposal: qid → chosen route.
   const [overrides, setOverrides] = useState<
@@ -111,10 +106,9 @@ export function CompressionDialog({
         manualMainIds,
         manualRevisionIds,
       });
-      const del = await deleteFuturePlanned({ groupId });
-      const res = await crystallize({ groupId, daysAhead: 180 });
+      const res = await replanTermMut({ groupId, daysAhead: 180 });
       toast.success(
-        `${unitName(preview.nextUnitId)} starts now — ${counts.revision} questions moved to Revision. Re-planned ${del.deleted}→${res.status === 'ok' ? res.written : 0} sheets.`,
+        `${unitName(preview.nextUnitId)} starts now — ${counts.revision} questions moved to Revision. Re-planned ${res.deleted}→${res.written} sheets.`,
         { duration: 6000 },
       );
       onApplied?.();

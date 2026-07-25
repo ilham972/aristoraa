@@ -46,6 +46,21 @@ export const VERDICT_DOT: Record<string, string> = {
   'no-questions': 'bg-muted-foreground/40',
 };
 
+// Plain-language reasons the planner can't build sheets — shown in toasts
+// instead of raw status codes like "no-track" (founder is non-technical).
+export function planStatusMessage(status: string): string {
+  switch (status) {
+    case 'no-members':
+      return 'This group has no students yet — add members first.';
+    case 'no-track':
+      return 'This group has no learning track yet — assign one in the Tracks tab.';
+    case 'no-sessions':
+      return 'This group has no weekly sessions on the timetable yet.';
+    default:
+      return `Planning failed (${status}).`;
+  }
+}
+
 export function fmtShortDate(ymd: string): string {
   const d = new Date(`${ymd}T00:00:00`);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
